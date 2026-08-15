@@ -4,6 +4,14 @@
   "private": true,
   "license": "Apache-2.0",
   "description": "Windows and Apple Silicon macOS Technical Preview: let ChatGPT use accepted Codex-backed local capabilities and escalate to Codex only when needed.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liyana31811/Codexless.git"
+  },
+  "homepage": "https://github.com/liyana31811/Codexless#readme",
+  "bugs": {
+    "url": "https://github.com/liyana31811/Codexless/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"
