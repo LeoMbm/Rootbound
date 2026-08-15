@@ -48,7 +48,7 @@ Codexless 做的事很简单：**让你的 ChatGPT 套上 Codex 的工服，拎�
 
 **ChatGPT 可以直接当你的默认入口。** 你先把事交给它；当前工具够用，它就继续做。真需要 Codex 专门出手时，再从当前 Chat 升级过去。你想直接开 Codex 当然也可以，Codexless 不限制原来的工作习惯。
 
-真要调用 Codex 时，先**打个申请**：
+真要调用 Codex 时，它先**向你打个申请**：
 
 1. 准备让 Codex 干什么；
 2. 先帮你查好当前还剩多少额度；
@@ -57,7 +57,7 @@ Codexless 做的事很简单：**让你的 ChatGPT 套上 Codex 的工服，拎�
 
 > **平时自己干。真需要时，再摇 Codex。**
 
-<!-- 公开发布图片位：真实单窗口 Codex Task Card / usage receipt 截图。 -->
+![Codex Task Card：完成、运行中、等待用户确认三种真实状态](docs/images/codex-task-card.png)
 
 ---
 
@@ -71,7 +71,7 @@ Codexless 做的事很简单：**让你的 ChatGPT 套上 Codex 的工服，拎�
 
 第一版是 **read-first**：能看标签页和已经加载的页面内容；暂时不承诺任意点击、输入、导航或完整浏览器自动化。
 
-<!-- 公开发布图片位：真实 Browser Reader 聊天截图。 -->
+![Browser Reader：ChatGPT 读取已打开的 Chrome 标签页并接回上一段上下文](docs/images/browser-reader.png)
 
 ---
 

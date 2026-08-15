@@ -48,7 +48,7 @@ That does **not** mean every Codex update instantly becomes a ChatGPT capability
 
 **ChatGPT can be your default starting point.** Give it the task; if the current tools are enough, it keeps going. If it really needs Codex, it can escalate from the same Chat. Prefer to open Codex directly? That's fine too — Codexless does not lock you into one workflow.
 
-When it really is time to call Codex, it **puts in a request first**:
+When it really is time to call Codex, it **asks you first**:
 
 1. what it wants Codex to do;
 2. how much Codex quota you have left right now;
@@ -57,7 +57,7 @@ When it really is time to call Codex, it **puts in a request first**:
 
 > **Keep working in ChatGPT. Bring in Codex when you actually need it.**
 
-<!-- PUBLIC IMAGE SLOT: real single-window Codex Task Card / usage receipt screenshot. -->
+![Codex Task Card: real done, running, and user-approval states](docs/images/codex-task-card.png)
 
 ---
 
@@ -71,7 +71,7 @@ Error pages, articles, products, settings, dashboards — one less screenshot to
 
 The first public version is **read-first**: it can inspect tabs and already-loaded page content. It does not yet promise arbitrary clicking, typing, navigation, or full browser automation.
 
-<!-- PUBLIC IMAGE SLOT: real Browser Reader chat screenshot. -->
+![Browser Reader: ChatGPT reads an already-open Chrome tab and picks up the previous context](docs/images/browser-reader.png)
 
 ---
 
