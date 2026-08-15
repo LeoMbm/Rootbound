@@ -71,6 +71,8 @@ Error pages, articles, products, settings, dashboards — one less screenshot to
 
 The first public version is **read-first**: it can inspect tabs and already-loaded page content. It does not yet promise arbitrary clicking, typing, navigation, or full browser automation.
 
+**Browser Reader has passed on Windows; Mac is not yet fully covered.**
+
 ![Browser Reader: ChatGPT reads an already-open Chrome tab and picks up the previous context](docs/images/browser-reader.png)
 
 ---

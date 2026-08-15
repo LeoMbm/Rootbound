@@ -71,6 +71,8 @@ Codexless 做的事很简单：**让你的 ChatGPT 套上 Codex 的工服，拎�
 
 第一版是 **read-first**：能看标签页和已经加载的页面内容；暂时不承诺任意点击、输入、导航或完整浏览器自动化。
 
+**Browser 在 Windows 已跑通；Mac 尚未完全覆盖。**
+
 ![Browser Reader：ChatGPT 读取已打开的 Chrome 标签页并接回上一段上下文](docs/images/browser-reader.png)
 
 ---
