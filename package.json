@@ -1,0 +1,46 @@
+{
+  "name": "codexless",
+  "version": "0.1.0-preview.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Windows and Apple Silicon macOS Technical Preview: let ChatGPT use accepted Codex-backed local capabilities and escalate to Codex only when needed.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start:stdio": "node scripts/launch.mjs stdio",
+    "start:http": "node scripts/launch.mjs http",
+    "doctor": "node scripts/doctor.mjs",
+    "test:contract": "node test/public-contract.mjs",
+    "test": "node test/public-contract.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0"
+  },
+  "files": [
+    "src",
+    "config",
+    "scripts",
+    "bin/codexless-doctor.cmd",
+    "bin/codexless-http.cmd",
+    "bin/codexless-install.cmd",
+    "bin/codexless-stdio.cmd",
+    "bin/codexless-doctor.sh",
+    "bin/codexless-http.sh",
+    "bin/codexless-install.sh",
+    "bin/codexless-stdio.sh",
+    "bin/codexless-uninstall.sh",
+    "npm-shrinkwrap.json",
+    "README.md",
+    "README.zh-CN.md",
+    "SECURITY.md",
+    "EXPORT_SYNC.md",
+    "THIRD_PARTY_NOTICES.md"
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "verifiedCodexVersion": "0.147.0",
+  "additionalAcceptedCodexVersions": ["0.147.0-alpha.6.6"],
+  "verifiedAt": "2026-08-14",
+  "defaultAction": "deny",
+  "remoteAllowlist": {
+    "command/exec": {
+      "classification": "model-free",
+      "bridgeTool": "codex.command_exec",
+      "evidence": [
+        "Codex 0.147.0 stable App Server schema describes command/exec as standalone sandboxed argv execution without creating a thread or turn.",
+        "Acceptance observed no thread/* or turn/* notifications during buffered command/exec execution."
+      ]
+    }
+  },
+  "internalHostAllowlist": {},
+  "denyFamilies": [
+    {
+      "pattern": "thread/*",
+      "classification": "model-session-or-unsafe-surface",
+      "reason": "Not exported as a generic public control surface. Formal Codex Agent delegation is exposed only through the bounded codex.agent_* lane."
+    },
+    {
+      "pattern": "turn/*",
+      "classification": "model-execution-surface",
+      "reason": "Not exported generically; metered model work is exposed through codex.agent_* only."
+    },
+    {
+      "pattern": "review/*",
+      "classification": "model-execution-surface",
+      "reason": "Not part of the first public Technical Preview surface."
+    }
+  ],
+  "observeOnly": {
+    "account/usage/read": {
+      "classification": "usage-observability",
+      "remoteExposure": "deny",
+      "reason": "Used internally for metered-call resource transparency; not a generic public App Server method."
+    },
+    "account/rateLimits/read": {
+      "classification": "usage-observability",
+      "remoteExposure": "deny",
+      "reason": "Used internally for metered-call resource transparency; not a generic public App Server method."
+    }
+  }
+}
