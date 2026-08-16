@@ -71,7 +71,7 @@ Codexless 做的事很简单：**让你的 ChatGPT 套上 Codex 的工服，拎�
 
 第一版是 **read-first**：能看标签页和已经加载的页面内容；暂时不承诺任意点击、输入、导航或完整浏览器自动化。
 
-**Browser 在 Windows 已跑通；Mac 尚未完全覆盖。**
+**Browser Reader 已在 Windows 和 Apple Silicon Mac 完成真实机器的只读验收。** 这里的 Mac 覆盖只指公开 Reader 路线；私有 Browser Operator 试验属于另一条能力面，不在本次公开版本范围内。
 
 ![Browser Reader：ChatGPT 读取已打开的 Chrome 标签页并接回上一段上下文](docs/images/browser-reader.png)
 
@@ -226,7 +226,11 @@ Codexless 还可以按动作继续收窄权限。
 
 首个公开服务合同是经过验收的 **21 个工具**，不是把整个 Codex 环境无条件暴露出去。
 
-当前 ChatGPT App 形态下，模型会直接看到其中 **18 个**；另外三颗是 app-only Task Card 动作，用于状态刷新和用户 Yes / No 决策。
+当前 ChatGPT App 形态下，模型会直接看到其中 **18 个**；另外三颗是 app-only Task Card 动作，用于状态刷新和真实用户决策。
+
+当 `CODEXLESS_AGENT_METERED_CONSENT=always` 时，`codex.agent_start` / `codex.agent_send` 先只负责 prepare：返回的 `consentRef` 只是待审批任务的身份，不代表用户同意；把它重新塞回公开工具也不能启动 Codex turn。真正渲染出来的 Task Card 还会拿到一颗独立 commit capability，这颗能力不进入模型可见的文本 / `structuredContent`；`codex.agent_commit` 必须同时拿到两者才允许 dispatch。Task Card 如果渲染不出来，Codexless 会 fail closed，不会静默启动计费 Codex 工作。Task Card 一旦点 No / decline，就进入 terminal rejected；缓存的 commit 或同 requestId 重放都不能把这张卡重新救活。
+
+`codex.command_exec` 是 model-free 命令通道，不是第二个 Codex Agent 入口。Codexless 会在服务器侧拒绝直接启动 Codex CLI，以及已识别的 shell / interpreter 包装式 Codex 调用；真正需要计费 Codex 模型工作时必须走 Agent + Task Card，让 quota 与任务生命周期保持可见。这条是支持的模型调用路径上的产品护栏，不把“任意代码执行”冒充成不可逃逸的恶意进程沙箱；刻意把二次 Codex 启动编码/伪装进无关程序不属于支持合同。
 
 内部 Workbench / Private 能力不自动等于公开能力。
 
@@ -275,6 +279,8 @@ Tunnel / endpoint 的凭据不要进仓库，也不要贴进公开截图。
 首个公开服务合同精确为 **21 个工具**。
 
 ChatGPT 模型侧直接显示 18 个；三颗 app-only Task Card 动作不直接暴露给模型。
+
+Metered Agent 的 consent 是服务器侧状态：`consentRef` 只是任务身份，不是审批凭据。公开重放仍然停在 pending；Task Card commit 还必须带上对应的 card capability，才能真正 dispatch Codex。回归测试现在覆盖 consentRef 重放、缺失/错误 commit capability、capability 泄漏以及重复 commit 不重复开 turn。
 
 精确表由 `src/surface-contracts.mjs` 固定，并由 public contract test 验收。
 
@@ -331,7 +337,7 @@ Windows 下不要把 `CODEX_BIN` 指到 npm 的 `.cmd` / `.ps1` shim。
 只要先钉住这 5 件事：
 
 1. Codexless 让 ChatGPT 使用一组**经过验收**的 Codex-backed 本地能力；Codex 仍是专家升级通道。
-2. 它**不增加、不绕过 Codex quota**；model-free 工具工作和 metered Codex Agent 是两条不同 lane。
+2. 它**不增加、不绕过 Codex quota**；model-free 工具工作和 metered Codex Agent 是两条不同 lane。consent-always 模式下，模型可见的 `consentRef` 本身不足以启动 Codex，真正开闸还要经过 Task Card 的独立 commit capability。
 3. 权限上限来自本机 Codex 当前有效授权；远端不能静默扩大。
 4. Browser 首版 read-first；内部 / Private 能力也不自动等于公开能力。
 5. Codexless 是独立项目，不是 OpenAI 产品或背书；最适合本来就在同时使用 ChatGPT 和 Codex、想少搬运少重复维护，或者想让自己长期使用的同一个 AI 助手也多一双本地手脚的人。

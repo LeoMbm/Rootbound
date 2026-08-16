@@ -59,7 +59,7 @@ export function createPublicServerFactory({
       {
         title: "Codex Model-Free Command",
         description:
-          "Run one buffered argv command through official Codex App Server command/exec without a Codex model turn. Codexless resolves the authorized Codex permission profile locally; the caller cannot select a stronger profile or permission envelope. A bare executable name may be resolved through host PATH on Windows without changing authority.",
+          "Run one buffered argv command through official Codex App Server command/exec without a Codex model turn. Codexless resolves the authorized Codex permission profile locally; the caller cannot select a stronger profile or permission envelope. This model-free lane must not launch Codex CLI directly or through recognized shell/interpreter wrappers; formal metered Codex work must use codex.agent_start / codex.agent_send so Task Card, quota state, and lifecycle remain visible. A bare executable name may be resolved through host PATH on Windows without changing authority.",
         inputSchema: commandSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       },

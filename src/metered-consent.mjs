@@ -27,7 +27,7 @@ export class MeteredConsentGate {
     return this.#mode;
   }
 
-  async authorize({ action, requestId, subjectRef = null, payload, consentRef = null }) {
+  async authorize({ action, requestId, subjectRef = null, payload }) {
     if (!new Set(["start", "send"]).has(action)) throw new Error("metered consent action must be start or send");
     if (typeof requestId !== "string" || !requestId.trim()) throw new Error("metered consent requestId must be a non-empty string");
     const hash = requestHash(action, subjectRef, payload);
@@ -40,20 +40,9 @@ export class MeteredConsentGate {
     }
     if (prior) {
       if (prior.requestHash !== hash) throw new Error(`requestId was already used for a different metered ${action} request: ${requestId}`);
-      if (consentRef !== null && consentRef !== prior.consentRef) throw new Error(`consentRef does not match the pending metered ${action} request`);
-      if (prior.authorized) {
-        if (consentRef !== prior.consentRef) return this.#required(prior, true);
-        return { authorized: true, mode: "always", consentRef: prior.consentRef, duplicate: true };
-      }
-      if (consentRef === prior.consentRef) {
-        prior.authorized = true;
-        prior.authorizedAt = Date.now();
-        return { authorized: true, mode: "always", consentRef: prior.consentRef, duplicate: false };
-      }
+      if (prior.authorized) return { authorized: true, mode: "always", consentRef: prior.consentRef, duplicate: true };
       return this.#required(prior, true);
     }
-
-    if (consentRef !== null) throw new Error("consentRef is unknown or stale for this metered requestId");
     let quotaSnapshot;
     try {
       quotaSnapshot = this.#quotaProvider
@@ -84,6 +73,28 @@ export class MeteredConsentGate {
     return this.#required(record, false);
   }
 
+  approve({ action, requestId, subjectRef = null, payload, consentRef }) {
+    if (!new Set(["start", "send"]).has(action)) throw new Error("metered consent action must be start or send");
+    if (typeof requestId !== "string" || !requestId.trim()) throw new Error("metered consent requestId must be a non-empty string");
+    if (typeof consentRef !== "string" || !consentRef.trim()) throw new Error("metered consentRef must be a non-empty string");
+    if (this.#mode === "off") return { authorized: true, mode: "off", consentRef: null, duplicate: false };
+
+    const prior = this.#records.get(requestId);
+    if (!prior) throw new Error("consentRef is unknown or stale for this metered requestId");
+    if (!prior.authorized && prior.expiresAt <= Date.now()) {
+      this.#records.delete(requestId);
+      throw new Error(`consentRef is expired for this metered ${action} request; prepare the task again`);
+    }
+    const hash = requestHash(action, subjectRef, payload);
+    if (prior.requestHash !== hash) throw new Error(`requestId was already used for a different metered ${action} request: ${requestId}`);
+    if (prior.consentRef !== consentRef) throw new Error(`consentRef does not match the pending metered ${action} request`);
+    if (prior.authorized) return { authorized: true, mode: "always", consentRef: prior.consentRef, duplicate: true };
+
+    prior.authorized = true;
+    prior.authorizedAt = Date.now();
+    return { authorized: true, mode: "always", consentRef: prior.consentRef, duplicate: false };
+  }
+
   #required(record, duplicate) {
     return {
       authorized: false,
@@ -97,7 +108,7 @@ export class MeteredConsentGate {
         requestId: record.requestId,
         expiresAt: record.expiresAt,
         quota: record.quota,
-        message: "This action starts metered Codex model work. Ask the user to approve this exact call before retrying with the same requestId and consentRef.",
+        message: "This action starts metered Codex model work. The consentRef identifies this prepared task but does not authorize it. Render the Task Card and obtain an explicit server-side commit before dispatching Codex work.",
       },
     };
   }

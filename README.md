@@ -71,7 +71,7 @@ Error pages, articles, products, settings, dashboards — one less screenshot to
 
 The first public version is **read-first**: it can inspect tabs and already-loaded page content. It does not yet promise arbitrary clicking, typing, navigation, or full browser automation.
 
-**Browser Reader has passed on Windows; Mac is not yet fully covered.**
+**Browser Reader has passed real-machine read-only acceptance on Windows and Apple Silicon Mac.** Mac coverage here means the public Reader path only; private Browser Operator experiments are a separate surface and are not part of this release.
 
 ![Browser Reader: ChatGPT reads an already-open Chrome tab and picks up the previous context](docs/images/browser-reader.png)
 
@@ -224,7 +224,11 @@ See [`SECURITY.md`](SECURITY.md) for the full boundary.
 
 **No.**
 
-The first public service contract contains exactly **21 accepted tools**. In the current ChatGPT App setup, the model directly sees **18** of them; the other three are app-only Task Card actions for status refresh and real user Yes / No decisions.
+The first public service contract contains exactly **21 accepted tools**. In the current ChatGPT App setup, the model directly sees **18** of them; the other three are app-only Task Card actions for status refresh and real user decisions.
+
+With `CODEXLESS_AGENT_METERED_CONSENT=always`, `codex.agent_start` / `codex.agent_send` are prepare-first: a returned `consentRef` identifies the pending task but does **not** authorize Codex work, and replaying that ref through the public tool cannot start a turn. The rendered Task Card receives a separate commit capability outside model-visible text / `structuredContent`; `codex.agent_commit` requires both values. If the Task Card cannot be rendered, Codexless fails closed instead of silently dispatching metered work. A Task Card decline is terminal: a cached commit or same-request replay cannot revive the rejected task.
+
+`codex.command_exec` is the model-free command lane, not a second Codex-agent entrance. Codexless rejects direct Codex CLI launches and recognized shell/interpreter wrappers carrying a Codex command; formal Codex model work must use the Agent + Task Card path so quota and lifecycle stay visible. This is a server-side product guard for the supported model-facing path, not a claim that arbitrary code execution is an adversarial process sandbox; deliberately disguising a secondary Codex launch inside unrelated executable code is outside the supported contract.
 
 Internal Workbench / Private capabilities do not automatically become public capabilities.
 
@@ -273,6 +277,8 @@ Do not put Tunnel / endpoint credentials in the repository or public screenshots
 The first public service contract contains exactly **21 tools**.
 
 The ChatGPT model directly sees 18; three app-only Task Card actions are not exposed directly to the model.
+
+Metered Agent consent is server-stateful: `consentRef` is task identity, not approval. Public replay stays pending; the Task Card commit path must present the exact card capability before Codex dispatch is allowed. The contract tests include regression coverage for replay, missing/wrong commit capabilities, capability leakage, and duplicate commit behavior.
 
 The exact table is fixed in `src/surface-contracts.mjs` and covered by the public contract tests.
 
@@ -329,7 +335,7 @@ If a user sends you this repository and asks “What is this? Do I need it? Is i
 Start with these five facts:
 
 1. Codexless lets ChatGPT use a set of **accepted Codex-backed local capabilities**; Codex remains an explicit expert escalation path.
-2. It **does not increase or bypass Codex quota**. Direct tool work and metered Codex Agent work remain separate lanes.
+2. It **does not increase or bypass Codex quota**. Direct tool work and metered Codex Agent work remain separate lanes. In consent-always mode, a model-visible `consentRef` is not sufficient to start Codex; the Task Card approval path supplies a separate commit capability.
 3. The permission ceiling comes from the effective local Codex authorization. A remote caller cannot silently widen it.
 4. The first public Browser is read-first, and internal / Private capabilities do not automatically equal public capabilities.
 5. Codexless is an independent project, not an OpenAI product or endorsement. It is most relevant to people already using ChatGPT + Codex who want less handoff and duplicate maintenance — or people who want the same long-running AI assistant they already use to gain local hands instead of switching to another agent for every real task.

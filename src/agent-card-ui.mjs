@@ -58,6 +58,7 @@ const AGENT_TASK_CARD_HTML = String.raw`
   let clockTimer = null;
   let hydratedConsentRef = null;
   let hydratedTaskRef = null;
+  let commitToken = null;
   let hydrateInFlight = false;
   let locale = (window.openai && window.openai.locale) || navigator.language || "en";
 
@@ -216,8 +217,29 @@ const AGENT_TASK_CARD_HTML = String.raw`
     return null;
   }
 
+  function commitTokenFromInput(input) {
+    if (!input || typeof input !== "object") return null;
+    if (typeof input.codexlessCommitToken === "string" && input.codexlessCommitToken) return input.codexlessCommitToken;
+    if (input._meta && typeof input._meta === "object") {
+      const nested = commitTokenFromInput(input._meta); if (nested) return nested;
+    }
+    for (const key of ["toolResponseMetadata", "toolOutput", "mcp_tool_result", "call_tool_result"]) {
+      if (input[key] && typeof input[key] === "object") {
+        const nested = commitTokenFromInput(input[key]); if (nested) return nested;
+      }
+    }
+    return null;
+  }
+
+  function captureCommitToken(input) {
+    const token = commitTokenFromInput(input);
+    if (token) commitToken = token;
+  }
+
   function hostPayload() {
     if (!window.openai) return null;
+    captureCommitToken(window.openai.toolOutput);
+    captureCommitToken(window.openai.toolResponseMetadata);
     return pickPayload(window.openai.toolOutput) || pickPayload(window.openai.toolResponseMetadata) || pickPayload(window.openai);
   }
   function hasOwn(object, key) { return Boolean(object && Object.prototype.hasOwnProperty.call(object, key)); }
@@ -255,6 +277,9 @@ const AGENT_TASK_CARD_HTML = String.raw`
   }
 
   function render(next) {
+    const previousTaskRef = state && (state.taskRef || (state.taskCard && state.taskCard.taskRef));
+    const incomingTaskRef = next && (next.taskRef || (next.taskCard && next.taskCard.taskRef));
+    if (previousTaskRef && incomingTaskRef && previousTaskRef !== incomingTaskRef) commitToken = null;
     state = mergeTaskState(state, next);
     errorEl.style.display = approvalEl.style.display = resultEl.style.display = usageEl.style.display = "none";
     yesBtn.style.display = noBtn.style.display = stopBtn.style.display = refreshBtn.style.display = "none";
@@ -288,6 +313,7 @@ const AGENT_TASK_CARD_HTML = String.raw`
     const result = window.openai && typeof window.openai.callTool === "function"
       ? await window.openai.callTool(name, args)
       : await request("tools/call", { name, arguments: args });
+    captureCommitToken(result);
     if (result && result.isError) throw new Error((result.content && result.content[0] && result.content[0].text) || "Tool call failed");
     const next = result && result.structuredContent;
     if (next) render(next);
@@ -330,7 +356,8 @@ const AGENT_TASK_CARD_HTML = String.raw`
     yesBtn.disabled = noBtn.disabled = true;
     try {
       if (state && state.status === "consent_required" && state.meteredConsent && state.meteredConsent.consentRef) {
-        statusEl.textContent = t("starting"); await tool("codex.agent_commit", { consentRef: state.meteredConsent.consentRef });
+        if (!commitToken) throw new Error("Task Card approval capability is unavailable; refresh the card before approving.");
+        statusEl.textContent = t("starting"); await tool("codex.agent_commit", { consentRef: state.meteredConsent.consentRef, commitToken });
       } else if (state && state.status === "awaitingApproval" && state.pendingApproval && state.agentRef) {
         statusEl.textContent = t("submitting"); const approvalRequestId = String(state.pendingApproval.requestId);
         await tool("codex.agent_approve", { agentRef: state.agentRef, approvalRequestId, requestId: stableRequestId("approve:" + approvalRequestId) });
@@ -391,7 +418,10 @@ const AGENT_TASK_CARD_HTML = String.raw`
       const p = pending.get(msg.id); pending.delete(msg.id); if (msg.error) p.reject(msg.error); else p.resolve(msg.result); return;
     }
     if (msg.method === "ui/notifications/tool-input" && msg.params) hydrateFromToolInput(msg.params.arguments || msg.params);
-    if (msg.method === "ui/notifications/tool-result" && msg.params && msg.params.structuredContent) render(msg.params.structuredContent);
+    if (msg.method === "ui/notifications/tool-result" && msg.params) {
+      captureCommitToken(msg.params);
+      if (msg.params.structuredContent) render(msg.params.structuredContent);
+    }
     if (/host-context|context-changed/i.test(String(msg.method || ""))) {
       const params = msg.params || {}, context = params.context || {};
       const candidate = params.locale || params.language || params.userLocale || context.locale || context.language;
@@ -403,9 +433,11 @@ const AGENT_TASK_CARD_HTML = String.raw`
     const globals = event && event.detail && event.detail.globals || {};
     if (globals.toolInput) hydrateFromToolInput(globals.toolInput);
     if (globals.toolOutput) {
+      captureCommitToken(globals.toolOutput);
       const next = pickPayload(globals.toolOutput);
       if (next) { render(next); if (!isTerminalState(state) && next.taskRef) hydrateFromTaskRef(next.taskRef); }
     }
+    if (globals.toolResponseMetadata) captureCommitToken(globals.toolResponseMetadata);
     if (typeof globals.locale === "string" && globals.locale) { locale = globals.locale; if (state) render(state); }
   }, { passive: true });
 

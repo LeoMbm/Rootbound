@@ -1,5 +1,5 @@
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_MAX_SNAPSHOT_CHARS = 80_000;
@@ -17,8 +17,7 @@ export class BrowserReaderError extends Error {
 export class CodexBrowserReaderExecutor {
   #context;
   #defaultCwd;
-  #sessionId = `codexless-browser-${randomUUID()}`;
-  #turnSeq = 0;
+  #sessionId;
   #browserClientUrl = null;
   #tabs = new Map();
   #providerToRef = new Map();
@@ -29,6 +28,9 @@ export class CodexBrowserReaderExecutor {
     if (!defaultCwd) throw new Error("CodexBrowserReaderExecutor requires defaultCwd");
     this.#context = context;
     this.#defaultCwd = path.resolve(defaultCwd);
+    const sessionSeed = process.env.CODEXLESS_BROWSER_SESSION_KEY?.trim() || this.#defaultCwd;
+    const sessionSuffix = createHash("sha256").update(sessionSeed).digest("hex").slice(0, 20);
+    this.#sessionId = `codexless-browser-${sessionSuffix}`;
     this.#contextGeneration = this.#currentGeneration();
   }
 
@@ -151,16 +153,23 @@ if (!__cxInfo) throw new Error("CODEXLESS_BROWSER_TAB_STALE");
 let __cxTab = null;
 let __cxPayload = null;
 try {
-  __cxTab = await __cxBrowser.user.claimTab(__cxInfo);
+  const __cxOwnedTabs = await __cxBrowser.tabs.list();
+  const __cxOwnedInfo = __cxOwnedTabs.find((tab) => String(tab.id) === String(__cxInfo.providerTabId));
+  __cxTab = __cxOwnedInfo
+    ? await __cxBrowser.tabs.get(__cxOwnedInfo.id)
+    : await __cxBrowser.user.claimTab(__cxInfo);
   const __cxSnapshot = await __cxTab.playwright.domSnapshot();
   __cxPayload = {
     title: __cxInfo.title ?? null,
     url: __cxInfo.url ?? null,
     lastOpened: __cxInfo.lastOpened ?? null,
     snapshot: __cxSnapshot,
+    lifecycleMode: __cxOwnedInfo ? "session-resume" : "fresh-claim",
   };
 } finally {
-  if (__cxTab) await __cxBrowser.tabs.finalize({ keep: [] });
+  if (__cxTab && typeof __cxBrowser.tabs.finalize === "function") {
+    await __cxBrowser.tabs.finalize({ keep: [] });
+  }
 }
 nodeRepl.write(JSON.stringify(__cxPayload));
 `, "Read existing Chrome tab DOM", { expectedGeneration: state.contextGeneration });
@@ -186,9 +195,10 @@ nodeRepl.write(JSON.stringify(__cxPayload));
       snapshotChars: snapshot.length,
       returnedSnapshotChars: truncated ? maxChars : snapshot.length,
       snapshotTruncated: truncated,
+      lifecycleMode: stringOrNull(result?.lifecycleMode) ?? "unknown",
       loadedContentOnly: true,
       authState: "site_specific_unknown",
-      note: "Read-only snapshot of the currently loaded DOM. Codexless did not navigate, click, type, submit, or change page state. Lazy-loaded or virtualized content that is not currently present in the DOM may be absent.",
+      note: "Read-only snapshot of the currently loaded DOM. On Browser runtimes with tabs.finalize(), Codexless releases the claim after the read; on newer session-owned runtimes it reuses the same stable Browser session across App Server restarts. Codexless did not navigate, click, type, submit, or change page state. Lazy-loaded or virtualized content that is not currently present in the DOM may be absent.",
     };
   }
 
@@ -202,8 +212,6 @@ nodeRepl.write(JSON.stringify(__cxPayload));
     this.#tabs.clear();
     this.#providerToRef.clear();
     this.#browserClientUrl = null;
-    this.#sessionId = `codexless-browser-${randomUUID()}`;
-    this.#turnSeq = 0;
     this.#contextGeneration = current;
     return true;
   }
@@ -347,11 +355,10 @@ if (globalThis.__codexlessBrowserAgent?.browsers == null) {
   }
 
   #nextTurnMeta() {
-    this.#turnSeq += 1;
     return {
       "x-codex-turn-metadata": {
         session_id: this.#sessionId,
-        turn_id: `${this.#sessionId}-${this.#turnSeq}`,
+        turn_id: `${this.#sessionId}-${randomUUID()}`,
       },
     };
   }

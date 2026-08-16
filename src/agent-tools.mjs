@@ -94,11 +94,20 @@ function manualFallback(payload) {
   if (status === "consent_required") {
     const summary = compactOneLine(payload?.taskCard?.summary ?? "Codex task");
     return {
-      kind: "confirm_metered",
-      choices: ["Yes", "No"],
+      kind: "task_card_required",
+      choices: [],
       summary,
       quota: { windows },
-      lines: ["Call Codex?", `Task: ${summary}`, "Codex quota", ...quotaLines, "Yes / No"],
+      requiresTaskCard: true,
+      nextAction: "codex.agent_card_render",
+      lines: [
+        "Codex approval required",
+        `Task: ${summary}`,
+        "Codex quota",
+        ...quotaLines,
+        "Open or re-render the Codex Task Card to approve or decline.",
+        "No Codex turn has started. A chat reply alone cannot authorize this task.",
+      ],
     };
   }
 
@@ -452,6 +461,7 @@ export function registerAgentPreviewTools(server, {
       subjectRef: agentRef,
       agentRef,
       authorized: false,
+      commitToken: `commit_${randomUUID()}`,
       turnId: null,
       terminalSnapshot: null,
       declinedAt: null,
@@ -477,7 +487,8 @@ export function registerAgentPreviewTools(server, {
       permissionProfile,
       subjectRef: agentRef,
       agentRef,
-      authorized: false,
+      authorized: true,
+      commitToken: null,
       turnId: null,
       terminalSnapshot: null,
       declinedAt: null,
@@ -597,15 +608,9 @@ export function registerAgentPreviewTools(server, {
         throw new Error("prepared Codex follow-up is stale because the agent advanced; prepare a new task card for the current turn");
       }
     }
-    const consent = await meteredConsent.authorize({
-      action: record.action,
-      requestId: record.consent.requestId,
-      subjectRef: record.action === "send" ? record.agentRef : null,
-      payload: record.payload,
-      consentRef: record.consent.consentRef,
-    });
-    if (!consent.authorized) throw new Error("metered consent was not authorized for the prepared task");
-    record.authorized = true;
+    if (!record.authorized) {
+      throw new Error("Codex task is still pending user approval; dispatch is blocked until the prepared task is explicitly committed");
+    }
 
     if (record.action === "start") {
       const snapshot = await agentExecutor.start({
@@ -676,7 +681,7 @@ export function registerAgentPreviewTools(server, {
     {
       title: "Start Codex Agent",
       description:
-        `Experimental Preview. Start one formal Codex agent thread/turn under Codexless's locally resolved Codex authority. Local metered consent mode is ${meteredConsent.mode}; when set to always, the first logical start returns consent_required and quota context without starting a turn. requestId is a caller-stable idempotency key and MUST be reused if the same start is retried after an uncertain response. model is optional; omit it to preserve Codex's current default routing. The caller cannot choose permission profile, sandbox, approval policy, roots, or network authority.`,
+        `Experimental Preview. Prepare one formal Codex agent thread/turn under Codexless's locally resolved Codex authority. Local metered consent mode is ${meteredConsent.mode}; when set to always, every unapproved logical start returns consent_required and quota context without starting a turn. requestId is a caller-stable idempotency key and MUST be reused if the same start is retried after an uncertain response. A returned consentRef identifies the prepared task but is never proof of approval: replaying it through this public tool cannot start Codex work. Only the server-side Task Card commit path may approve and dispatch the prepared task. model is optional; omit it to preserve Codex's current default routing. The caller cannot choose permission profile, sandbox, approval policy, roots, or network authority.`,
       inputSchema: z.object({
         prompt: z.string().min(1).max(200_000),
         requestId: z.string().min(1).max(512)
@@ -686,7 +691,7 @@ export function registerAgentPreviewTools(server, {
         model: z.string().min(1).max(512).optional()
           .describe("Optional exact model id from codex.model_list. Omit to use Codex's current default model routing."),
         consentRef: z.string().min(1).max(512).optional()
-          .describe("When local metered consent mode is always, retry the same logical request with this exact consentRef only after the user approves the returned quota/context card."),
+          .describe("Legacy compatibility field. It identifies an already prepared task only; supplying or replaying it never authorizes metered Codex work. Approval must occur through the server-side Task Card commit path."),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
       _meta: {
@@ -702,11 +707,10 @@ export function registerAgentPreviewTools(server, {
         model: model ?? null,
         permissionProfile: authority.permissionProfile,
       };
-      if (!consentRef) {
-        const prior = await existingRequestState({ requestId, action: "start", payload, agentRef: null });
-        if (prior) return { ...prior, duplicate: true };
-      }
-      const consent = await meteredConsent.authorize({ action: "start", requestId, payload, consentRef: consentRef ?? null });
+      const prior = await existingRequestState({ requestId, action: "start", payload, agentRef: null });
+      if (prior) return { ...prior, duplicate: true };
+      if (consentRef) throw new Error("consentRef cannot authorize a Codex start through the public agent_start tool; render/approve the prepared Task Card instead");
+      const consent = await meteredConsent.authorize({ action: "start", requestId, payload });
       if (!consent.authorized) {
         const record = rememberPrepared({
           consent: consent.consent,
@@ -724,7 +728,7 @@ export function registerAgentPreviewTools(server, {
         pending.execution = { requestedModel: model ?? null, resolvedModel: null, modelProvider: null, serviceTier: null, reasoningEffort: null };
         return pending;
       }
-      const record = preparedMetered.get(consentRef) ?? directRecord({
+      const record = directRecord({
         action: "start",
         payload,
         cwd: authority.effectiveCwd,
@@ -750,11 +754,17 @@ export function registerAgentPreviewTools(server, {
         "openai/toolInvocation/invoked": "Codex confirmation ready.",
       },
     },
-    async ({ consentRef }) => structuredCard(async () => {
-      const record = preparedMetered.get(consentRef);
-      if (!record) throw new Error("unknown or stale prepared metered consentRef");
-      return preparedCardState(record);
-    })
+    async ({ consentRef }) => structuredCard(
+      async () => {
+        const record = preparedMetered.get(consentRef);
+        if (!record) throw new Error("unknown or stale prepared metered consentRef");
+        return preparedCardState(record);
+      },
+      () => {
+        const record = preparedMetered.get(consentRef);
+        return record?.commitToken ? { codexlessCommitToken: record.commitToken } : {};
+      }
+    )
   );
 
   server.registerTool(
@@ -770,20 +780,26 @@ export function registerAgentPreviewTools(server, {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       _meta: { ui: { visibility: ["app"] } },
     },
-    async ({ taskRef, consentRef }) => structured(async () => {
-      if (!taskRef && !consentRef) throw new Error("taskRef or consentRef is required");
-      if (taskRef) {
-        const live = taskRecords.get(taskRef);
-        if (live) return preparedCardState(live);
-        const recovered = recoveredTaskState(taskRef);
-        if (recovered) return recovered;
+    async ({ taskRef, consentRef }) => structuredCard(
+      async () => {
+        if (!taskRef && !consentRef) throw new Error("taskRef or consentRef is required");
+        if (taskRef) {
+          const live = taskRecords.get(taskRef);
+          if (live) return preparedCardState(live);
+          const recovered = recoveredTaskState(taskRef);
+          if (recovered) return recovered;
+        }
+        if (consentRef) {
+          const legacy = preparedMetered.get(consentRef);
+          if (legacy) return preparedCardState(legacy);
+        }
+        throw new Error("unknown or stale Codex task card reference");
+      },
+      () => {
+        const live = taskRef ? taskRecords.get(taskRef) : consentRef ? preparedMetered.get(consentRef) : null;
+        return live?.commitToken ? { codexlessCommitToken: live.commitToken } : {};
       }
-      if (consentRef) {
-        const legacy = preparedMetered.get(consentRef);
-        if (legacy) return preparedCardState(legacy);
-      }
-      throw new Error("unknown or stale Codex task card reference");
-    })
+    )
   );
 
   server.registerTool(
@@ -809,7 +825,7 @@ export function registerAgentPreviewTools(server, {
     {
       title: "Continue Codex Agent",
       description:
-        `Experimental Preview. Continue one exact Codexless-owned Codex agent by opaque agentRef. The caller must deliberately choose the target agentRef; Codexless has no implicit "most recent agent" routing. Local metered consent mode is ${meteredConsent.mode}; when set to always, the first logical send returns consent_required and quota context without starting a turn. requestId is a caller-stable idempotency key and MUST be reused if the same send is retried after an uncertain response. model is optional and may override the model for this turn and subsequent turns. Active turns, stale parent turns, and pending approvals fail visibly; Codexless never auto-replays an accepted or uncertain send.`,
+        `Experimental Preview. Prepare one exact Codexless-owned Codex agent follow-up by opaque agentRef. The caller must deliberately choose the target agentRef; Codexless has no implicit "most recent agent" routing. Local metered consent mode is ${meteredConsent.mode}; when set to always, every unapproved logical send returns consent_required and quota context without starting a turn. requestId is a caller-stable idempotency key and MUST be reused if the same send is retried after an uncertain response. A returned consentRef identifies the prepared follow-up but is never proof of approval: replaying it through this public tool cannot start Codex work. Only the server-side Task Card commit path may approve and dispatch the prepared follow-up. model is optional and may override the model for this turn and subsequent turns. Active turns, stale parent turns, and pending approvals fail visibly; Codexless never auto-replays an accepted or uncertain send.`,
       inputSchema: z.object({
         agentRef: z.string().min(1).max(512),
         message: z.string().min(1).max(200_000),
@@ -818,7 +834,7 @@ export function registerAgentPreviewTools(server, {
         model: z.string().min(1).max(512).optional()
           .describe("Optional exact model id from codex.model_list. Omit to keep the current Codex thread model."),
         consentRef: z.string().min(1).max(512).optional()
-          .describe("When local metered consent mode is always, retry the same logical send with this exact consentRef only after the user approves the returned quota/context card."),
+          .describe("Legacy compatibility field. It identifies an already prepared follow-up only; supplying or replaying it never authorizes metered Codex work. Approval must occur through the server-side Task Card commit path."),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
       _meta: {
@@ -827,15 +843,14 @@ export function registerAgentPreviewTools(server, {
       },
     },
     async ({ agentRef, message, requestId, model, consentRef }) => structuredCard(async () => {
-      if (!consentRef) {
-        const prior = await existingRequestState({
-          requestId,
-          action: "send",
-          payload: { message, model: model ?? null },
-          agentRef,
-        });
-        if (prior) return { ...prior, duplicate: true };
-      }
+      const prior = await existingRequestState({
+        requestId,
+        action: "send",
+        payload: { message, model: model ?? null },
+        agentRef,
+      });
+      if (prior) return { ...prior, duplicate: true };
+      if (consentRef) throw new Error("consentRef cannot authorize a Codex follow-up through the public agent_send tool; render/approve the prepared Task Card instead");
       if (meteredConsent.mode === "off") {
         const parentCard = cardForAgent(agentRef);
         return dispatchPrepared(directRecord({
@@ -858,7 +873,7 @@ export function registerAgentPreviewTools(server, {
         parentTurnId: current.turnId,
         permissionProfile: parentCard?.permissionProfile ?? null,
       };
-      const consent = await meteredConsent.authorize({ action: "send", requestId, subjectRef: agentRef, payload, consentRef: consentRef ?? null });
+      const consent = await meteredConsent.authorize({ action: "send", requestId, subjectRef: agentRef, payload });
       if (!consent.authorized) {
         const record = rememberPrepared({
           consent: consent.consent,
@@ -877,7 +892,7 @@ export function registerAgentPreviewTools(server, {
         pending.execution = { requestedModel: model ?? null, resolvedModel: current.execution?.resolvedModel ?? null, modelProvider: current.execution?.modelProvider ?? null, serviceTier: current.execution?.serviceTier ?? null, reasoningEffort: current.execution?.reasoningEffort ?? null };
         return pending;
       }
-      const record = preparedMetered.get(consentRef) ?? directRecord({
+      const record = directRecord({
         action: "send",
         payload,
         cwd: parentCard?.cwd ?? null,
@@ -927,14 +942,32 @@ export function registerAgentPreviewTools(server, {
     {
       title: "Commit Prepared Metered Codex Task",
       description:
-        "App-only exact commit for a previously prepared metered Codex start/send. The UI supplies only the opaque consentRef; Codexless retrieves the bound action, requestId, prompt/message, cwd and subject from server memory and cannot accept replacements at commit time. Repeated exact commits reuse the same idempotency key and never create a second logical turn.",
-      inputSchema: z.object({ consentRef: z.string().min(1).max(512) }).strict(),
+        "App-only exact commit for a previously prepared metered Codex start/send. The Task Card must supply both the opaque consentRef and its separate card-only commit capability; Codexless retrieves the bound action, requestId, prompt/message, cwd and subject from server memory and cannot accept replacements at commit time. Repeated exact commits reuse the same idempotency key and never create a second logical turn.",
+      inputSchema: z.object({
+        consentRef: z.string().min(1).max(512),
+        commitToken: z.string().min(1).max(512)
+          .describe("Task-Card-only capability token delivered outside model-visible structured content. It must match the exact prepared task."),
+      }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
       _meta: { ui: { visibility: ["app"] } },
     },
-    async ({ consentRef }) => structured(async () => {
+    async ({ consentRef, commitToken }) => structured(async () => {
       const record = preparedMetered.get(consentRef);
       if (!record) throw new Error("unknown or stale prepared metered consentRef");
+      if (record.terminalSnapshot) return { ...structuredClone(record.terminalSnapshot), duplicate: true };
+      if (record.declinedAt) return { ...structuredClone(record.terminalSnapshot ?? lostRecord(record)), duplicate: true };
+      if (!record.commitToken || commitToken !== record.commitToken) {
+        throw new Error("Codex Task Card commit capability is missing or does not match this prepared task");
+      }
+      const approval = meteredConsent.approve({
+        action: record.action,
+        requestId: record.consent.requestId,
+        subjectRef: record.action === "send" ? record.agentRef : null,
+        payload: record.payload,
+        consentRef,
+      });
+      if (!approval.authorized) throw new Error("prepared Codex task approval did not authorize dispatch");
+      record.authorized = true;
       return dispatchPrepared(record);
     })
   );
@@ -1013,13 +1046,14 @@ export function registerAgentPreviewTools(server, {
   );
 }
 
-async function structuredCard(task) {
+async function structuredCard(task, extraMeta = null) {
   try {
     const payload = await task();
+    const projectedMeta = typeof extraMeta === "function" ? await extraMeta(payload) : extraMeta;
     return {
       content: [{ type: "text", text: JSON.stringify(payload) }],
       structuredContent: payload,
-      _meta: { toolwireAgentState: payload },
+      _meta: { toolwireAgentState: payload, ...(projectedMeta && typeof projectedMeta === "object" ? projectedMeta : {}) },
       isError: false,
     };
   } catch (error) {

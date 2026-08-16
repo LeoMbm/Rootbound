@@ -3,6 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { CodexAppServerClient } from "./codex-app-server-client.mjs";
+import { assertNoNestedCodexInvocation } from "./public-command-policy.mjs";
 import { assertRemoteModelFreeMethod } from "./toolbox-method-registry.mjs";
 import { ToolwirePermissionError } from "./codex-permission-executor.mjs";
 
@@ -255,6 +256,7 @@ export class CodexAuthorityExecutor {
     if (!this.#codexVersion) throw new Error("CodexAuthorityExecutor.validate() must succeed before exec()");
 
     assertRemoteModelFreeMethod("command/exec");
+    assertNoNestedCodexInvocation(command, { codexBin: this.#codexBin });
     const requestedCwd = cwd ?? this.#defaultCwd;
     if (!requestedCwd) throw new Error("cwd is required when no local default cwd is configured");
     const effectiveCwd = await this.#validateCwd(requestedCwd);

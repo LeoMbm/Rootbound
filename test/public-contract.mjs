@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { ACCEPTED_CODEX_VERSIONS } from "../src/codex-authority-executor.mjs";
@@ -84,6 +85,14 @@ try {
   const skillListTool = tools.tools.find((tool) => tool.name === "codex.skill_list");
   const appOnlyCardToolNames = ["codex.agent_card_state", "codex.agent_decline", "codex.agent_commit"];
   assert.equal(commandTool?.annotations?.destructiveHint, true);
+  assert.match(commandTool?.description ?? "", /must not launch Codex CLI|refuses nested Codex/i);
+  const nestedCodexCommand = await client.callTool({
+    name: "codex.command_exec",
+    arguments: { command: [codexBin, "--version"], access: "readOnly" },
+  });
+  assert.equal(nestedCodexCommand.isError, true, "public command_exec must refuse a nested Codex CLI launch before dispatch");
+  assert.equal(nestedCodexCommand.structuredContent?.errorCode, "METERED_CODEX_REQUIRES_AGENT_CARD");
+  assert.match(nestedCodexCommand.structuredContent?.error ?? nestedCodexCommand.content?.[0]?.text ?? "", /codex\.agent_start/i);
   assert.equal(preciseEditTool?.annotations?.destructiveHint, true);
   assert.deepEqual(Object.keys(skillListTool?.inputSchema?.properties ?? {}).sort(), ["cwd", "query"]);
   assert.equal(Object.hasOwn(skillListTool?.inputSchema?.properties ?? {}, "kind"), false);
@@ -97,6 +106,117 @@ try {
   const taskCardResource = await client.readResource({ uri: AGENT_TASK_CARD_URI });
   assert.equal(taskCardResource.contents?.[0]?.mimeType, "text/html;profile=mcp-app");
   assert.match(taskCardResource.contents?.[0]?.text ?? "", /codex\.agent_commit/);
+  assert.match(taskCardResource.contents?.[0]?.text ?? "", /codexlessCommitToken/);
+  assert.match(taskCardResource.contents?.[0]?.text ?? "", /commitToken/);
+
+  const startTool = tools.tools.find((tool) => tool.name === "codex.agent_start");
+  const sendTool = tools.tools.find((tool) => tool.name === "codex.agent_send");
+  assert.match(startTool?.description ?? "", /consentRef identifies.*never proof of approval/i);
+  assert.match(sendTool?.description ?? "", /consentRef identifies.*never proof of approval/i);
+  assert.match(startTool?.inputSchema?.properties?.consentRef?.description ?? "", /never authorizes/i);
+  assert.match(sendTool?.inputSchema?.properties?.consentRef?.description ?? "", /never authorizes/i);
+
+  const requestId = `contract-consent-${randomUUID()}`;
+  const prompt = "Codexless contract probe: prepare only; do not start Codex.";
+  const prepared = await client.callTool({
+    name: "codex.agent_start",
+    arguments: { prompt, requestId },
+  });
+  assert.equal(prepared.isError, false);
+  assert.equal(prepared.structuredContent?.status, "consent_required");
+  assert.equal(prepared.structuredContent?.turnId, null);
+  assert.equal(prepared.structuredContent?.agentRef, null);
+  assert.equal(prepared.structuredContent?.manualFallback?.kind, "task_card_required");
+  assert.equal(prepared.structuredContent?.manualFallback?.requiresTaskCard, true);
+  assert.equal(prepared.structuredContent?.manualFallback?.nextAction, "codex.agent_card_render");
+  assert.deepEqual(prepared.structuredContent?.manualFallback?.choices, []);
+  assert.match((prepared.structuredContent?.manualFallback?.lines ?? []).join(" "), /No Codex turn has started/i);
+  const consentRef = prepared.structuredContent?.meteredConsent?.consentRef;
+  assert.match(consentRef ?? "", /^consent_/);
+
+  const replay = await client.callTool({
+    name: "codex.agent_start",
+    arguments: { prompt, requestId, consentRef },
+  });
+  assert.equal(replay.isError, false);
+  assert.equal(replay.structuredContent?.status, "consent_required", "public consentRef replay must stay pending");
+  assert.equal(replay.structuredContent?.turnId, null, "public consentRef replay must not start a Codex turn");
+  assert.equal(replay.structuredContent?.agentRef, null, "public consentRef replay must not create an agent");
+  assert.equal(replay.structuredContent?.duplicate, true);
+
+  const rendered = await client.callTool({
+    name: "codex.agent_card_render",
+    arguments: { consentRef },
+  });
+  assert.equal(rendered.isError, false);
+  assert.equal(rendered.structuredContent?.status, "consent_required");
+  assert.equal(rendered.structuredContent?.turnId, null);
+  const commitToken = rendered._meta?.codexlessCommitToken;
+  assert.match(commitToken ?? "", /^commit_/);
+  assert.equal(JSON.stringify(rendered.structuredContent).includes(commitToken), false, "commit capability must not leak into model-visible structuredContent");
+  assert.equal((rendered.content?.[0]?.text ?? "").includes(commitToken), false, "commit capability must not leak into model-visible text content");
+
+  const missingCapability = await client.callTool({
+    name: "codex.agent_commit",
+    arguments: { consentRef },
+  }).catch((error) => ({ isError: true, error }));
+  assert.equal(missingCapability.isError, true, "commit without the Task Card capability must fail closed");
+
+  const wrongCapability = await client.callTool({
+    name: "codex.agent_commit",
+    arguments: { consentRef, commitToken: `commit_wrong_${randomUUID()}` },
+  });
+  assert.equal(wrongCapability.isError, true, "commit with the wrong Task Card capability must fail closed");
+  assert.match(wrongCapability.structuredContent?.error ?? wrongCapability.content?.[0]?.text ?? "", /capability.*missing|capability.*does not match/i);
+
+  const declineRequestId = `contract-decline-${randomUUID()}`;
+  const declinePrompt = "Codexless contract probe: prepare, decline, and stay terminal without starting Codex.";
+  const declinePrepared = await client.callTool({
+    name: "codex.agent_start",
+    arguments: { prompt: declinePrompt, requestId: declineRequestId },
+  });
+  assert.equal(declinePrepared.isError, false);
+  assert.equal(declinePrepared.structuredContent?.status, "consent_required");
+  assert.equal(declinePrepared.structuredContent?.agentRef, null);
+  assert.equal(declinePrepared.structuredContent?.turnId, null);
+  const declineConsentRef = declinePrepared.structuredContent?.meteredConsent?.consentRef;
+  const declineRendered = await client.callTool({
+    name: "codex.agent_card_render",
+    arguments: { consentRef: declineConsentRef },
+  });
+  const declineCommitToken = declineRendered._meta?.codexlessCommitToken;
+  assert.match(declineCommitToken ?? "", /^commit_/);
+
+  const declined = await client.callTool({
+    name: "codex.agent_decline",
+    arguments: { consentRef: declineConsentRef },
+  });
+  assert.equal(declined.isError, false);
+  assert.equal(declined.structuredContent?.status, "rejected");
+  assert.equal(declined.structuredContent?.terminal, true);
+  assert.equal(declined.structuredContent?.agentRef, null);
+  assert.equal(declined.structuredContent?.turnId, null);
+
+  const cachedCommitAfterDecline = await client.callTool({
+    name: "codex.agent_commit",
+    arguments: { consentRef: declineConsentRef, commitToken: declineCommitToken },
+  });
+  assert.equal(cachedCommitAfterDecline.isError, false);
+  assert.equal(cachedCommitAfterDecline.structuredContent?.status, "rejected");
+  assert.equal(cachedCommitAfterDecline.structuredContent?.terminal, true);
+  assert.equal(cachedCommitAfterDecline.structuredContent?.duplicate, true);
+  assert.equal(cachedCommitAfterDecline.structuredContent?.agentRef, null);
+  assert.equal(cachedCommitAfterDecline.structuredContent?.turnId, null);
+
+  const replayAfterDecline = await client.callTool({
+    name: "codex.agent_start",
+    arguments: { prompt: declinePrompt, requestId: declineRequestId },
+  });
+  assert.equal(replayAfterDecline.isError, false);
+  assert.equal(replayAfterDecline.structuredContent?.status, "rejected");
+  assert.equal(replayAfterDecline.structuredContent?.terminal, true);
+  assert.equal(replayAfterDecline.structuredContent?.agentRef, null);
+  assert.equal(replayAfterDecline.structuredContent?.turnId, null);
 } finally {
   await client.close().catch(() => {});
   await transport.close().catch(() => {});

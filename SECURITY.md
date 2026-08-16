@@ -37,6 +37,9 @@ Internal availability is not a public safety claim. A capability must be explici
 - `inherit` must be requested explicitly and uses the locally authorized/resolved Codex permission profile.
 - The remote caller does not choose arbitrary permission profiles, trusted roots, sandbox policy, approval policy, or network authority.
 - Supported-platform executable lookup may resolve a bare executable name through the host PATH where applicable. This changes executable lookup only; it does not increase authority.
+- The public model-free lane rejects direct Codex CLI launches and recognized shell/interpreter/launcher wrappers that carry a Codex command. Formal Codex model work must go through `codex.agent_start` / `codex.agent_send`, preserving Task Card, quota state, and task lifecycle.
+- Shell-string wrappers such as `cmd`, PowerShell, and POSIX shells are scanned conservatively. A benign shell command string that merely mentions a `codex` executable token may be rejected; for inspection-only commands, prefer direct argv forms such as `where.exe codex` or `which codex` instead of wrapping them in a shell string.
+- This command classifier is a product guard against direct or accidental nested-Codex routing, not a general-purpose adversarial process sandbox. Arbitrary code execution is inherently capable of hiding secondary process launches; Codexless does not claim that a malicious custom client can be made non-Turing-complete by argv inspection. The supported model-facing contract is that callers must not encode or disguise a Codex launch inside another command.
 - Commands can be destructive. The MCP tool is marked accordingly.
 
 ## Project reads and edits
@@ -54,7 +57,15 @@ Do not interpret these constraints as a substitute for backups or source control
 
 Ordinary model-free tool use and metered Codex Agent work are separate lanes.
 
-The public Agent flow is designed so that quota-consuming work can expose task/usage context and configured consent state before or around the metered call. Where quota context is available, it may be shown to the user; absence of quota context must not be represented as unlimited or free usage.
+With `CODEXLESS_AGENT_METERED_CONSENT=always`, the public `codex.agent_start` / `codex.agent_send` tools are prepare-first. They may mint a `consentRef`, but that ref is task identity only: replaying the same `requestId` / `consentRef` through the public tool does not authorize or dispatch a Codex turn.
+
+Approval is a separate server-side state transition. In the ChatGPT App path, rendering the Task Card also yields a per-task commit capability through component metadata; that capability is intentionally absent from model-visible text and `structuredContent`. `codex.agent_commit` requires both the exact `consentRef` and that matching capability before the server marks the task approved and calls the Agent executor. Missing or wrong capabilities fail closed. Exact duplicate commits remain idempotent and must not create a second logical turn.
+
+If the Task Card cannot be rendered, the consent-always path fails closed: textual fallback may explain the pending task and quota state, but a chat reply alone is not approval and must not start Codex work. Pending non-terminal task state is never silently replayed after a Codexless restart. Decline is terminal: once a prepared card is rejected, a cached commit capability and same-request replay cannot revive or dispatch that task; a new attempt requires a new request id and card.
+
+This is a defense for the supported ChatGPT App / compliant-host path, not cryptographic proof that an arbitrary custom MCP client is a human. A client that directly controls raw protocol traffic and component metadata is part of the trust boundary. Codexless cannot distinguish a malicious custom client from its human operator solely from MCP messages; do not treat an untrusted host as a user-presence oracle.
+
+Where quota context is available, it may be shown to the user; absence of quota context must not be represented as unlimited or free usage.
 
 Approval of a Codex Agent task does not grant a new local permission universe. Local Codex authority remains the ceiling.
 
