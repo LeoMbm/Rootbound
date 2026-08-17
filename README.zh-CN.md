@@ -1,16 +1,27 @@
+<div align="center">
+
 # Codexless
+
+### ChatGPT 开始干 Codex 的活了。
+
+**让你的 ChatGPT 从手机、网页或桌面端，直接用上你本机已经有的 Codex 工具箱。**
 
 [English](README.md)
 
-## ChatGPT 开始干 Codex 的活了。
+![Technical Preview](https://img.shields.io/badge/status-technical_preview-6b7280)
+![Windows](https://img.shields.io/badge/Windows-supported-0078D4?logo=windows11&logoColor=white)
+![Apple Silicon macOS](https://img.shields.io/badge/macOS-Apple_Silicon-111111?logo=apple&logoColor=white)
+[![Apache-2.0 License](https://img.shields.io/badge/license-Apache--2.0-22c55e.svg)](LICENSE)
 
-Codexless 做的事很简单：**让你的 ChatGPT 套上 Codex 的工服，拎起你本地电脑里的Codex工具箱🧰，自己下场干。**
+**留在 ChatGPT。活落在本机。真需要 Codex 时，再摇人。**
+
+</div>
+
+Codexless 做的事很简单：**让你的 ChatGPT 套上 Codex 的工服，拎起你本地电脑里的 Codex 工具箱🧰，自己下场干。**
 
 装环境、做维护、看项目、改文件、跑命令、看网页——**你先跟 ChatGPT 说要干什么，它平时自己干；真需要 Codex，再摇 Codex 本人🤖。**
 
 **少掉那些没必要的 Codex 调用，额度也就少花一点；真要调用时，再把额度花在刀刃上。** 这就是 Codexless 里的 **less**。
-
-不用先想这活该找 ChatGPT，还是找 Codex。
 
 > **觉得这路子有意思？把这个仓库直接甩给你的 ChatGPT，让它自己看看：这台机器能不能装，装完能干什么。**
 
@@ -57,7 +68,9 @@ Codexless 做的事很简单：**让你的 ChatGPT 套上 Codex 的工服，拎�
 
 > **平时自己干。真需要时，再摇 Codex。**
 
-![Codex Task Card：完成、运行中、等待用户确认三种真实状态](docs/images/codex-task-card.png)
+<p align="center">
+  <img src="docs/images/codex-task-card-flow.gif" width="100%" alt="Codex Task Card：呼び出し、実行、完了三种真实状态">
+</p>
 
 ---
 

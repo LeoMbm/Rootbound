@@ -1,16 +1,25 @@
+<div align="center">
+
 # Codexless
+
+### ChatGPT just started doing Codex's work.
+
+**Give ChatGPT the local Codex toolbox already on your computer — from mobile, web, or desktop.**
 
 [中文](README.zh-CN.md)
 
-## ChatGPT just started doing Codex's work.
+![Technical Preview](https://img.shields.io/badge/status-technical_preview-6b7280)
+![Windows](https://img.shields.io/badge/Windows-supported-0078D4?logo=windows11&logoColor=white)
+![Apple Silicon macOS](https://img.shields.io/badge/macOS-Apple_Silicon-111111?logo=apple&logoColor=white)
+[![Apache-2.0 License](https://img.shields.io/badge/license-Apache--2.0-22c55e.svg)](LICENSE)
 
-Codexless is simple: **give your ChatGPT the Codex toolbox already on your computer and let it get to work.**
+**Stay in ChatGPT. Work on your local machine. Bring in Codex only when you actually need it.**
 
-Set things up, maintain projects, edit files, run commands, inspect web pages — **tell ChatGPT what you need. It keeps working on its own; when Codex is actually needed, it can call Codex in.**
+</div>
+
+Codexless gives the ChatGPT you're already talking to the local tools it has actually tested and exposed. Set things up, maintain projects, edit files, run commands, inspect web pages — and keep going in the same conversation.
 
 **Fewer unnecessary Codex calls means less Codex usage. Save that quota for the calls that matter.** That's the **less** in Codexless.
-
-No need to decide up front: “ChatGPT for this, Codex for that?”
 
 > **Curious? Give this repo to the ChatGPT you already use. Ask it whether your machine can run it and what you'll be able to do after setup.**
 
@@ -57,7 +66,9 @@ When it really is time to call Codex, it **asks you first**:
 
 > **Keep working in ChatGPT. Bring in Codex when you actually need it.**
 
-![Codex Task Card: real done, running, and user-approval states](docs/images/codex-task-card.png)
+<p align="center">
+  <img src="docs/images/codex-task-card-flow.gif" width="100%" alt="Codex Task Card showing call, running, and completed states">
+</p>
 
 ---
 
