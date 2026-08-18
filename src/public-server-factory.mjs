@@ -26,14 +26,14 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     cwd: z.string().min(1).max(32_768).optional().describe("Optional local working-directory context. cwd does not let the caller select or widen a permission profile."),
     access: z.enum(["inherit", "readOnly"]).default("readOnly").describe("readOnly is the safe compatibility default. inherit uses the locally authorized/resolved Codex permission profile."),
     timeoutMs: z.number().int().positive().max(120_000).default(30_000),
-    bindingRef: bindingRefSchema.describe("Optional opaque continuity binding. When supplied, Codexless scopes execution to the bound project and journals command metadata for the next delta checkpoint."),
+    bindingRef: bindingRefSchema.describe("Optional opaque continuity binding. When supplied, Codexless scopes execution to the bound project and journals command metadata for the next continuity checkpoint."),
   }).strict();
 
   return function createServer() {
     let inFlight = 0;
     const server = new McpServer(
       { name: "codexless", title: "Codexless Local", version: PUBLIC_SERVER_VERSION, description: "ChatGPT-only local coding bridge built on verified model-free Codex App Server primitives." },
-      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. Prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start/status/output/stop for long-running work. For a long-running ChatGPT↔Codex continuity workflow, bind the intended stored Codex thread once with codex.continuity_bind, retain bindingRef in the chat, pass it to project actions, and call codex.continuity_checkpoint before each final response that materially advances the bound project. The checkpoint is an external delta handoff only; no Codex model turn is started." }
+      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. Prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. On supported platforms command_write can send stdin and command_terminate stops the active process. For a long-running ChatGPT↔Codex continuity workflow, bind the intended stored Codex thread once with codex.continuity_bind, retain bindingRef in the chat, pass it to project actions, and call codex.continuity_checkpoint before each final response that materially advances the bound project. The checkpoint is an external delta handoff only; no Codex model turn is started." }
     );
 
     server.registerTool(
