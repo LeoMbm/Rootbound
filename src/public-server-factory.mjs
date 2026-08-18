@@ -9,6 +9,7 @@ import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION } from "./surface-contrac
 const require = createRequire(import.meta.url);
 const { McpServer } = require("@modelcontextprotocol/server");
 const z = require("zod/v4");
+const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
 
 export function createPublicServerFactory({
   executor,
@@ -16,6 +17,7 @@ export function createPublicServerFactory({
   publicContext,
   browserReader,
   agentExecutor,
+  continuityState,
   meteredConsentMode = "off",
   meteredQuotaProvider = null,
   agentPreviewState = null,
@@ -26,6 +28,7 @@ export function createPublicServerFactory({
   if (!publicContext) throw new Error("Codexless public server requires publicContext");
   if (!browserReader) throw new Error("Codexless public server requires browserReader");
   if (!agentExecutor) throw new Error("Codexless public server requires agentExecutor");
+  if (!continuityState) throw new Error("Codexless public server requires continuityState");
   if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 4) {
     throw new Error("maxConcurrent must be an integer between 1 and 4");
   }
@@ -38,6 +41,7 @@ export function createPublicServerFactory({
     access: z.enum(["inherit", "readOnly"]).default("readOnly")
       .describe("readOnly is the safe compatibility default. inherit uses the locally authorized/resolved Codex permission profile."),
     timeoutMs: z.number().int().positive().max(30_000).default(10_000),
+    bindingRef: bindingRefSchema.describe("Optional opaque continuity binding. When supplied, Codexless journals this command's metadata for the next delta checkpoint."),
   }).strict();
 
   return function createServer() {
@@ -51,7 +55,7 @@ export function createPublicServerFactory({
       },
       {
         instructions:
-          "Codexless Public Technical Preview. Public surface is deliberately small: authority-bounded project construction, Codex project context and Skills, authorized persisted thread continuity, read-only Browser Reader, and explicit metered Codex Agent delegation with visible consent/usage state. Thread history is project-authority bounded, paginated, and omits raw reasoning. continuity_push is the only history mutation and injects a clearly labeled external handoff without starting a Codex model turn. Browser click/fill, Computer Use, generic MCP calls/catalogs, raw host filesystem/process Workbench controls, and private household capabilities are not part of this package. Remote callers cannot widen Codex permission profiles, sandbox, approval policy, trusted roots, or network authority. Model-free work and metered Codex Agent work are separate lanes.",
+          "Codexless Public Technical Preview. Public surface includes authority-bounded project construction, Codex project context and Skills, authorized persisted thread continuity, read-only Browser Reader, and explicit metered Codex Agent delegation. For a long-running ChatGPT↔Codex workflow, bind the intended Codex thread once with codex.continuity_bind, retain the returned bindingRef in this chat, pass it to supported project actions, and call codex.continuity_checkpoint before every final response that materially advances or changes the bound project. Checkpoints are delta handoffs: include only newly learned decisions/current state; Codexless appends observed local command/edit metadata automatically. Do not checkpoint unrelated conversation. Raw reasoning is not exposed. Browser click/fill, Computer Use, generic MCP calls/catalogs, raw host filesystem/process Workbench controls, and private capabilities are not part of this package. Remote callers cannot widen Codex permission profiles, sandbox, approval policy, trusted roots, or network authority. Model-free work and metered Codex Agent work remain separate lanes.",
       }
     );
 
@@ -60,15 +64,24 @@ export function createPublicServerFactory({
       {
         title: "Codex Model-Free Command",
         description:
-          "Run one buffered argv command through official Codex App Server command/exec without a Codex model turn. Codexless resolves the authorized Codex permission profile locally; the caller cannot select a stronger profile or permission envelope. This model-free lane must not launch Codex CLI directly or through recognized shell/interpreter wrappers; formal metered Codex work must use codex.agent_start / codex.agent_send so Task Card, quota state, and lifecycle remain visible. A bare executable name may be resolved through host PATH on Windows without changing authority.",
+          "Run one buffered argv command through official Codex App Server command/exec without a Codex model turn. Codexless resolves the authorized Codex permission profile locally; the caller cannot select a stronger profile or permission envelope. This model-free lane must not launch Codex CLI directly or through recognized shell/interpreter wrappers. If bindingRef is supplied, only bounded command metadata (not stdout/stderr) is recorded for the next continuity checkpoint.",
         inputSchema: commandSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       },
-      async ({ command, cwd, access, timeoutMs }) => {
+      async ({ command, cwd, access, timeoutMs, bindingRef }) => {
         if (inFlight >= maxConcurrent) return toolError(`bridge concurrency limit reached (${maxConcurrent})`);
         inFlight += 1;
         try {
           const result = await executor.exec({ command, cwd, access, timeoutMs });
+          if (bindingRef) {
+            continuityState.record(bindingRef, {
+              kind: "command",
+              label: summarizeArgv(command),
+              cwd: result.effectiveCwd,
+              status: result.exitCode === 0 ? "ok" : "failed",
+              exitCode: result.exitCode,
+            });
+          }
           const payload = {
             exitCode: result.exitCode,
             stdout: result.stdout,
@@ -85,6 +98,7 @@ export function createPublicServerFactory({
           if (typeof result.trustedAncestor === "string") payload.trustedAncestor = result.trustedAncestor;
           if (result.executableResolution && typeof result.executableResolution === "object") payload.executableResolution = result.executableResolution;
           if (typeof result.resolutionSource === "string") payload.resolutionSource = result.resolutionSource;
+          if (bindingRef) payload.continuityJournaled = true;
           return {
             content: [{ type: "text", text: JSON.stringify(payload) }],
             structuredContent: payload,
@@ -102,8 +116,8 @@ export function createPublicServerFactory({
     );
 
     registerPublicContextTools(server, publicContext);
-    registerThreadHistoryTools(server, { context: publicContext, authorityExecutor });
-    registerConstructionTools(server, { authorityExecutor });
+    registerThreadHistoryTools(server, { context: publicContext, authorityExecutor, continuityState });
+    registerConstructionTools(server, { authorityExecutor, continuityState });
     registerBrowserReaderTools(server, browserReader);
     registerAgentPreviewTools(server, {
       agentExecutor,
@@ -114,6 +128,11 @@ export function createPublicServerFactory({
     });
     return server;
   };
+}
+
+function summarizeArgv(command) {
+  const joined = command.join(" ").replace(/\s+/g, " ").trim();
+  return joined.length > 512 ? joined.slice(0, 509) + "..." : joined;
 }
 
 function toolError(message, details = {}) {
