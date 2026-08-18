@@ -129,6 +129,77 @@ export class CodexPublicContextExecutor {
     };
   }
 
+  async threadList({
+    cwd = this.#defaultCwd,
+    cursor,
+    limit = 20,
+    sortKey = "updated_at",
+    sortDirection = "desc",
+    archived = false,
+    searchTerm,
+  } = {}) {
+    const params = {
+      cwd: path.resolve(cwd),
+      limit,
+      sortKey,
+      sortDirection,
+      archived,
+    };
+    if (cursor) params.cursor = cursor;
+    if (searchTerm) params.searchTerm = searchTerm;
+    const result = await this.#request("thread/list", params);
+    return sanitizeHistoryPayload(result);
+  }
+
+  async threadMetadata({ threadId }) {
+    const result = await this.#request("thread/read", { threadId, includeTurns: false });
+    const sanitized = sanitizeHistoryPayload(result);
+    const thread = sanitized?.thread ?? null;
+    if (!thread?.id) throw new Error(`Codex thread not found or unreadable: ${threadId}`);
+    return { thread };
+  }
+
+  async threadRead({ threadId, cursor, limit = 12, sortDirection = "desc", metadata = null }) {
+    const threadMetadata = metadata ?? await this.threadMetadata({ threadId });
+    const params = { threadId, limit, sortDirection };
+    if (cursor) params.cursor = cursor;
+    const turns = await this.#request("thread/turns/list", params);
+    return {
+      thread: threadMetadata.thread,
+      turns: sanitizeHistoryPayload(turns),
+    };
+  }
+
+  async threadItems({ threadId, turnId, cursor, limit = 50, sortDirection = "asc", metadata = null }) {
+    const threadMetadata = metadata ?? await this.threadMetadata({ threadId });
+    const params = { threadId, limit, sortDirection };
+    if (turnId) params.turnId = turnId;
+    if (cursor) params.cursor = cursor;
+    const items = await this.#request("thread/items/list", params);
+    return {
+      thread: threadMetadata.thread,
+      items: sanitizeHistoryPayload(items),
+    };
+  }
+
+  async injectContinuity({ threadId, text }) {
+    if (typeof text !== "string" || !text.trim()) throw new Error("continuity text must be non-empty");
+    // thread/inject_items operates on a loaded thread. Resuming is model-free and
+    // deliberately does not call turn/start; it only restores the persisted thread.
+    await this.#request("thread/resume", { threadId });
+    await this.#request("thread/inject_items", {
+      threadId,
+      items: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text }],
+        },
+      ],
+    });
+    return { status: "injected", threadId, modelTurnStarted: false };
+  }
+
   async browserPrerequisites({ cwd = this.#defaultCwd } = {}) {
     const effectiveCwd = path.resolve(cwd);
     const skillsResult = await this.#request("skills/list", { cwds: [effectiveCwd], forceReload: false });
@@ -216,4 +287,28 @@ export class CodexPublicContextExecutor {
     this.#threadsByCwd.set(cwd, threadId);
     return threadId;
   }
+}
+
+export function sanitizeHistoryPayload(value) {
+  if (Array.isArray(value)) return value.map(sanitizeHistoryPayload);
+  if (!value || typeof value !== "object") return value;
+
+  const type = typeof value.type === "string" ? value.type.toLowerCase() : "";
+  if (type === "reasoning") {
+    const reasoning = {};
+    for (const key of ["id", "type", "summary", "phase", "status"]) {
+      if (value[key] !== undefined) reasoning[key] = sanitizeHistoryPayload(value[key]);
+    }
+    return reasoning;
+  }
+
+  const output = {};
+  for (const [key, child] of Object.entries(value)) {
+    const lower = key.toLowerCase();
+    if (lower === "path" && (value.id || value.cwd)) continue;
+    if (lower === "encryptedcontent" || lower === "encrypted_content") continue;
+    if (lower === "rawreasoning" || lower === "raw_reasoning" || lower === "rawcontent" || lower === "raw_content") continue;
+    output[key] = sanitizeHistoryPayload(child);
+  }
+  return output;
 }
