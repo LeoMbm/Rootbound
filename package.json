@@ -24,6 +24,8 @@
     "start:http": "node scripts/launch.mjs http",
     "doctor": "node scripts/doctor.mjs",
     "self-test": "node scripts/self-test.mjs",
+    "check:lock": "node scripts/check-lock-root.mjs",
+    "check:lock:strict": "node scripts/check-lock-root.mjs --strict",
     "test:contract": "node test/thread-history-tools.mjs && node test/repo-tools.mjs && node test/public-command-policy.mjs && node test/public-contract.mjs",
     "test:consent": "node test/metered-consent.mjs && node test/agent-consent-card.mjs",
     "test:browser-reader": "node test/browser-reader-lifecycle.mjs",
