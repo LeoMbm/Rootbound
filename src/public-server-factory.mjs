@@ -5,6 +5,7 @@ import { registerConstructionTools } from "./construction-tools.mjs";
 import { registerPublicContextTools } from "./public-context-tools.mjs";
 import { registerRepoTools } from "./repo-tools.mjs";
 import { registerThreadHistoryTools } from "./thread-history-tools.mjs";
+import { registerWorkspaceTools } from "./workspace-tools.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION } from "./surface-contracts.mjs";
 
 const require = createRequire(import.meta.url);
@@ -12,13 +13,14 @@ const { McpServer } = require("@modelcontextprotocol/server");
 const z = require("zod/v4");
 const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
 
-export function createPublicServerFactory({ executor, authorityExecutor, publicContext, browserReader, continuityState, commandManager, maxConcurrent = 1 }) {
+export function createPublicServerFactory({ executor, authorityExecutor, publicContext, browserReader, continuityState, commandManager, stateStore, maxConcurrent = 1 }) {
   if (!executor) throw new Error("Codexless public server requires an authority executor");
   if (!authorityExecutor) throw new Error("Codexless public server requires authorityExecutor");
   if (!publicContext) throw new Error("Codexless public server requires publicContext");
   if (!browserReader) throw new Error("Codexless public server requires browserReader");
   if (!continuityState) throw new Error("Codexless public server requires continuityState");
   if (!commandManager) throw new Error("Codexless public server requires commandManager");
+  if (!stateStore) throw new Error("Codexless public server requires stateStore");
   if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 4) throw new Error("maxConcurrent must be an integer between 1 and 4");
 
   const commandSchema = z.object({
@@ -33,7 +35,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     let inFlight = 0;
     const server = new McpServer(
       { name: "codexless", title: "Codexless Local", version: PUBLIC_SERVER_VERSION, description: "ChatGPT-only local coding bridge built on verified model-free Codex App Server primitives." },
-      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. Prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. On supported platforms command_write can send stdin and command_terminate stops the active process. For a long-running ChatGPT↔Codex continuity workflow, bind the intended stored Codex thread once with codex.continuity_bind, retain bindingRef in the chat, pass it to project actions, and call codex.continuity_checkpoint before each final response that materially advances the bound project. The checkpoint is an external delta handoff only; no Codex model turn is started." }
+      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Start project work with workspace_open to resolve the canonical projectRef/root/authority, then prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. On supported platforms command_write can send stdin and command_terminate stops the active process. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. For a long-running ChatGPT↔Codex continuity workflow, bind the intended stored Codex thread once with codex.continuity_bind, retain bindingRef in the chat, pass it to project actions, and call codex.continuity_checkpoint before each final response that materially advances the bound project. The checkpoint is an external delta handoff only; no Codex model turn is started." }
     );
 
     server.registerTool(
@@ -71,6 +73,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
       }
     );
 
+    registerWorkspaceTools(server, { store: stateStore, authorityExecutor, publicContext });
     registerCommandTools(server, { commandManager });
     registerPublicContextTools(server, publicContext);
     registerThreadHistoryTools(server, { context: publicContext, authorityExecutor, continuityState });
