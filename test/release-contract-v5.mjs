@@ -22,10 +22,10 @@ assert.equal(PUBLIC_TOOL_NAMES.some((name) => name.startsWith("codex.agent_")), 
 assert.match(workflow, /workflow_dispatch\s*:/);
 assert.doesNotMatch(workflow, /^\s*push\s*:/m, "V5 CI must remain manual-only during stabilization");
 assert.doesNotMatch(workflow, /^\s*pull_request\s*:/m, "V5 CI must remain manual-only during stabilization");
-
-const checkedPaths = [...workflow.matchAll(/node --check\s+([^\s]+)/g)].map((match) => match[1]);
-assert.ok(checkedPaths.length > 0);
-for (const relative of checkedPaths) await access(path.join(root, relative));
+assert.match(workflow, /node scripts\/validate-v5-syntax\.mjs/);
+assert.match(workflow, /node scripts\/check-lock-root\.mjs/);
+await access(path.join(root, "scripts", "validate-v5-syntax.mjs"));
+await access(path.join(root, "scripts", "check-lock-root.mjs"));
 
 assert.equal(packageJson.engines?.node, ">=22.13.0");
 assert.equal(packageJson.bin?.codexless, "bin/codexless-entry.mjs");
@@ -33,6 +33,7 @@ assert.equal(packageJson.repository?.url, "git+https://github.com/LeoMbm/Codexle
 assert.equal(packageJson.homepage, "https://github.com/LeoMbm/Codexless#readme");
 assert.equal(packageJson.bugs?.url, "https://github.com/LeoMbm/Codexless/issues");
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /release-contract-v5\.mjs/, "test:v5 must include the release contract guard");
+assert.ok(packageJson.files?.includes("docs/plans/codexless-v5.md"), "V5 plan must be packaged because README links to it");
 
 assert.match(readme, /codexless-public-preview-v5/);
 assert.match(readme, /27 public tools/);
