@@ -39,5 +39,6 @@ jobs:
           node --check src/command-manager.mjs
           node --check src/streaming-command-session.mjs
           node --check src/command-tools.mjs
+          node --check src/workspace-tools.mjs
           node --check src/public-runtime.mjs
           node --check src/public-server-factory.mjs
