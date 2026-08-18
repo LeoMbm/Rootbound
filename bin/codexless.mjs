@@ -9,6 +9,7 @@ import { openStateStore } from "../src/state-store.mjs";
 import { registerProject, resolveProjectRoot } from "../src/project-registry.mjs";
 import { resolveCodexlessPaths } from "../src/state-paths.mjs";
 import { runtimeStatus, stopRuntime, tailLog } from "../src/runtime-state.mjs";
+import { resolveTunnelLaunch } from "../src/tunnel-config.mjs";
 import { ensureExactProjectTrust, resolveCodexConfigPath, rollbackTrustConfig } from "../src/trust-config.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -20,6 +21,7 @@ const paths = resolveCodexlessPaths();
 try {
   switch (command) {
     case "connect": await connectCommand(options); break;
+    case "start": await startCommand(options); break;
     case "status": await statusCommand(options); break;
     case "doctor": await doctorCommand(options); break;
     case "logs": await logsCommand(options); break;
@@ -39,6 +41,7 @@ async function connectCommand(opts) {
   const input = opts.positionals[0] ?? ".";
   const resolved = await resolveProjectRoot(input);
   const configPath = resolveCodexConfigPath();
+  if (!opts.noStart) resolveTunnelLaunch({ packageRoot, projectRoot: resolved.root });
   if (!opts.yes) await confirmTrust(resolved.root, configPath);
   const trust = await ensureExactProjectTrust(resolved.root, { configPath, backupsDir: paths.backupsDir });
   let doctor;
@@ -63,8 +66,61 @@ async function connectCommand(opts) {
       trust: { changed: trust.changed, configPath: trust.configPath, backupPath: trust.backupPath },
       doctor: { status: doctor.value.status, permissionProfile: doctor.value.project.permissionProfile ?? null },
     };
+    if (!opts.noStart) result.runtime = await startSupervisor(project);
     printResult(result, opts);
   } finally { store.close(); }
+}
+
+async function startCommand(opts) {
+  const store = await openStateStore({ paths });
+  try {
+    let project = null;
+    if (opts.positionals[0]) {
+      const resolved = await resolveProjectRoot(opts.positionals[0]);
+      project = store.getProjectByRoot(resolved.root);
+    } else {
+      const projects = store.listProjects();
+      if (projects.length === 1) project = projects[0];
+      else if (projects.length > 1) throw new CliUsageError("start requires a project path when multiple projects are registered");
+    }
+    if (!project) throw new CliUsageError("No registered project found; run codexless connect <path> first");
+    if (!project.trusted) throw new Error(`Project is not marked trusted: ${project.root}`);
+    resolveTunnelLaunch({ packageRoot, projectRoot: project.root });
+    const runtime = await startSupervisor(project);
+    printResult({ ok: true, action: "started", project, runtime }, opts);
+  } finally { store.close(); }
+}
+
+async function startSupervisor(project) {
+  const current = await runtimeStatus(paths);
+  if (current.running) {
+    if (current.state?.projectRef && current.state.projectRef !== project.projectRef) {
+      throw new Error(`Codexless runtime is already connected to ${current.state.projectRef}; stop it before switching projects`);
+    }
+    return current;
+  }
+  if (current.stale) await stopRuntime(paths);
+  const child = spawn(process.execPath, [path.join(packageRoot, "scripts", "supervisor.mjs")], {
+    cwd: packageRoot,
+    env: { ...process.env, CODEXLESS_PROJECT_REF: project.projectRef, CODEXLESS_PROJECT_ROOT: project.root },
+    detached: true,
+    windowsHide: true,
+    stdio: "ignore",
+  });
+  let exited = null;
+  child.once("exit", (code, signal) => { exited = { code, signal }; });
+  child.unref();
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const runtime = await runtimeStatus(paths);
+    if (runtime.running && runtime.state?.projectRef === project.projectRef) return runtime;
+    if (exited) {
+      const detail = (await tailLog(paths.logPath, { maxBytes: 8192 })).trim();
+      throw new Error(`Codexless supervisor exited during startup (code=${exited.code} signal=${exited.signal})${detail ? `: ${detail}` : ""}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Codexless supervisor did not become ready within 5 seconds; inspect codexless logs");
 }
 
 async function statusCommand(opts) {
@@ -165,13 +221,14 @@ async function followLog(logPath) {
 }
 
 function parseOptions(argv) {
-  const out = { positionals: [], json: false, yes: false, follow: false, force: false, bytes: null };
+  const out = { positionals: [], json: false, yes: false, follow: false, force: false, noStart: false, bytes: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--json") out.json = true;
     else if (arg === "--yes" || arg === "-y") out.yes = true;
     else if (arg === "--follow" || arg === "-f") out.follow = true;
     else if (arg === "--force") out.force = true;
+    else if (arg === "--no-start") out.noStart = true;
     else if (arg === "--bytes") { if (!argv[i + 1]) throw new CliUsageError("--bytes requires a value"); out.bytes = argv[++i]; }
     else if (arg.startsWith("-")) throw new CliUsageError(`Unknown option: ${arg}`);
     else out.positionals.push(arg);
@@ -188,7 +245,7 @@ function parseInteger(value, label, min, max) {
 function printResult(value, opts) {
   if (opts.json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   else if (value.action === "connected") {
-    process.stdout.write(`Connected ${value.project.name}\nProject: ${value.project.root}\nRef: ${value.project.projectRef}\nTrust: ${value.trust.changed ? "added exact-root trust" : "already trusted"}\n`);
+    process.stdout.write(`Connected ${value.project.name}\nProject: ${value.project.root}\nRef: ${value.project.projectRef}\nTrust: ${value.trust.changed ? "added exact-root trust" : "already trusted"}\nRuntime: ${value.runtime?.status ?? "not started"}\n`);
   } else if (Array.isArray(value.projects)) {
     process.stdout.write(`Runtime: ${value.runtime.status}\nState: ${value.stateRoot}\nProjects: ${value.projects.length}\n`);
     for (const project of value.projects) process.stdout.write(`- ${project.projectRef}  ${project.root}${project.trusted ? "  trusted" : ""}\n`);
@@ -196,7 +253,7 @@ function printResult(value, opts) {
 }
 
 function printHelp() {
-  process.stdout.write(`Codexless V5 control plane\n\nUsage:\n  codexless connect [path] [--yes] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless stop [--force] [--json]\n  codexless version\n\nconnect never widens trust silently: interactive approval or --yes is required.\n`);
+  process.stdout.write(`Codexless V5 control plane\n\nUsage:\n  codexless connect [path] [--yes] [--no-start] [--json]\n  codexless start [path] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless stop [--force] [--json]\n  codexless version\n\nconnect never widens trust silently: interactive approval or --yes is required.\n`);
 }
 
 class CliUsageError extends Error {}
