@@ -46,13 +46,14 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
     "codex.read_many",
     {
       title: "Read Multiple Authorized Project Files",
-      description: "Read UTF-8 project files through the authorized Codex sandbox with request-bound pagination. If a page ends inside a file, nextCursor resumes at the exact character offset and refuses to continue if that file changed in between. No Codex model turn is started.",
+      description: "Read UTF-8 project files through the authorized Codex sandbox with request-bound pagination. Sensitive files such as .env/private keys/credentials require allowSensitive=true. If a page ends inside a file, nextCursor resumes at the exact character offset and refuses to continue if that file changed in between. No Codex model turn is started.",
       inputSchema: z.object({
         paths: z.array(z.string().min(1).max(32_768)).min(1).max(20),
         cwd: z.string().min(1).max(32_768).optional(),
         maxCharsPerFile: z.number().int().min(1_000).max(MAX_PER_FILE_CHARS).default(DEFAULT_PER_FILE_CHARS),
         maxTotalChars: z.number().int().min(1_000).max(MAX_TOTAL_CHARS).default(DEFAULT_TOTAL_CHARS),
         cursor: z.string().max(2_048).optional(),
+        allowSensitive: z.boolean().default(false),
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -120,33 +121,26 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
   );
 
   if (mutationJournal) {
-    server.registerTool(
-      "codex.edit_undo",
-      {
-        title: "Undo Guarded Precise Edit",
-        description: "Undo one recorded precise_edit by mutationId. Codexless verifies the current file SHA still equals the recorded after-hash before restoring the exact previous UTF-8 content through the authorized sandbox. Refuses on conflicts; does not use git reset or start a model turn.",
-        inputSchema: z.object({ mutationId: mutationIdSchema }).strict(),
-        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-      },
-      async ({ mutationId }) => typedToolResponse(async () => publicMutation(await mutationJournal.undo(mutationId)), { operation: "edit_undo" })
-    );
-    server.registerTool(
-      "codex.edit_redo",
-      {
-        title: "Redo Guarded Precise Edit",
-        description: "Redo one previously undone precise_edit by mutationId. Codexless verifies the current file SHA still equals the recorded before-hash before restoring the exact after-content through the authorized sandbox.",
-        inputSchema: z.object({ mutationId: mutationIdSchema }).strict(),
-        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-      },
-      async ({ mutationId }) => typedToolResponse(async () => publicMutation(await mutationJournal.redo(mutationId)), { operation: "edit_redo" })
-    );
+    server.registerTool("codex.edit_undo", {
+      title: "Undo Guarded Precise Edit",
+      description: "Undo one recorded precise_edit by mutationId. Codexless verifies the current file SHA still equals the recorded after-hash before restoring the exact previous UTF-8 content through the authorized sandbox. Refuses on conflicts; does not use git reset or start a model turn.",
+      inputSchema: z.object({ mutationId: mutationIdSchema }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ mutationId }) => typedToolResponse(async () => publicMutation(await mutationJournal.undo(mutationId)), { operation: "edit_undo" }));
+
+    server.registerTool("codex.edit_redo", {
+      title: "Redo Guarded Precise Edit",
+      description: "Redo one previously undone precise_edit by mutationId. Codexless verifies the current file SHA still equals the recorded before-hash before restoring the exact after-content through the authorized sandbox.",
+      inputSchema: z.object({ mutationId: mutationIdSchema }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ mutationId }) => typedToolResponse(async () => publicMutation(await mutationJournal.redo(mutationId)), { operation: "edit_redo" }));
   }
 }
 
-export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCharsPerFile = DEFAULT_PER_FILE_CHARS, maxTotalChars = DEFAULT_TOTAL_CHARS, cursor = null }) {
+export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCharsPerFile = DEFAULT_PER_FILE_CHARS, maxTotalChars = DEFAULT_TOTAL_CHARS, cursor = null, allowSensitive = false }) {
   const authority = await authorityExecutor.resolveAuthority({ cwd, access: "readOnly" });
   const root = await canonicalRoot(authority);
-  const signatureInput = { paths, cwd: authority.effectiveCwd, maxCharsPerFile };
+  const signatureInput = { paths, cwd: authority.effectiveCwd, maxCharsPerFile, allowSensitive };
   const state = decodeCursor(cursor, "read_many", signatureInput) ?? { pathIndex: 0, charOffset: 0, fileSha: null };
   if (!Number.isInteger(state.pathIndex) || state.pathIndex < 0 || state.pathIndex >= paths.length || !Number.isInteger(state.charOffset) || state.charOffset < 0) {
     throw paginationError("Pagination cursor contains an invalid file position.", "PAGINATION_CURSOR_INVALID");
@@ -157,7 +151,9 @@ export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCha
   let nextCursor = null;
   for (let index = state.pathIndex; index < paths.length && remaining > 0; index += 1) {
     const requestedPath = paths[index];
+    if (!allowSensitive && isSensitivePath(requestedPath)) throw sensitiveReadError(requestedPath);
     const target = await canonicalExistingFile({ requestedPath, cwd: authority.effectiveCwd, root });
+    if (!allowSensitive && isSensitivePath(target)) throw sensitiveReadError(target);
     const read = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
     const text = read.text;
     const buffer = Buffer.from(text, "utf8");
@@ -184,7 +180,7 @@ export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCha
     }
   }
 
-  return { status: "ok", cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: ":read-only", count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files, hasMore: Boolean(nextCursor), nextCursor, modelTurnStarted: false };
+  return { status: "ok", cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: ":read-only", allowSensitive, count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files, hasMore: Boolean(nextCursor), nextCursor, modelTurnStarted: false };
 }
 
 export async function preciseEditAuthorized({ authorityExecutor, path: requestedPath, expectedText, replacementText, expectedOccurrences = 1, expectedSha256, cwd, previewOnly = false, captureSnapshot = false }) {
@@ -205,12 +201,7 @@ export async function preciseEditAuthorized({ authorityExecutor, path: requested
   const preview = buildPreview(initial.text, nextText, expectedText);
 
   if (!previewOnly) {
-    const edit = await authorityExecutor.exec({
-      command: [process.execPath, "-e", PRECISE_EDIT_SCRIPT, target, beforeSha256, String(expectedOccurrences), Buffer.from(expectedText, "utf8").toString("base64"), Buffer.from(replacementText, "utf8").toString("base64")],
-      cwd: authority.effectiveCwd,
-      access: "inherit",
-      timeoutMs: 15_000,
-    });
+    const edit = await authorityExecutor.exec({ command: [process.execPath, "-e", PRECISE_EDIT_SCRIPT, target, beforeSha256, String(expectedOccurrences), Buffer.from(expectedText, "utf8").toString("base64"), Buffer.from(replacementText, "utf8").toString("base64")], cwd: authority.effectiveCwd, access: "inherit", timeoutMs: 15_000 });
     if (edit.exitCode !== 0) throw new Error(`precise edit sandbox write failed: ${edit.stderr || `exit ${edit.exitCode}`}`);
     const written = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
     const writtenSha256 = sha256(Buffer.from(written.text, "utf8"));
@@ -218,27 +209,14 @@ export async function preciseEditAuthorized({ authorityExecutor, path: requested
   }
 
   return {
-    status: previewOnly ? "preview" : "applied",
-    path: target,
-    cwd: authority.effectiveCwd,
-    trustedAncestor: root,
-    permissionProfile: authority.permissionProfile,
-    occurrenceCount,
-    beforeSha256,
-    afterSha256,
-    beforeBytes: initialBuffer.length,
-    afterBytes: afterBuffer.length,
-    changed: beforeSha256 !== afterSha256,
-    previewOnly,
-    preview,
-    modelTurnStarted: false,
+    status: previewOnly ? "preview" : "applied", path: target, cwd: authority.effectiveCwd, trustedAncestor: root,
+    permissionProfile: authority.permissionProfile, occurrenceCount, beforeSha256, afterSha256, beforeBytes: initialBuffer.length,
+    afterBytes: afterBuffer.length, changed: beforeSha256 !== afterSha256, previewOnly, preview, modelTurnStarted: false,
     ...(captureSnapshot && !previewOnly ? { mutationSnapshot: { beforeText: initial.text, afterText: nextText } } : {}),
   };
 }
 
-function publicMutation(row) {
-  return { mutationId: row.mutationId, projectRef: row.projectRef, bindingRef: row.bindingRef, path: row.path, cwd: row.cwd, beforeSha256: row.beforeSha256, afterSha256: row.afterSha256, status: row.status, action: row.action, modelTurnStarted: false };
-}
+function publicMutation(row) { return { mutationId: row.mutationId, projectRef: row.projectRef, bindingRef: row.bindingRef, path: row.path, cwd: row.cwd, beforeSha256: row.beforeSha256, afterSha256: row.afterSha256, status: row.status, action: row.action, modelTurnStarted: false }; }
 async function readTextViaSandbox({ authorityExecutor, target, cwd, access }) {
   const result = await authorityExecutor.exec({ command: [process.execPath, "-e", READ_FILE_SCRIPT, target], cwd, access, timeoutMs: 10_000 });
   if (result.exitCode !== 0) throw new Error(`authorized file read failed: ${result.stderr || `exit ${result.exitCode}`}`);
@@ -299,5 +277,13 @@ function paginationError(message, code) {
   error.category = "state";
   error.retryable = false;
   error.nextActions = ["Restart read_many without a cursor to read the current file version."];
+  return error;
+}
+function sensitiveReadError(target) {
+  const error = new Error(`Reading sensitive file requires explicit allowSensitive=true: ${target}`);
+  error.code = "SENSITIVE_READ_REQUIRES_OPT_IN";
+  error.category = "safety";
+  error.retryable = false;
+  error.nextActions = ["Retry with allowSensitive=true only if the sensitive contents are intentionally needed in the ChatGPT context."];
   return error;
 }
