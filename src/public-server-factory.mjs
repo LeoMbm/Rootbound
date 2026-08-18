@@ -1,8 +1,8 @@
 import { createRequire } from "node:module";
-import { registerAgentPreviewTools } from "./agent-tools.mjs";
 import { registerBrowserReaderTools } from "./browser-reader-tools.mjs";
 import { registerConstructionTools } from "./construction-tools.mjs";
 import { registerPublicContextTools } from "./public-context-tools.mjs";
+import { registerRepoTools } from "./repo-tools.mjs";
 import { registerThreadHistoryTools } from "./thread-history-tools.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION } from "./surface-contracts.mjs";
 
@@ -11,12 +11,11 @@ const { McpServer } = require("@modelcontextprotocol/server");
 const z = require("zod/v4");
 const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
 
-export function createPublicServerFactory({ executor, authorityExecutor, publicContext, browserReader, agentExecutor, continuityState, meteredConsentMode = "off", meteredQuotaProvider = null, agentPreviewState = null, maxConcurrent = 1 }) {
+export function createPublicServerFactory({ executor, authorityExecutor, publicContext, browserReader, continuityState, maxConcurrent = 1 }) {
   if (!executor) throw new Error("Codexless public server requires an authority executor");
   if (!authorityExecutor) throw new Error("Codexless public server requires authorityExecutor");
   if (!publicContext) throw new Error("Codexless public server requires publicContext");
   if (!browserReader) throw new Error("Codexless public server requires browserReader");
-  if (!agentExecutor) throw new Error("Codexless public server requires agentExecutor");
   if (!continuityState) throw new Error("Codexless public server requires continuityState");
   if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 4) throw new Error("maxConcurrent must be an integer between 1 and 4");
 
@@ -31,15 +30,15 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
   return function createServer() {
     let inFlight = 0;
     const server = new McpServer(
-      { name: "codexless", title: "Codexless", version: PUBLIC_SERVER_VERSION, description: "Local bridge that lets ChatGPT use accepted Codex-backed capabilities and explicitly escalate to Codex when needed." },
-      { instructions: "Codexless Public Technical Preview. Public surface includes authority-bounded project construction, Codex project context and Skills, authorized persisted thread continuity, read-only Browser Reader, and explicit metered Codex Agent delegation. For a long-running ChatGPT↔Codex workflow, bind the intended Codex thread once with codex.continuity_bind, retain the returned bindingRef in this chat, pass it to supported project actions, and call codex.continuity_checkpoint before every final response that materially advances or changes the bound project. Checkpoints are delta handoffs: include only newly learned decisions/current state; Codexless appends observed local command/edit metadata automatically. Do not checkpoint unrelated conversation. Raw reasoning is not exposed. Browser click/fill, Computer Use, generic MCP calls/catalogs, raw host filesystem/process Workbench controls, and private capabilities are not part of this package. Remote callers cannot widen Codex permission profiles, sandbox, approval policy, trusted roots, or network authority. Model-free work and metered Codex Agent work remain separate lanes." }
+      { name: "codexless", title: "Codexless Local", version: PUBLIC_SERVER_VERSION, description: "ChatGPT-only local coding bridge built on verified model-free Codex App Server primitives." },
+      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Never attempt to launch Codex CLI through command_exec; nested Codex launches are refused. Prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, and command_exec for tests/builds. For a long-running ChatGPT↔Codex continuity workflow, bind the intended stored Codex thread once with codex.continuity_bind, retain bindingRef in the chat, pass it to project actions, and call codex.continuity_checkpoint before each final response that materially advances the bound project. The checkpoint is an external delta handoff only; no Codex model turn is started." }
     );
 
     server.registerTool(
       "codex.command_exec",
       {
-        title: "Codex Model-Free Command",
-        description: "Run one buffered argv command through official Codex App Server command/exec without a Codex model turn. Codexless resolves the authorized Codex permission profile locally; the caller cannot select a stronger profile or permission envelope. This model-free lane must not launch Codex CLI directly or through recognized shell/interpreter wrappers. If bindingRef is supplied, execution is scoped to the bound project and only bounded command metadata (not stdout/stderr) is recorded for the next continuity checkpoint.",
+        title: "Run Authorized Project Command",
+        description: "Run one buffered argv command through official Codex App Server command/exec without starting a Codex model turn. ChatGPT remains the reasoning model. Nested Codex CLI launches and wrappers carrying Codex commands are refused. If bindingRef is supplied, execution is scoped to the bound project and bounded command metadata is journaled for the next continuity checkpoint.",
         inputSchema: commandSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       },
@@ -52,7 +51,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
           if (bindingRef) {
             continuityState.record(bindingRef, { kind: "command", label: summarizeArgv(command), cwd: result.effectiveCwd, status: result.exitCode === 0 ? "ok" : "failed", exitCode: result.exitCode });
           }
-          const payload = { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, access, surfaceVersion: PUBLIC_SURFACE_VERSION };
+          const payload = { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, access, surfaceVersion: PUBLIC_SURFACE_VERSION, modelTurnStarted: false };
           if (typeof result.stdoutTruncated === "boolean") payload.stdoutTruncated = result.stdoutTruncated;
           if (typeof result.stderrTruncated === "boolean") payload.stderrTruncated = result.stderrTruncated;
           if (typeof result.permissionCeiling === "string") payload.permissionCeiling = result.permissionCeiling;
@@ -60,8 +59,6 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
           if (typeof result.effectiveCwd === "string") payload.cwd = result.effectiveCwd;
           if (typeof result.authoritySource === "string") payload.authoritySource = result.authoritySource;
           if (typeof result.trustedAncestor === "string") payload.trustedAncestor = result.trustedAncestor;
-          if (result.executableResolution && typeof result.executableResolution === "object") payload.executableResolution = result.executableResolution;
-          if (typeof result.resolutionSource === "string") payload.resolutionSource = result.resolutionSource;
           if (bindingRef) payload.continuityJournaled = true;
           return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: result.exitCode !== 0 };
         } catch (error) {
@@ -75,8 +72,8 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     registerPublicContextTools(server, publicContext);
     registerThreadHistoryTools(server, { context: publicContext, authorityExecutor, continuityState });
     registerConstructionTools(server, { authorityExecutor, continuityState });
+    registerRepoTools(server, { authorityExecutor, continuityState });
     registerBrowserReaderTools(server, browserReader);
-    registerAgentPreviewTools(server, { agentExecutor, authorityExecutor, meteredConsentMode, meteredQuotaProvider, agentPreviewState });
     return server;
   };
 }
