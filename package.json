@@ -6,11 +6,11 @@
   "description": "Windows and Apple Silicon macOS Technical Preview: let ChatGPT do local coding work through verified model-free Codex App Server primitives.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/liyana31811/Codexless.git"
+    "url": "git+https://github.com/LeoMbm/Codexless.git"
   },
-  "homepage": "https://github.com/liyana31811/Codexless#readme",
+  "homepage": "https://github.com/LeoMbm/Codexless#readme",
   "bugs": {
-    "url": "https://github.com/liyana31811/Codexless/issues"
+    "url": "https://github.com/LeoMbm/Codexless/issues"
   },
   "type": "module",
   "bin": {
