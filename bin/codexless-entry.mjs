@@ -14,17 +14,22 @@ if (command === "self-test") {
     const project = forwarded.shift();
     forwarded.unshift("--cwd", project);
   }
-  const child = spawn(process.execPath, [path.join(binDir, "..", "scripts", "self-test.mjs"), ...forwarded], {
+  process.exitCode = await runScript("self-test.mjs", forwarded);
+} else if (command === "upgrade") {
+  process.exitCode = await runScript("upgrade.mjs", args.slice(1));
+} else {
+  await import("./codexless.mjs");
+}
+
+async function runScript(scriptName, forwarded) {
+  const child = spawn(process.execPath, [path.join(binDir, "..", "scripts", scriptName), ...forwarded], {
     cwd: process.cwd(),
     env: process.env,
     stdio: "inherit",
     windowsHide: true,
   });
-  const exitCode = await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("close", (code) => resolve(code ?? 1));
   });
-  process.exitCode = exitCode;
-} else {
-  await import("./codexless.mjs");
 }
