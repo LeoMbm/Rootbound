@@ -48,7 +48,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       configOverrides,
       maxTimeoutMs: 120_000,
       watchdogGraceMs: 5_000,
-      outputBytesCap: 524_288,
+      outputBytesCap: 1_048_576,
       acceptedCodexVersions,
     });
     const authorityValidation = await authorityExecutor.validate();
