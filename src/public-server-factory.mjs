@@ -35,7 +35,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     let inFlight = 0;
     const server = new McpServer(
       { name: "codexless", title: "Codexless Local", version: PUBLIC_SERVER_VERSION, description: "ChatGPT-only local coding bridge built on verified model-free Codex App Server primitives." },
-      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Start project work with workspace_open to resolve the canonical projectRef/root/authority, then prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. On supported platforms command_write can send stdin and command_terminate stops the active process. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. For a long-running ChatGPT↔Codex continuity workflow, bind the intended stored Codex thread once with codex.continuity_bind, retain bindingRef in the chat, pass it to project actions, and call codex.continuity_checkpoint before each final response that materially advances the bound project. The checkpoint is an external delta handoff only; no Codex model turn is started." }
+      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Start project work with workspace_open to resolve the canonical projectRef/root/authority, then prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. Successful precise_edit calls may return a mutationId; use edit_undo/edit_redo for guarded local reversal while hashes still match. On supported platforms command_write can send stdin and command_terminate stops the active process. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. For a long-running ChatGPT↔Codex continuity workflow, bind the intended stored Codex thread once with codex.continuity_bind, retain bindingRef in the chat, pass it to project actions, and call codex.continuity_checkpoint before each final response that materially advances the bound project. The checkpoint is an external delta handoff only; no Codex model turn is started." }
     );
 
     server.registerTool(
@@ -52,9 +52,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
         try {
           const scoped = bindingRef ? continuityState.assertCwd(bindingRef, cwd) : null;
           const result = await executor.exec({ command, cwd: scoped?.targetCwd ?? cwd, access, timeoutMs });
-          if (bindingRef) {
-            continuityState.record(bindingRef, { kind: "command", label: summarizeArgv(command), cwd: result.effectiveCwd, status: result.exitCode === 0 ? "ok" : "failed", exitCode: result.exitCode });
-          }
+          if (bindingRef) continuityState.record(bindingRef, { kind: "command", label: summarizeArgv(command), cwd: result.effectiveCwd, status: result.exitCode === 0 ? "ok" : "failed", exitCode: result.exitCode });
           const payload = { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, access, surfaceVersion: PUBLIC_SURFACE_VERSION, modelTurnStarted: false };
           if (typeof result.stdoutTruncated === "boolean") payload.stdoutTruncated = result.stdoutTruncated;
           if (typeof result.stderrTruncated === "boolean") payload.stderrTruncated = result.stderrTruncated;
@@ -67,9 +65,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
           return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: result.exitCode !== 0 };
         } catch (error) {
           return toolError(error instanceof Error ? error.message : String(error), error && typeof error === "object" ? { errorCode: error.code, nextActions: error.nextActions } : undefined);
-        } finally {
-          inFlight -= 1;
-        }
+        } finally { inFlight -= 1; }
       }
     );
 
@@ -77,7 +73,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     registerCommandTools(server, { commandManager });
     registerPublicContextTools(server, publicContext);
     registerThreadHistoryTools(server, { context: publicContext, authorityExecutor, continuityState });
-    registerConstructionTools(server, { authorityExecutor, continuityState });
+    registerConstructionTools(server, { authorityExecutor, continuityState, stateStore });
     registerRepoTools(server, { authorityExecutor, continuityState });
     registerBrowserReaderTools(server, browserReader);
     return server;
