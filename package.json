@@ -57,6 +57,7 @@
     "bin/codexless-install.sh",
     "bin/codexless-stdio.sh",
     "bin/codexless-uninstall.sh",
+    "docs/plans/codexless-v5.md",
     "npm-shrinkwrap.json",
     "README.md",
     "README.zh-CN.md",
