@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 
 const DEFAULT_TTL_MS = 12 * 60 * 60_000;
 const DEFAULT_MAX_BINDINGS = 100;
@@ -48,7 +49,7 @@ export function createContinuityState({
       bindings.set(bindingRef, {
         bindingRef,
         threadId,
-        cwd,
+        cwd: path.resolve(cwd),
         threadPreview,
         createdAt: at,
         touchedAt: at,
@@ -62,8 +63,7 @@ export function createContinuityState({
     },
 
     status(bindingRef) {
-      const binding = getRequired(bindingRef);
-      return publicBinding(binding);
+      return publicBinding(getRequired(bindingRef));
     },
 
     resolve(bindingRef) {
@@ -76,18 +76,21 @@ export function createContinuityState({
       };
     },
 
+    assertCwd(bindingRef, candidateCwd = null) {
+      const binding = getRequired(bindingRef);
+      const target = path.resolve(candidateCwd ?? binding.cwd);
+      if (!isPathWithin(binding.cwd, target)) {
+        throw new Error(`continuity binding is scoped to ${binding.cwd}; refused action cwd ${target}`);
+      }
+      return { bindingRef: binding.bindingRef, threadId: binding.threadId, cwd: binding.cwd, targetCwd: target };
+    },
+
     record(bindingRef, event) {
       if (!bindingRef) return null;
       const binding = getRequired(bindingRef);
-      const entry = {
-        seq: nextSeq++,
-        at: now(),
-        ...sanitizeJournalEvent(event),
-      };
+      const entry = { seq: nextSeq++, at: now(), ...sanitizeJournalEvent(event) };
       binding.journal.push(entry);
-      if (binding.journal.length > maxJournalEntries) {
-        binding.journal.splice(0, binding.journal.length - maxJournalEntries);
-      }
+      if (binding.journal.length > maxJournalEntries) binding.journal.splice(0, binding.journal.length - maxJournalEntries);
       binding.touchedAt = now();
       return structuredClone(entry);
     },
@@ -107,16 +110,12 @@ export function createContinuityState({
 
     acknowledgeCheckpoint(bindingRef, throughSeq) {
       const binding = getRequired(bindingRef);
-      if (!Number.isInteger(throughSeq) || throughSeq < binding.lastAckSeq) {
-        throw new Error("invalid continuity checkpoint sequence");
-      }
+      if (!Number.isInteger(throughSeq) || throughSeq < binding.lastAckSeq) throw new Error("invalid continuity checkpoint sequence");
       binding.lastAckSeq = throughSeq;
       binding.checkpointCount += 1;
       binding.lastCheckpointAt = now();
       binding.touchedAt = now();
-      if (binding.journal.length > maxJournalEntries / 2) {
-        binding.journal = binding.journal.filter((entry) => entry.seq > binding.lastAckSeq);
-      }
+      if (binding.journal.length > maxJournalEntries / 2) binding.journal = binding.journal.filter((entry) => entry.seq > binding.lastAckSeq);
       return publicBinding(binding);
     },
 
@@ -128,6 +127,11 @@ export function createContinuityState({
       return { status: "unbound", bindingRef, threadId: binding.threadId };
     },
   };
+}
+
+function isPathWithin(root, target) {
+  const relative = path.relative(path.resolve(root), path.resolve(target));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 function publicBinding(binding) {
