@@ -27,6 +27,23 @@ try {
   assert.equal(blocked.project.trusted, false);
   assert.deepEqual(blocked.nextActions, ["Trust exact root"]);
 
+  const ancestorOnly = await openWorkspace({
+    cwd: project,
+    store,
+    authorityExecutor: {
+      defaultCwd: project,
+      async resolveAuthority() {
+        return { permissionProfile: ":read-only", permissionCeiling: ":workspace", authoritySource: "test", trustedAncestor: temp };
+      },
+    },
+    publicContext: { async projectContext() { throw new Error("context must not be read for ancestor-only trust"); } },
+  });
+  assert.equal(ancestorOnly.status, "needs_trust");
+  assert.equal(ancestorOnly.errorCode, "EXACT_ROOT_TRUST_REQUIRED");
+  assert.equal(ancestorOnly.project.trusted, false);
+  assert.equal(ancestorOnly.authority.exactRoot, false);
+  assert.equal(ancestorOnly.authority.trustedAncestor, temp);
+
   const ready = await openWorkspace({
     cwd: project,
     store,
@@ -41,6 +58,7 @@ try {
   assert.equal(ready.status, "ready");
   assert.equal(ready.project.trusted, true);
   assert.equal(ready.authority.permissionProfile, ":read-only");
+  assert.equal(ready.authority.exactRoot, true);
   assert.equal(ready.context.cwd, project);
   assert.equal(ready.modelTurnStarted, false);
 
