@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { ensureCodexlessStateDirs, resolveCodexlessPaths } from "./state-paths.mjs";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export async function openStateStore({ paths = resolveCodexlessPaths() } = {}) {
   await ensureCodexlessStateDirs(paths);
@@ -28,7 +28,8 @@ function createSchema(db) {
     );
     CREATE TABLE IF NOT EXISTS commands (
       command_id TEXT PRIMARY KEY, project_ref TEXT NOT NULL, argv_json TEXT NOT NULL, cwd TEXT NOT NULL,
-      status TEXT NOT NULL, exit_code INTEGER, started_at INTEGER NOT NULL, finished_at INTEGER,
+      binding_ref TEXT, status TEXT NOT NULL, access TEXT NOT NULL DEFAULT 'readOnly', timeout_ms INTEGER NOT NULL DEFAULT 120000, worker_pid INTEGER, exit_code INTEGER, started_at INTEGER NOT NULL, finished_at INTEGER, updated_at INTEGER,
+      stdout TEXT, stderr TEXT, stdout_truncated INTEGER NOT NULL DEFAULT 0, stderr_truncated INTEGER NOT NULL DEFAULT 0, error TEXT,
       FOREIGN KEY(project_ref) REFERENCES projects(project_ref) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS checkpoints (
@@ -64,6 +65,21 @@ function migrateSchema(db) {
     addColumnIfMissing(db, "events", "binding_ref", "TEXT");
     db.prepare("UPDATE meta SET value='2' WHERE key='schema_version'").run();
     version = 2;
+  }
+  if (version < 3) {
+    addColumnIfMissing(db, "commands", "binding_ref", "TEXT");
+    addColumnIfMissing(db, "commands", "access", "TEXT NOT NULL DEFAULT 'readOnly'");
+    addColumnIfMissing(db, "commands", "timeout_ms", "INTEGER NOT NULL DEFAULT 120000");
+    addColumnIfMissing(db, "commands", "worker_pid", "INTEGER");
+    addColumnIfMissing(db, "commands", "updated_at", "INTEGER");
+    addColumnIfMissing(db, "commands", "stdout", "TEXT");
+    addColumnIfMissing(db, "commands", "stderr", "TEXT");
+    addColumnIfMissing(db, "commands", "stdout_truncated", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "commands", "stderr_truncated", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(db, "commands", "error", "TEXT");
+    db.exec("UPDATE commands SET updated_at=COALESCE(updated_at, started_at)");
+    db.prepare("UPDATE meta SET value='3' WHERE key='schema_version'").run();
+    version = 3;
   }
   if (version !== SCHEMA_VERSION) throw new Error(`Unsupported Codexless state schema: ${version}`);
 }
@@ -119,6 +135,22 @@ function createStore(db, paths) {
       db.prepare("INSERT INTO checkpoints(checkpoint_id, project_ref, binding_ref, through_seq, created_at, payload_json) VALUES(?, ?, ?, ?, ?, ?)")
         .run(checkpointId, projectRef, bindingRef, throughSeq, createdAt, JSON.stringify(payload));
     },
+    createCommand(command) {
+      db.prepare(`INSERT INTO commands(command_id, project_ref, argv_json, cwd, binding_ref, status, access, timeout_ms, worker_pid, exit_code, started_at, finished_at, updated_at, stdout, stderr, stdout_truncated, stderr_truncated, error)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(command.commandId, command.projectRef, JSON.stringify(command.argv), command.cwd, command.bindingRef ?? null, command.status, command.access ?? "readOnly", command.timeoutMs ?? 120000, command.workerPid ?? null, command.exitCode ?? null, command.startedAt, command.finishedAt ?? null, command.updatedAt ?? command.startedAt, command.stdout ?? null, command.stderr ?? null, command.stdoutTruncated ? 1 : 0, command.stderrTruncated ? 1 : 0, command.error ?? null);
+      return this.getCommand(command.commandId);
+    },
+    getCommand(commandId) { return normalizeCommand(db.prepare("SELECT * FROM commands WHERE command_id=?").get(commandId)); },
+    updateCommand(commandId, patch = {}) {
+      const current = this.getCommand(commandId);
+      if (!current) return null;
+      const next = { ...current, ...patch, commandId, updatedAt: patch.updatedAt ?? Date.now() };
+      db.prepare(`UPDATE commands SET status=?, access=?, timeout_ms=?, worker_pid=?, exit_code=?, finished_at=?, updated_at=?, stdout=?, stderr=?, stdout_truncated=?, stderr_truncated=?, error=? WHERE command_id=?`).run(next.status, next.access ?? "readOnly", next.timeoutMs ?? 120000, next.workerPid ?? null, next.exitCode ?? null, next.finishedAt ?? null, next.updatedAt, next.stdout ?? null, next.stderr ?? null, next.stdoutTruncated ? 1 : 0, next.stderrTruncated ? 1 : 0, next.error ?? null, commandId);
+      return this.getCommand(commandId);
+    },
+    interruptActiveCommands(at = Date.now()) {
+      return db.prepare("UPDATE commands SET status='interrupted', finished_at=?, updated_at=?, error=COALESCE(error, 'runtime restarted while command was active') WHERE status IN ('starting','running','stopping')").run(at, at).changes;
+    },
   };
 }
 
@@ -133,4 +165,10 @@ function normalizeBinding(row) {
   return { bindingRef: row.binding_ref, projectRef: row.project_ref, threadId: row.thread_id, threadPreview,
     createdAt: Number(row.created_at), touchedAt: Number(row.touched_at), checkpointCount: Number(row.checkpoint_count ?? 0),
     lastCheckpointAt: row.last_checkpoint_at === null ? null : Number(row.last_checkpoint_at), lastAckSeq: Number(row.last_ack_seq ?? 0) };
+}
+
+function normalizeCommand(row) {
+  if (!row) return null;
+  let argv = []; try { argv = JSON.parse(row.argv_json); } catch {}
+  return { commandId: row.command_id, projectRef: row.project_ref, bindingRef: row.binding_ref ?? null, argv, cwd: row.cwd, status: row.status, access: row.access ?? "readOnly", timeoutMs: Number(row.timeout_ms ?? 120000), workerPid: row.worker_pid === null ? null : Number(row.worker_pid), exitCode: row.exit_code === null ? null : Number(row.exit_code), startedAt: Number(row.started_at), finishedAt: row.finished_at === null ? null : Number(row.finished_at), updatedAt: row.updated_at === null ? Number(row.started_at) : Number(row.updated_at), stdout: row.stdout, stderr: row.stderr, stdoutTruncated: row.stdout_truncated === 1, stderrTruncated: row.stderr_truncated === 1, error: row.error };
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { ACCEPTED_CODEX_VERSIONS } from "../src/codex-authority-executor.mjs";
 import { resolveCodexExecutable } from "../src/codex-bin.mjs";
@@ -13,6 +14,7 @@ const { StdioClientTransport } = require("@modelcontextprotocol/client/stdio");
 const projectRoot = path.resolve(import.meta.dirname, "..");
 const codexBin = (await resolveCodexExecutable({ acceptedVersions: ACCEPTED_CODEX_VERSIONS })).path;
 const testCwd = process.env.CODEXLESS_TEST_CWD;
+const stateHome = path.join(os.tmpdir(), `codexless-public-contract-${process.pid}`);
 
 function createIsolatedPublicTestEnv(extra = {}) {
   const env = { ...process.env };
@@ -21,82 +23,65 @@ function createIsolatedPublicTestEnv(extra = {}) {
   }
   Object.assign(env, {
     CODEX_BIN: codexBin,
+    CODEXLESS_HOME: stateHome,
     ...(testCwd ? { CODEXLESS_DEFAULT_CWD: testCwd } : {}),
     ...extra,
   });
   return env;
 }
 
-assert.equal(PUBLIC_SURFACE_VERSION, "codexless-public-preview-v4");
-assert.equal(PUBLIC_TOOL_NAMES.length, 20);
+assert.equal(PUBLIC_SURFACE_VERSION, "codexless-public-preview-v5");
+assert.equal(PUBLIC_TOOL_NAMES.length, 24);
 
 const forbiddenNames = [
-  "codex.account_preflight",
-  "codex.model_list",
-  "codex.agent_start",
-  "codex.agent_card_render",
-  "codex.agent_card_state",
-  "codex.agent_show",
-  "codex.agent_send",
-  "codex.agent_decline",
-  "codex.agent_commit",
-  "codex.agent_approve",
-  "codex.agent_reject",
-  "codex.agent_cancel",
-  "codex.thread_archive",
-  "codex.thread_delete",
-  "codex.thread_rollback",
-  "codex.continuity_push",
+  "codex.account_preflight", "codex.model_list", "codex.agent_start", "codex.agent_card_render", "codex.agent_card_state",
+  "codex.agent_show", "codex.agent_send", "codex.agent_decline", "codex.agent_commit", "codex.agent_approve", "codex.agent_reject",
+  "codex.agent_cancel", "codex.thread_archive", "codex.thread_delete", "codex.thread_rollback", "codex.continuity_push",
 ];
 
 async function assertPublicSurface(client) {
   const tools = await client.listTools();
   const names = tools.tools.map((tool) => tool.name);
-  assert.equal(names.length, 20);
+  assert.equal(names.length, 24);
   assert.deepEqual([...names].sort(), [...PUBLIC_TOOL_NAMES].sort());
   for (const name of forbiddenNames) assert.equal(names.includes(name), false, `${name} must not be exposed by ChatGPT-only surface`);
   assert.equal(names.some((name) => name.startsWith("codex.agent_")), false);
 
   const commandTool = tools.tools.find((tool) => tool.name === "codex.command_exec");
+  const commandStartTool = tools.tools.find((tool) => tool.name === "codex.command_start");
+  const commandStatusTool = tools.tools.find((tool) => tool.name === "codex.command_status");
   const searchTool = tools.tools.find((tool) => tool.name === "codex.repo_search");
   const patchTool = tools.tools.find((tool) => tool.name === "codex.apply_patch");
   const statusTool = tools.tools.find((tool) => tool.name === "codex.git_status");
   const diffTool = tools.tools.find((tool) => tool.name === "codex.git_diff");
   const contextTool = tools.tools.find((tool) => tool.name === "codex.project_context");
   assert.equal(commandTool?.annotations?.destructiveHint, true);
+  assert.equal(commandStartTool?.annotations?.destructiveHint, true);
+  assert.equal(commandStatusTool?.annotations?.readOnlyHint, true);
   assert.equal(searchTool?.annotations?.readOnlyHint, true);
   assert.equal(statusTool?.annotations?.readOnlyHint, true);
   assert.equal(diffTool?.annotations?.readOnlyHint, true);
   assert.equal(patchTool?.annotations?.destructiveHint, true);
   assert.match(commandTool?.description ?? "", /without starting a Codex model turn/i);
+  assert.match(commandStartTool?.description ?? "", /model-free/i);
   assert.match(patchTool?.description ?? "", /does not start a Codex model turn/i);
   assert.match(contextTool?.description ?? "", /read-only/i);
 
-  const nestedCodexCommand = await client.callTool({
-    name: "codex.command_exec",
-    arguments: { command: [codexBin, "--version"], access: "readOnly" },
-  });
+  const nestedCodexCommand = await client.callTool({ name: "codex.command_exec", arguments: { command: [codexBin, "--version"], access: "readOnly" } });
   assert.equal(nestedCodexCommand.isError, true, "nested Codex launch must stay blocked");
   assert.match(nestedCodexCommand.structuredContent?.error ?? nestedCodexCommand.content?.[0]?.text ?? "", /Codex|agent/i);
+
+  const nestedLongCommand = await client.callTool({ name: "codex.command_start", arguments: { command: [codexBin, "--version"], cwd: projectRoot, access: "readOnly" } });
+  assert.equal(nestedLongCommand.isError, true, "nested Codex launch through command_start must stay blocked");
 }
 
 const client = new Client({ name: "codexless-public-contract", version: "0.1.0" });
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [path.join(projectRoot, "src", "mcp-stdio.mjs")],
-  cwd: projectRoot,
-  env: createIsolatedPublicTestEnv(),
-  stderr: "pipe",
-});
+const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(projectRoot, "src", "mcp-stdio.mjs")], cwd: projectRoot, env: createIsolatedPublicTestEnv(), stderr: "pipe" });
 transport.stderr?.setEncoding("utf8");
 transport.stderr?.on("data", (chunk) => process.stderr.write(`[codexless] ${chunk}`));
-
 await client.connect(transport);
 try { await assertPublicSurface(client); }
-finally {
-  await client.close().catch(() => {});
-  await transport.close().catch(() => {});
-}
+finally { await client.close().catch(() => {}); await transport.close().catch(() => {}); }
 
 const httpPort = 17691;
 const baseUrl = `http://127.0.0.1:${httpPort}`;
@@ -109,15 +94,11 @@ const httpChild = spawn(process.execPath, [path.join(projectRoot, "src", "mcp-ht
 let httpStderr = "";
 httpChild.stderr.setEncoding("utf8");
 httpChild.stderr.on("data", (chunk) => { httpStderr += chunk; });
-
 async function waitForHttpHealth() {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (httpChild.exitCode !== null) throw new Error(`Codexless HTTP exited early (${httpChild.exitCode}): ${httpStderr}`);
-    try {
-      const response = await fetch(`${baseUrl}/healthz`);
-      if (response.ok) return response.json();
-    } catch {}
+    try { const response = await fetch(`${baseUrl}/healthz`); if (response.ok) return response.json(); } catch {}
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error(`Codexless HTTP did not become healthy: ${httpStderr}`);
@@ -127,15 +108,11 @@ try {
   const health = await waitForHttpHealth();
   assert.equal(health.ok, true);
   assert.equal(health.surfaceVersion, PUBLIC_SURFACE_VERSION);
-  assert.equal(health.toolCount, 20);
+  assert.equal(health.toolCount, 24);
   const httpClient = new Client({ name: "codexless-public-contract-http", version: "0.1.0" });
   const httpTransport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`));
-  try {
-    await httpClient.connect(httpTransport);
-    await assertPublicSurface(httpClient);
-  } finally {
-    await httpClient.close().catch(() => {});
-  }
+  try { await httpClient.connect(httpTransport); await assertPublicSurface(httpClient); }
+  finally { await httpClient.close().catch(() => {}); }
 } finally {
   if (httpChild.exitCode === null) httpChild.kill("SIGTERM");
 }

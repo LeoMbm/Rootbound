@@ -9,6 +9,10 @@
       "classification": "model-free",
       "bridgeTools": [
         "codex.command_exec",
+        "codex.command_start",
+        "codex.command_status",
+        "codex.command_output",
+        "codex.command_stop",
         "codex.repo_search",
         "codex.read_many",
         "codex.apply_patch",

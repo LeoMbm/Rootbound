@@ -1,6 +1,8 @@
+import path from "node:path";
 import { ACCEPTED_CODEX_VERSIONS, CodexAuthorityExecutor } from "./codex-authority-executor.mjs";
 import { CodexBrowserReaderExecutor } from "./browser-reader-executor.mjs";
 import { resolveCodexExecutable } from "./codex-bin.mjs";
+import { createCommandManager } from "./command-manager.mjs";
 import { readJsonFile } from "./json-file.mjs";
 import { createPersistentContinuityState } from "./persistent-continuity-state.mjs";
 import { CodexPublicContextExecutor } from "./public-context-executor.mjs";
@@ -61,6 +63,13 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     stateStore = await openStateStore({ paths: resolveCodexlessPaths({ env }) });
 
     const continuityState = createPersistentContinuityState({ store: stateStore });
+    const commandManager = createCommandManager({
+      store: stateStore,
+      continuityState,
+      codexBin,
+      packageRoot: path.resolve(import.meta.dirname, ".."),
+      env,
+    });
     const browserReader = new CodexBrowserReaderExecutor({ context: publicContext, defaultCwd });
     const createServer = createPublicServerFactory({
       executor: authorityExecutor,
@@ -68,6 +77,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       publicContext,
       browserReader,
       continuityState,
+      commandManager,
       maxConcurrent: 1,
     });
 
