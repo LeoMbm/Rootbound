@@ -41,5 +41,10 @@ jobs:
           node --check src/diagnostics.mjs
           node --check src/edit-mutations.mjs
           node --check src/pagination.mjs
+          node --check src/continuity-idempotency.mjs
+          node --check src/secret-boundaries.mjs
+          node --check src/repo-tools.mjs
+          node --check src/construction-tools.mjs
+          node --check src/thread-history-tools.mjs
           node --check src/public-runtime.mjs
           node --check src/public-server-factory.mjs
