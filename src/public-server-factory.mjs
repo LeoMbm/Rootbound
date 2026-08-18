@@ -5,6 +5,7 @@ import { registerConstructionTools } from "./construction-tools.mjs";
 import { registerPublicContextTools } from "./public-context-tools.mjs";
 import { registerRepoTools } from "./repo-tools.mjs";
 import { registerThreadHistoryTools } from "./thread-history-tools.mjs";
+import { typedToolResponse } from "./tool-errors.mjs";
 import { registerWorkspaceTools } from "./workspace-tools.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION } from "./surface-contracts.mjs";
 
@@ -35,7 +36,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     let inFlight = 0;
     const server = new McpServer(
       { name: "codexless", title: "Codexless Local", version: PUBLIC_SERVER_VERSION, description: "ChatGPT-only local coding bridge built on verified model-free Codex App Server primitives." },
-      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Start project work with workspace_open to resolve the canonical projectRef/root/authority, then prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. Successful precise_edit calls may return a mutationId; use edit_undo/edit_redo for guarded local reversal while hashes still match. On supported platforms command_write can send stdin and command_terminate stops the active process. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. For a long-running ChatGPT↔Codex continuity workflow, bind the intended stored Codex thread once with codex.continuity_bind, retain bindingRef in the chat, pass it to project actions, and call codex.continuity_checkpoint before each final response that materially advances the bound project. The checkpoint is an external delta handoff only; no Codex model turn is started." }
+      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Start project work with workspace_open to resolve the canonical projectRef/root/authority, then prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. Successful precise_edit calls may return a mutationId; use edit_undo/edit_redo for guarded local reversal while hashes still match. On supported platforms command_write can send stdin and command_terminate stops the active process. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. Use idempotencyKey on continuity_bind/checkpoint when network retries are possible; ambiguous checkpoint retries fail closed rather than inject twice. The checkpoint is an external delta handoff only; no Codex model turn is started." }
     );
 
     server.registerTool(
@@ -46,8 +47,15 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
         inputSchema: commandSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       },
-      async ({ command, cwd, access, timeoutMs, bindingRef }) => {
-        if (inFlight >= maxConcurrent) return toolError(`bridge concurrency limit reached (${maxConcurrent})`);
+      async ({ command, cwd, access, timeoutMs, bindingRef }) => typedToolResponse(async () => {
+        if (inFlight >= maxConcurrent) {
+          const error = new Error(`bridge concurrency limit reached (${maxConcurrent})`);
+          error.code = "BRIDGE_CONCURRENCY_LIMIT";
+          error.category = "transient";
+          error.retryable = true;
+          error.nextActions = ["Retry after the active command finishes or use command_start for long-running work."];
+          throw error;
+        }
         inFlight += 1;
         try {
           const scoped = bindingRef ? continuityState.assertCwd(bindingRef, cwd) : null;
@@ -62,17 +70,15 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
           if (typeof result.authoritySource === "string") payload.authoritySource = result.authoritySource;
           if (typeof result.trustedAncestor === "string") payload.trustedAncestor = result.trustedAncestor;
           if (bindingRef) payload.continuityJournaled = true;
-          return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: result.exitCode !== 0 };
-        } catch (error) {
-          return toolError(error instanceof Error ? error.message : String(error), error && typeof error === "object" ? { errorCode: error.code, nextActions: error.nextActions } : undefined);
+          return payload;
         } finally { inFlight -= 1; }
-      }
+      }, { operation: "command_exec", isError: (payload) => payload?.exitCode !== 0 })
     );
 
     registerWorkspaceTools(server, { store: stateStore, authorityExecutor, publicContext });
     registerCommandTools(server, { commandManager });
     registerPublicContextTools(server, publicContext);
-    registerThreadHistoryTools(server, { context: publicContext, authorityExecutor, continuityState });
+    registerThreadHistoryTools(server, { context: publicContext, authorityExecutor, continuityState, stateStore });
     registerConstructionTools(server, { authorityExecutor, continuityState, stateStore });
     registerRepoTools(server, { authorityExecutor, continuityState });
     registerBrowserReaderTools(server, browserReader);
@@ -83,11 +89,4 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
 function summarizeArgv(command) {
   const joined = command.join(" ").replace(/\s+/g, " ").trim();
   return joined.length > 512 ? joined.slice(0, 509) + "..." : joined;
-}
-
-function toolError(message, details = {}) {
-  const structuredContent = { error: message };
-  if (typeof details?.errorCode === "string") structuredContent.errorCode = details.errorCode;
-  if (Array.isArray(details?.nextActions) && details.nextActions.every((value) => typeof value === "string")) structuredContent.nextActions = details.nextActions;
-  return { content: [{ type: "text", text: message }], structuredContent, isError: true };
 }
