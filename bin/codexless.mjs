@@ -9,7 +9,17 @@ import { openStateStore } from "../src/state-store.mjs";
 import { registerProject, resolveProjectRoot } from "../src/project-registry.mjs";
 import { resolveCodexlessPaths } from "../src/state-paths.mjs";
 import { runtimeStatus, stopRuntime, tailLog } from "../src/runtime-state.mjs";
-import { resolveTunnelLaunch } from "../src/tunnel-config.mjs";
+import { resolveTunnelLaunch, tunnelConfigStatus } from "../src/tunnel-config.mjs";
+import {
+  discoverTunnelCandidates,
+  probeTunnelClient,
+  rollbackManagedTunnelSetup,
+  TUNNEL_SETUP_URLS,
+  validateManagedTunnel,
+  validateRuntimeKey,
+  validateTunnelId,
+  writeManagedTunnelSetup,
+} from "../src/tunnel-bootstrap.mjs";
 import { ensureExactProjectTrust, resolveCodexConfigPath, rollbackTrustConfig } from "../src/trust-config.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -32,7 +42,7 @@ try {
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
-  if (options.json) process.stdout.write(`${JSON.stringify({ ok: false, error: message })}\n`);
+  if (options.json) process.stdout.write(`${JSON.stringify({ ok: false, error: message, ...(error?.code ? { errorCode: error.code } : {}) })}\n`);
   else process.stderr.write(`Codexless: ${message}\n`);
   process.exitCode = error instanceof CliUsageError ? 2 : 1;
 }
@@ -41,7 +51,8 @@ async function connectCommand(opts) {
   const input = opts.positionals[0] ?? ".";
   const resolved = await resolveProjectRoot(input);
   const configPath = resolveCodexConfigPath();
-  if (!opts.noStart) resolveTunnelLaunch({ packageRoot, projectRoot: resolved.root });
+  const tunnel = opts.noStart ? { configured: false, skipped: true, reason: "no-start" } : await ensureTunnelReadyForConnect(opts, resolved.root);
+
   if (!opts.yes) await confirmTrust(resolved.root, configPath);
   const trust = await ensureExactProjectTrust(resolved.root, { configPath, backupsDir: paths.backupsDir });
   let doctor;
@@ -65,10 +76,103 @@ async function connectCommand(opts) {
       project,
       trust: { changed: trust.changed, configPath: trust.configPath, backupPath: trust.backupPath },
       doctor: { status: doctor.value.status, permissionProfile: doctor.value.project.permissionProfile ?? null },
+      tunnel,
     };
     if (!opts.noStart) result.runtime = await startSupervisor(project);
     printResult(result, opts);
   } finally { store.close(); }
+}
+
+async function ensureTunnelReadyForConnect(opts, projectRoot) {
+  const current = tunnelConfigStatus({ paths });
+  if (current.configured) {
+    resolveTunnelLaunch({ packageRoot, projectRoot, paths });
+    setupLine(opts, "✓ Tunnel configuration already available");
+    return { configured: true, source: current.source ?? "existing", reused: true };
+  }
+
+  const interactive = !opts.json && !opts.yes && process.stdin.isTTY && process.stdout.isTTY;
+  setupLine(opts, "\nCodexless setup");
+  setupLine(opts, "Checking ChatGPT tunnel prerequisites...");
+  await probeTunnelClient({ cwd: packageRoot });
+  setupLine(opts, "✓ tunnel-client detected");
+
+  const candidates = await discoverTunnelCandidates();
+  const tunnelId = await chooseTunnelId({ candidates, interactive, opts });
+  const apiKey = await resolveRuntimeKey({ interactive, opts });
+
+  let managed;
+  try {
+    managed = await writeManagedTunnelSetup({ tunnelId, apiKey, packageRoot, paths });
+    setupLine(opts, "Validating tunnel configuration...");
+    await validateManagedTunnel({ profilePath: managed.profilePath, cwd: packageRoot });
+  } catch (error) {
+    await rollbackManagedTunnelSetup({ paths }).catch(() => {});
+    throw error;
+  }
+
+  setupLine(opts, `✓ Tunnel ready (${tunnelId})`);
+  return { configured: true, source: "guided", reused: false, tunnelId };
+}
+
+async function chooseTunnelId({ candidates, interactive, opts }) {
+  const envCandidate = candidates.find((candidate) => candidate.source === "environment");
+  if (envCandidate) {
+    setupLine(opts, `✓ Tunnel detected from environment (${envCandidate.id})`);
+    return envCandidate.id;
+  }
+
+  if (candidates.length === 1) {
+    const candidate = candidates[0];
+    if (!interactive || await askYesNo(`Existing OpenAI tunnel found: ${candidate.id}\nUse this tunnel? [Y/n] `, true)) {
+      setupLine(opts, `✓ Reusing ${candidate.id}`);
+      return candidate.id;
+    }
+    return askForTunnelId();
+  }
+
+  if (candidates.length > 1) {
+    if (!interactive) {
+      throw new CliUsageError("Multiple OpenAI tunnels were detected. Run `codexless connect .` interactively once, or set CONTROL_PLANE_TUNNEL_ID for non-interactive setup.");
+    }
+    process.stdout.write("OpenAI tunnels found:\n");
+    candidates.forEach((candidate, index) => process.stdout.write(`  ${index + 1}. ${candidate.id} (${candidate.source})\n`));
+    const answer = (await askQuestion(`Choose a tunnel [1-${candidates.length}, default 1]: `)).trim();
+    const index = answer === "" ? 0 : Number.parseInt(answer, 10) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= candidates.length) throw new CliUsageError("Invalid tunnel selection.");
+    return candidates[index].id;
+  }
+
+  if (!interactive) {
+    throw new CliUsageError(`No OpenAI tunnel id was detected. Run connect interactively once, or set CONTROL_PLANE_TUNNEL_ID. Tunnels: ${TUNNEL_SETUP_URLS.tunnels}`);
+  }
+  return askForTunnelId();
+}
+
+async function askForTunnelId() {
+  process.stdout.write(`No existing OpenAI tunnel was detected.\nCreate or inspect one here:\n  ${TUNNEL_SETUP_URLS.tunnels}\n`);
+  const tunnelId = (await askQuestion("Paste tunnel ID: ")).trim();
+  if (!validateTunnelId(tunnelId)) throw new CliUsageError("Invalid tunnel ID; expected tunnel_ followed by 32 lowercase letters/digits.");
+  return tunnelId;
+}
+
+async function resolveRuntimeKey({ interactive, opts }) {
+  for (const name of ["CONTROL_PLANE_API_KEY", "OPENAI_API_KEY"]) {
+    const value = process.env[name];
+    if (typeof value === "string" && value.length) {
+      if (!validateRuntimeKey(value)) throw new CliUsageError(`${name} is set but does not have a valid runtime-key format.`);
+      setupLine(opts, `✓ Runtime API key detected (${name})`);
+      return value;
+    }
+  }
+
+  if (!interactive) {
+    throw new CliUsageError(`No tunnel runtime API key was detected. Run connect interactively once, or set CONTROL_PLANE_API_KEY. Runtime keys: ${TUNNEL_SETUP_URLS.runtimeKeys}`);
+  }
+  process.stdout.write(`A Tunnel runtime API key is required once.\nCreate or inspect it here:\n  ${TUNNEL_SETUP_URLS.runtimeKeys}\n`);
+  const value = await askSecret("Paste runtime API key (input hidden): ");
+  if (!validateRuntimeKey(value)) throw new CliUsageError("Invalid runtime API key format.");
+  return value;
 }
 
 async function startCommand(opts) {
@@ -85,7 +189,11 @@ async function startCommand(opts) {
     }
     if (!project) throw new CliUsageError("No registered project found; run codexless connect <path> first");
     if (!project.trusted) throw new Error(`Project is not marked trusted: ${project.root}`);
-    resolveTunnelLaunch({ packageRoot, projectRoot: project.root });
+    try { resolveTunnelLaunch({ packageRoot, projectRoot: project.root, paths }); }
+    catch (error) {
+      if (error?.code === "TUNNEL_NOT_CONFIGURED") throw new CliUsageError("Tunnel setup is incomplete. Run `codexless connect .` interactively once to finish the guided setup.");
+      throw error;
+    }
     const runtime = await startSupervisor(project);
     printResult({ ok: true, action: "started", project, runtime }, opts);
   } finally { store.close(); }
@@ -171,12 +279,8 @@ async function confirmTrust(root, configPath) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new CliUsageError(`connect requires explicit approval in non-interactive mode; retry with --yes to trust exact root ${root}`);
   }
-  process.stdout.write(`Codexless will trust exactly this project root in Codex config:\n  ${root}\nConfig: ${configPath}\nA backup is created before mutation.\n`);
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = (await rl.question('Type "yes" to continue: ')).trim().toLowerCase();
-    if (answer !== "yes") throw new CliUsageError("connect cancelled; trust was not changed");
-  } finally { rl.close(); }
+  process.stdout.write(`\nProject access\nCodexless needs explicit Codex trust for exactly:\n  ${root}\nConfig: ${configPath}\nA backup is created before mutation.\n`);
+  if (!await askYesNo("Allow this exact project root? [Y/n] ", true)) throw new CliUsageError("connect cancelled; trust was not changed");
 }
 
 async function runDoctor(cwd = null) {
@@ -220,6 +324,61 @@ async function followLog(logPath) {
   });
 }
 
+async function askQuestion(prompt) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try { return await rl.question(prompt); }
+  finally { rl.close(); }
+}
+
+async function askYesNo(prompt, defaultYes = false) {
+  const answer = (await askQuestion(prompt)).trim().toLowerCase();
+  if (answer === "") return defaultYes;
+  if (answer === "y" || answer === "yes") return true;
+  if (answer === "n" || answer === "no") return false;
+  throw new CliUsageError("Expected yes or no.");
+}
+
+async function askSecret(prompt) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || typeof process.stdin.setRawMode !== "function") {
+    throw new CliUsageError("Secret input requires an interactive terminal; set CONTROL_PLANE_API_KEY and retry for non-interactive setup.");
+  }
+  process.stdout.write(prompt);
+  const input = process.stdin;
+  const wasRaw = Boolean(input.isRaw);
+  input.setRawMode(true);
+  input.resume();
+  input.setEncoding("utf8");
+  return await new Promise((resolve, reject) => {
+    let value = "";
+    let done = false;
+    const cleanup = () => {
+      input.off("data", onData);
+      try { input.setRawMode(wasRaw); } catch {}
+      if (!wasRaw) input.pause();
+    };
+    const finish = (fn, result) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      process.stdout.write("\n");
+      fn(result);
+    };
+    const onData = (chunk) => {
+      for (const ch of String(chunk)) {
+        if (ch === "\u0003") { finish(reject, new CliUsageError("setup cancelled")); return; }
+        if (ch === "\r" || ch === "\n") { finish(resolve, value); return; }
+        if (ch === "\u007f" || ch === "\b") { value = value.slice(0, -1); continue; }
+        if (ch >= " ") value += ch;
+      }
+    };
+    input.on("data", onData);
+  });
+}
+
+function setupLine(opts, text) {
+  if (!opts.json) process.stdout.write(`${text}\n`);
+}
+
 function parseOptions(argv) {
   const out = { positionals: [], json: false, yes: false, follow: false, force: false, noStart: false, bytes: null };
   for (let i = 0; i < argv.length; i += 1) {
@@ -245,7 +404,8 @@ function parseInteger(value, label, min, max) {
 function printResult(value, opts) {
   if (opts.json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   else if (value.action === "connected") {
-    process.stdout.write(`Connected ${value.project.name}\nProject: ${value.project.root}\nRef: ${value.project.projectRef}\nTrust: ${value.trust.changed ? "added exact-root trust" : "already trusted"}\nRuntime: ${value.runtime?.status ?? "not started"}\n`);
+    process.stdout.write(`\nCodexless is ready.\nProject: ${value.project.root}\nRef: ${value.project.projectRef}\nTrust: ${value.trust.changed ? "added exact-root trust" : "already trusted"}\nTunnel: ${value.tunnel?.configured ? (value.tunnel.reused ? "reused" : "configured") : "not started"}\nRuntime: ${value.runtime?.status ?? "not started"}\n`);
+    if (value.runtime?.status === "running") process.stdout.write(`ChatGPT connector settings: ${TUNNEL_SETUP_URLS.connectors}\n`);
   } else if (Array.isArray(value.projects)) {
     process.stdout.write(`Runtime: ${value.runtime.status}\nState: ${value.stateRoot}\nProjects: ${value.projects.length}\n`);
     for (const project of value.projects) process.stdout.write(`- ${project.projectRef}  ${project.root}${project.trusted ? "  trusted" : ""}\n`);
@@ -253,7 +413,7 @@ function printResult(value, opts) {
 }
 
 function printHelp() {
-  process.stdout.write(`Codexless V5 control plane\n\nUsage:\n  codexless connect [path] [--yes] [--no-start] [--json]\n  codexless start [path] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless stop [--force] [--json]\n  codexless version\n\nconnect never widens trust silently: interactive approval or --yes is required.\n`);
+  process.stdout.write(`Codexless V5 control plane\n\nUsage:\n  codexless connect [path] [--yes] [--no-start] [--json]\n  codexless start [path] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless stop [--force] [--json]\n  codexless version\n\nFor normal setup, run only: codexless connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, securely stores the runtime key in private local state when needed, validates the tunnel, asks for exact-root Codex trust, and starts the supervised runtime.\nUse codexless tunnel ... only for advanced/manual tunnel configuration.\n`);
 }
 
 class CliUsageError extends Error {}
