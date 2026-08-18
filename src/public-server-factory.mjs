@@ -23,7 +23,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     command: z.array(z.string().max(32_768)).min(1).max(128).describe("argv vector passed to official Codex command/exec under the locally resolved Codex permission profile"),
     cwd: z.string().min(1).max(32_768).optional().describe("Optional local working-directory context. cwd does not let the caller select or widen a permission profile."),
     access: z.enum(["inherit", "readOnly"]).default("readOnly").describe("readOnly is the safe compatibility default. inherit uses the locally authorized/resolved Codex permission profile."),
-    timeoutMs: z.number().int().positive().max(30_000).default(10_000),
+    timeoutMs: z.number().int().positive().max(120_000).default(30_000),
     bindingRef: bindingRefSchema.describe("Optional opaque continuity binding. When supplied, Codexless scopes execution to the bound project and journals command metadata for the next delta checkpoint."),
   }).strict();
 
