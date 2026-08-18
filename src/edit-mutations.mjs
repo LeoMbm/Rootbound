@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { CodexlessToolError } from "./tool-errors.mjs";
@@ -22,10 +23,13 @@ export function createEditMutationJournal({ store, authorityExecutor }) {
 
   return {
     record({ projectRef, bindingRef = null, cwd, path: targetPath, beforeSha256, afterSha256, beforeText, afterText, createdAt = Date.now() }) {
+      const canonicalCwd = canonicalPath(cwd);
+      const canonicalTarget = canonicalPath(targetPath);
+      assertWithin(canonicalCwd, canonicalTarget);
       const mutationId = `mutation_${randomUUID()}`;
       store.db.prepare(`INSERT INTO edit_mutations(mutation_id, project_ref, binding_ref, cwd, path, before_sha256, after_sha256, before_text, after_text, status, created_at, updated_at)
         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'applied', ?, ?)`).run(
-        mutationId, projectRef, bindingRef, cwd, targetPath, beforeSha256, afterSha256,
+        mutationId, projectRef, bindingRef, canonicalCwd, canonicalTarget, beforeSha256, afterSha256,
         Buffer.from(beforeText, "utf8"), Buffer.from(afterText, "utf8"), createdAt, createdAt
       );
       return this.get(mutationId);
@@ -54,15 +58,16 @@ export function createEditMutationJournal({ store, authorityExecutor }) {
 
 async function restore({ authorityExecutor, mutation, expectedSha256, text, targetSha256 }) {
   const authority = await authorityExecutor.resolveAuthority({ cwd: mutation.cwd, access: "inherit", timeoutMs: 10_000 });
+  const effectiveCwd = canonicalPath(authority.effectiveCwd);
   const target = await realpath(mutation.path);
-  assertWithin(authority.effectiveCwd, target);
-  const read = await authorityExecutor.exec({ command: [process.execPath, "-e", READ_SCRIPT, target], cwd: authority.effectiveCwd, access: "readOnly", timeoutMs: 10_000 });
+  assertWithin(effectiveCwd, target);
+  const read = await authorityExecutor.exec({ command: [process.execPath, "-e", READ_SCRIPT, target], cwd: effectiveCwd, access: "readOnly", timeoutMs: 10_000 });
   if (read.exitCode !== 0 || read.stdoutTruncated) throw conflict(`Cannot verify current file before mutation restore: ${target}`);
   const currentSha = sha256(Buffer.from(read.stdout, "utf8"));
   if (currentSha !== expectedSha256) throw conflict(`Undo/redo refused because ${target} changed after the recorded mutation.`, { expectedSha256, currentSha256: currentSha });
-  const write = await authorityExecutor.exec({ command: [process.execPath, "-e", WRITE_SCRIPT, target, expectedSha256, Buffer.from(text, "utf8").toString("base64")], cwd: authority.effectiveCwd, access: "inherit", timeoutMs: 15_000 });
+  const write = await authorityExecutor.exec({ command: [process.execPath, "-e", WRITE_SCRIPT, target, expectedSha256, Buffer.from(text, "utf8").toString("base64")], cwd: effectiveCwd, access: "inherit", timeoutMs: 15_000 });
   if (write.exitCode !== 0) throw conflict(`Undo/redo write failed for ${target}: ${write.stderr || `exit ${write.exitCode}`}`);
-  const verify = await authorityExecutor.exec({ command: [process.execPath, "-e", READ_SCRIPT, target], cwd: authority.effectiveCwd, access: "readOnly", timeoutMs: 10_000 });
+  const verify = await authorityExecutor.exec({ command: [process.execPath, "-e", READ_SCRIPT, target], cwd: effectiveCwd, access: "readOnly", timeoutMs: 10_000 });
   if (verify.exitCode !== 0 || verify.stdoutTruncated || sha256(Buffer.from(verify.stdout, "utf8")) !== targetSha256) throw conflict(`Undo/redo verification failed for ${target}`);
 }
 
@@ -110,7 +115,14 @@ function conflict(message, details = null) {
   return new CodexlessToolError(message, { code: "UNDO_CONFLICT", category: "state", retryable: false, nextActions: ["Inspect the current file/diff before deciding whether to apply a new edit."], details });
 }
 function assertWithin(root, target) {
-  const relative = path.relative(path.resolve(root), path.resolve(target));
-  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw conflict(`Undo/redo refused path outside effective cwd: ${target}`);
+  const canonicalRoot = canonicalPath(root);
+  const canonicalTarget = canonicalPath(target);
+  const relative = path.relative(canonicalRoot, canonicalTarget);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw conflict(`Undo/redo refused path outside effective cwd: ${canonicalTarget}`);
+}
+function canonicalPath(value) {
+  const resolved = path.resolve(value);
+  try { return realpathSync.native(resolved); }
+  catch { return resolved; }
 }
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
