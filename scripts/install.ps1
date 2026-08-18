@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "Codexless"),
+  [string]$InstallDir = (Join-Path (Join-Path $env:LOCALAPPDATA "Codexless") "app"),
   [switch]$Json
 )
 
