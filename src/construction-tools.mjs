@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
 
@@ -10,7 +10,27 @@ const DEFAULT_PER_FILE_CHARS = 50_000;
 const MAX_PER_FILE_CHARS = 200_000;
 const DEFAULT_TOTAL_CHARS = 200_000;
 const MAX_TOTAL_CHARS = 500_000;
+const MAX_PRECISE_EDIT_CHARS = 64_000;
 const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
+const READ_FILE_SCRIPT = "const fs=require('node:fs');process.stdout.write(fs.readFileSync(process.argv[1]));";
+const PRECISE_EDIT_SCRIPT = `
+const fs=require('node:fs');
+const crypto=require('node:crypto');
+const p=process.argv[1];
+const expectedSha=process.argv[2];
+const expectedCount=Number(process.argv[3]);
+const oldText=Buffer.from(process.argv[4],'base64').toString('utf8');
+const newText=Buffer.from(process.argv[5],'base64').toString('utf8');
+const before=fs.readFileSync(p);
+const beforeSha=crypto.createHash('sha256').update(before).digest('hex');
+if(beforeSha!==expectedSha){console.error('precise edit refused: file changed after validation and before write');process.exit(12);}
+const text=before.toString('utf8');
+let count=0, offset=0;
+while(true){const i=text.indexOf(oldText,offset);if(i<0)break;count++;offset=i+oldText.length;}
+if(count!==expectedCount){console.error('precise edit refused: expectedText occurrence count changed before write');process.exit(13);}
+const next=text.split(oldText).join(newText);
+fs.writeFileSync(p,next,'utf8');
+`;
 
 export function registerConstructionTools(server, { authorityExecutor, continuityState = null }) {
   if (!authorityExecutor) return;
@@ -19,7 +39,7 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
     "codex.read_many",
     {
       title: "Read Multiple Authorized Project Files",
-      description: "Read several UTF-8 text files in one model-free call while preserving Codex project authority. Paths may be absolute or relative to cwd, but every resolved real path must remain inside the Codex trusted authority root for cwd. Returns bounded per-file text plus hashes and truncation metadata. It does not follow a junction/symlink outside the authorized root and does not use a broad raw host filesystem surface.",
+      description: "Read several UTF-8 text files through official Codex command/exec under the resolved read-only permission profile. Paths are canonicalized and must remain inside the trusted Codex root. The actual file read occurs inside the Codex sandbox; no Codex model turn is started.",
       inputSchema: z.object({
         paths: z.array(z.string().min(1).max(32_768)).min(1).max(20),
         cwd: z.string().min(1).max(32_768).optional(),
@@ -35,11 +55,11 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
     "codex.precise_edit",
     {
       title: "Guarded Precise Project Edit",
-      description: "Apply one guarded exact-text edit to an existing UTF-8 project file without shell quoting. Codexless first resolves Codex authority for cwd, requires the file's real path to stay inside that trusted root, optionally checks the current SHA-256, requires expectedText to occur exactly expectedOccurrences times, rechecks the source hash immediately before writing, and then replaces only those exact occurrences. previewOnly validates and previews without writing. If bindingRef is supplied, the edit is scoped to the bound project and successful non-preview edits are journaled for the next continuity checkpoint.",
+      description: "Apply one guarded exact-text edit through official Codex command/exec under the resolved write permission profile. Codexless canonicalizes the path, validates SHA-256 and exact occurrence count, revalidates both inside the sandbox immediately before writing, then verifies the resulting hash. ChatGPT supplies the edit; no Codex model turn is started.",
       inputSchema: z.object({
         path: z.string().min(1).max(32_768),
-        expectedText: z.string().min(1).max(200_000),
-        replacementText: z.string().max(200_000),
+        expectedText: z.string().min(1).max(MAX_PRECISE_EDIT_CHARS),
+        replacementText: z.string().max(MAX_PRECISE_EDIT_CHARS),
         expectedOccurrences: z.number().int().min(1).max(100).default(1),
         expectedSha256: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
         cwd: z.string().min(1).max(32_768).optional(),
@@ -66,39 +86,64 @@ export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCha
   const files = [];
   for (const requestedPath of paths) {
     const target = await canonicalExistingFile({ requestedPath, cwd: authority.effectiveCwd, root });
-    const buffer = await readFile(target);
-    const text = buffer.toString("utf8");
+    const read = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
+    const text = read.text;
     const allowed = Math.max(0, Math.min(maxCharsPerFile, remaining));
     const returnedText = text.slice(0, allowed);
+    const buffer = Buffer.from(text, "utf8");
     files.push({ requestedPath, path: target, text: returnedText, chars: text.length, returnedChars: returnedText.length, truncated: returnedText.length < text.length, byteLength: buffer.length, sha256: sha256(buffer) });
     remaining -= returnedText.length;
   }
-  return { status: "ok", cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: authority.permissionProfile, count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files };
+  return { status: "ok", cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: ":read-only", count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files, modelTurnStarted: false };
 }
 
 export async function preciseEditAuthorized({ authorityExecutor, path: requestedPath, expectedText, replacementText, expectedOccurrences = 1, expectedSha256, cwd, previewOnly = false }) {
   const authority = await authorityExecutor.resolveAuthority({ cwd, access: "inherit" });
   const root = await canonicalRoot(authority);
   const target = await canonicalExistingFile({ requestedPath, cwd: authority.effectiveCwd, root });
-  const initialBuffer = await readFile(target);
-  const initialText = initialBuffer.toString("utf8");
+  assertWithinEffectiveCwd(authority.effectiveCwd, target);
+
+  const initial = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
+  const initialBuffer = Buffer.from(initial.text, "utf8");
   const beforeSha256 = sha256(initialBuffer);
   if (expectedSha256 && beforeSha256.toLowerCase() !== expectedSha256.toLowerCase()) throw new Error(`precise edit refused: expectedSha256 does not match current file ${target}`);
-  const occurrenceCount = countOccurrences(initialText, expectedText);
+  const occurrenceCount = countOccurrences(initial.text, expectedText);
   if (occurrenceCount !== expectedOccurrences) throw new Error(`precise edit refused: expectedText occurs ${occurrenceCount} times, expected exactly ${expectedOccurrences}`);
-  const nextText = replaceExactOccurrences(initialText, expectedText, replacementText, expectedOccurrences);
+  const nextText = replaceExactOccurrences(initial.text, expectedText, replacementText, expectedOccurrences);
   const afterBuffer = Buffer.from(nextText, "utf8");
   const afterSha256 = sha256(afterBuffer);
-  const preview = buildPreview(initialText, nextText, expectedText);
+  const preview = buildPreview(initial.text, nextText, expectedText);
+
   if (!previewOnly) {
-    const currentBuffer = await readFile(target);
-    const currentSha256 = sha256(currentBuffer);
-    if (currentSha256 !== beforeSha256) throw new Error("precise edit refused: file changed after validation and before write; re-read and retry with current content");
-    await writeFile(target, afterBuffer);
-    const writtenBuffer = await readFile(target);
-    if (sha256(writtenBuffer) !== afterSha256) throw new Error("precise edit verification failed: written file hash does not match intended output");
+    const edit = await authorityExecutor.exec({
+      command: [
+        process.execPath,
+        "-e",
+        PRECISE_EDIT_SCRIPT,
+        target,
+        beforeSha256,
+        String(expectedOccurrences),
+        Buffer.from(expectedText, "utf8").toString("base64"),
+        Buffer.from(replacementText, "utf8").toString("base64"),
+      ],
+      cwd: authority.effectiveCwd,
+      access: "inherit",
+      timeoutMs: 15_000,
+    });
+    if (edit.exitCode !== 0) throw new Error(`precise edit sandbox write failed: ${edit.stderr || `exit ${edit.exitCode}`}`);
+    const written = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
+    const writtenSha256 = sha256(Buffer.from(written.text, "utf8"));
+    if (writtenSha256 !== afterSha256) throw new Error("precise edit verification failed: written file hash does not match intended output");
   }
-  return { status: previewOnly ? "preview" : "applied", path: target, cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: authority.permissionProfile, occurrenceCount, beforeSha256, afterSha256, beforeBytes: initialBuffer.length, afterBytes: afterBuffer.length, changed: beforeSha256 !== afterSha256, previewOnly, preview };
+
+  return { status: previewOnly ? "preview" : "applied", path: target, cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: authority.permissionProfile, occurrenceCount, beforeSha256, afterSha256, beforeBytes: initialBuffer.length, afterBytes: afterBuffer.length, changed: beforeSha256 !== afterSha256, previewOnly, preview, modelTurnStarted: false };
+}
+
+async function readTextViaSandbox({ authorityExecutor, target, cwd, access }) {
+  const result = await authorityExecutor.exec({ command: [process.execPath, "-e", READ_FILE_SCRIPT, target], cwd, access, timeoutMs: 10_000 });
+  if (result.exitCode !== 0) throw new Error(`authorized file read failed: ${result.stderr || `exit ${result.exitCode}`}`);
+  if (result.stdoutTruncated) throw new Error(`authorized file read exceeded command output cap: ${target}`);
+  return { text: result.stdout };
 }
 
 async function canonicalRoot(authority) {
@@ -106,7 +151,6 @@ async function canonicalRoot(authority) {
   if (!candidate) throw new Error("authorized construction tool requires a trusted Codex root");
   return realpath(candidate);
 }
-
 async function canonicalExistingFile({ requestedPath, cwd, root }) {
   const resolved = path.resolve(cwd, requestedPath);
   const target = await realpath(resolved);
@@ -116,7 +160,10 @@ async function canonicalExistingFile({ requestedPath, cwd, root }) {
   if (!info.isFile()) throw new Error(`target is not a regular file: ${target}`);
   return target;
 }
-
+function assertWithinEffectiveCwd(cwd, target) {
+  const relative = path.relative(cwd, target);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`precise edit refused path outside effective cwd: ${target}`);
+}
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
 function countOccurrences(text, needle) {
   let count = 0;
