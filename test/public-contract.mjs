@@ -37,6 +37,7 @@ const forbiddenNames = [
   "codex.account_preflight", "codex.model_list", "codex.agent_start", "codex.agent_card_render", "codex.agent_card_state",
   "codex.agent_show", "codex.agent_send", "codex.agent_decline", "codex.agent_commit", "codex.agent_approve", "codex.agent_reject",
   "codex.agent_cancel", "codex.thread_archive", "codex.thread_delete", "codex.thread_rollback", "codex.continuity_push",
+  "codex.command_status", "codex.command_output", "codex.command_stop",
 ];
 
 async function assertPublicSurface(client) {
@@ -49,7 +50,9 @@ async function assertPublicSurface(client) {
 
   const commandTool = tools.tools.find((tool) => tool.name === "codex.command_exec");
   const commandStartTool = tools.tools.find((tool) => tool.name === "codex.command_start");
-  const commandStatusTool = tools.tools.find((tool) => tool.name === "codex.command_status");
+  const commandPollTool = tools.tools.find((tool) => tool.name === "codex.command_poll");
+  const commandWriteTool = tools.tools.find((tool) => tool.name === "codex.command_write");
+  const commandTerminateTool = tools.tools.find((tool) => tool.name === "codex.command_terminate");
   const searchTool = tools.tools.find((tool) => tool.name === "codex.repo_search");
   const patchTool = tools.tools.find((tool) => tool.name === "codex.apply_patch");
   const statusTool = tools.tools.find((tool) => tool.name === "codex.git_status");
@@ -57,13 +60,18 @@ async function assertPublicSurface(client) {
   const contextTool = tools.tools.find((tool) => tool.name === "codex.project_context");
   assert.equal(commandTool?.annotations?.destructiveHint, true);
   assert.equal(commandStartTool?.annotations?.destructiveHint, true);
-  assert.equal(commandStatusTool?.annotations?.readOnlyHint, true);
+  assert.equal(commandPollTool?.annotations?.readOnlyHint, true);
+  assert.equal(commandWriteTool?.annotations?.destructiveHint, true);
+  assert.equal(commandTerminateTool?.annotations?.destructiveHint, true);
   assert.equal(searchTool?.annotations?.readOnlyHint, true);
   assert.equal(statusTool?.annotations?.readOnlyHint, true);
   assert.equal(diffTool?.annotations?.readOnlyHint, true);
   assert.equal(patchTool?.annotations?.destructiveHint, true);
   assert.match(commandTool?.description ?? "", /without starting a Codex model turn/i);
-  assert.match(commandStartTool?.description ?? "", /model-free/i);
+  assert.match(commandStartTool?.description ?? "", /without starting a Codex model turn/i);
+  assert.match(commandPollTool?.description ?? "", /incremental/i);
+  assert.match(commandWriteTool?.description ?? "", /stdin/i);
+  assert.match(commandTerminateTool?.description ?? "", /terminate/i);
   assert.match(patchTool?.description ?? "", /does not start a Codex model turn/i);
   assert.match(contextTool?.description ?? "", /read-only/i);
 
