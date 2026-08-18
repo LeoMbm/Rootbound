@@ -32,7 +32,7 @@ Current public surface:
 - continuity bindings and idempotent checkpoints
 - guarded precise-edit undo / redo
 - paginated project reads and searches
-- persistent tunnel configuration without storing literal credentials
+- **guided one-command tunnel + project setup via `codexless connect .`**
 - redacted diagnostic export
 
 The exact public tool list is defined in [`src/surface-contracts.mjs`](src/surface-contracts.mjs).
@@ -43,8 +43,10 @@ The exact public tool list is defined in [`src/surface-contracts.mjs`](src/surfa
 
 - **Node.js >= 22.13.0**
 - an accepted local Codex installation
+- the supported OpenAI `tunnel-client` available on `PATH`
 - Windows or Apple Silicon macOS for the Technical Preview
-- an authenticated MCP tunnel / remote endpoint path that can launch the local Codexless stdio server
+
+For the first ChatGPT connection, OpenAI Tunnel still requires a tunnel ID and a runtime API key. **Codexless handles that through its setup wizard; users should not need to configure tunnel profiles, `argv-json`, MCP command flags, or environment placeholders manually.**
 
 Codexless does not install Codex for you and does not silently widen project trust.
 
@@ -63,7 +65,7 @@ Default layout:
 ```text
 ~/Library/Application Support/Codexless/
 ├── app/       # installed release
-├── state/     # SQLite state
+├── state/     # SQLite + private local tunnel setup state
 ├── runtime/   # runtime state
 ├── logs/      # supervisor logs
 └── backups/   # config backups
@@ -104,72 +106,70 @@ The app tree and state tree are intentionally separate so staged upgrades do not
 
 ## Daily-driver setup
 
-### 1. Configure the tunnel once
+### Normal setup: one command
 
-Codexless can persist a tunnel argv template locally. Literal credentials are rejected; use environment placeholders instead.
-
-Example:
-
-```sh
-codexless tunnel configure --argv-json '["tunnel-client","--token","{env:TUNNEL_TOKEN}","--stdio","{node}","{launchScript}","stdio"]'
-```
-
-Then export the secret in the environment that starts Codexless:
-
-```sh
-export TUNNEL_TOKEN="..."
-```
-
-Inspect the stored non-secret template:
-
-```sh
-codexless tunnel show
-```
-
-Remove it:
-
-```sh
-codexless tunnel clear
-```
-
-`CODEXLESS_TUNNEL_ARGV_JSON` remains available as a temporary environment override.
-
-### 2. Connect a project
+From the project you want ChatGPT to work on:
 
 ```sh
 codexless connect .
 ```
 
-`connect`:
+That is the normal setup path. The interactive wizard:
 
-1. resolves the canonical / Git root;
-2. validates tunnel configuration before touching trust;
-3. asks before adding exact-root Codex trust;
-4. backs up the Codex config before mutation;
-5. runs the doctor against the project;
-6. rolls trust back if validation fails;
-7. registers the project in SQLite;
-8. starts the supervised tunnel runtime.
+1. resolves the canonical / Git project root;
+2. detects `tunnel-client`;
+3. reuses `CONTROL_PLANE_TUNNEL_ID` or an existing local tunnel-client profile when one tunnel can be identified safely;
+4. asks for a tunnel ID only when none can be detected;
+5. reuses an existing runtime API key when present, otherwise asks for it once with hidden terminal input;
+6. writes a Codexless-managed tunnel profile that launches the local **stdio** server directly;
+7. keeps the runtime API key out of `tunnel.json`, SQLite, argv and Codexless logs; on macOS the private local key file is written mode `0600`;
+8. runs `tunnel-client doctor` automatically before changing Codex trust;
+9. asks before adding exact-root Codex trust;
+10. backs up the Codex config before trust mutation;
+11. runs the Codexless doctor against the project and rolls trust back if validation fails;
+12. registers the project in SQLite;
+13. starts the supervised tunnel runtime.
 
-For non-interactive setup:
+A typical returning-user flow should therefore be only:
 
 ```sh
+cd my-project
+codexless connect .
+```
+
+If the tunnel and key were already discovered/configured, the wizard skips those setup questions.
+
+When the runtime is running, Codexless prints the ChatGPT connector settings location so the connector can be created/refreshed while the tunnel is healthy.
+
+### Non-interactive setup
+
+For automation where trust approval and tunnel credentials are already supplied locally:
+
+```sh
+CONTROL_PLANE_TUNNEL_ID=tunnel_... \
+CONTROL_PLANE_API_KEY=... \
 codexless connect . --yes
 ```
 
-Prepare trust / registry without starting the runtime:
+`--yes` does not invent missing credentials or tunnel IDs; it fails closed if the required setup cannot be resolved without prompting.
+
+### Trust / registry only
+
+To prepare exact-root trust and the project registry without requiring or starting a tunnel:
 
 ```sh
 codexless connect . --yes --no-start
 ```
 
-### 3. Check status
+This is an advanced/offline path; normal users should use plain `codexless connect .`.
+
+### Check status
 
 ```sh
 codexless status
 ```
 
-### 4. Validate the local lane
+### Validate the local lane
 
 ```sh
 codexless self-test .
@@ -183,7 +183,7 @@ The self-test verifies the accepted Codex App Server path and performs model-fre
 
 It does **not** start a Codex model turn.
 
-### 5. Inspect logs / diagnostics
+### Inspect logs / diagnostics
 
 ```sh
 codexless logs
@@ -193,11 +193,30 @@ codexless diagnostic
 
 Diagnostic exports are intentionally redacted and do not include command stdout/stderr or stored thread previews.
 
-### 6. Stop
+### Stop
 
 ```sh
 codexless stop
 ```
+
+### Advanced / manual tunnel configuration
+
+The `codexless tunnel ...` commands remain available for operators who intentionally want to override the guided setup. They are **not required for normal onboarding**.
+
+For example, to use an existing tunnel-client profile manually:
+
+```sh
+codexless tunnel configure --argv-json '["tunnel-client","run","--profile","my-profile"]'
+codexless tunnel show
+```
+
+Remove the manual override/configuration with:
+
+```sh
+codexless tunnel clear
+```
+
+`CODEXLESS_TUNNEL_ARGV_JSON` also remains available as a temporary environment override for advanced/debug use. Persistent manual argv config still rejects detectable literal credentials.
 
 ---
 
@@ -305,8 +324,10 @@ Codexless is designed to fail closed around the local Codex authority.
 - nested Codex CLI launches from the model-free command lane are rejected;
 - project trust is exact-root and explicit;
 - trust mutation is backed up and rollback-capable;
+- guided tunnel setup validates before trust mutation;
+- the guided tunnel runtime key is kept out of `tunnel.json`, SQLite, process argv and Codexless logs;
 - durable argv containing detectable credentials is refused;
-- tunnel templates cannot persist literal credentials;
+- manual tunnel templates cannot persist detectable literal credentials;
 - sensitive files are excluded from ordinary search / read flows unless explicitly requested;
 - sensitive precise edits do not create undo snapshots;
 - diagnostics redact credentials, home paths and sensitive thread data;
@@ -378,11 +399,13 @@ The V5 implementation is still on the feature branch and has not been merged int
 
 The durable implementation plan / acceptance checklist lives in [`docs/plans/codexless-v5.md`](docs/plans/codexless-v5.md).
 
+The core V5 release suite has passed locally on an Apple Silicon Mac during stabilization. The guided one-command setup added afterward must be revalidated before merge.
+
 Known release-validation work still includes:
 
-- one clean manual macOS + Windows CI run;
-- real-machine `connect` / tunnel acceptance against the intended tunnel client;
-- lockfile metadata regeneration with npm rather than hand-editing package integrity data;
+- rerun local `validate:v5` / `validate:release` after guided-setup changes;
+- real ChatGPT connector acceptance through the supervised tunnel;
+- one controlled macOS + Windows validation run before release;
 - final upgrade / uninstall acceptance on both supported platforms;
 - final documentation / release packaging review.
 
