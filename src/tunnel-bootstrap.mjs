@@ -76,7 +76,7 @@ export async function writeManagedTunnelSetup({
   apiKey,
   packageRoot,
   paths,
-  nodePath = process.execPath,
+  nodePath = "node",
   tunnelClientCommand = "tunnel-client",
   platform = process.platform,
 } = {}) {
@@ -159,7 +159,7 @@ export async function rollbackManagedTunnelSetup({ paths } = {}) {
   }
 }
 
-export function buildStdioCommand({ nodePath = process.execPath, packageRoot } = {}) {
+export function buildStdioCommand({ nodePath = "node", packageRoot } = {}) {
   if (!packageRoot) throw new Error("buildStdioCommand requires packageRoot");
   return [nodePath, path.join(packageRoot, "scripts", "launch.mjs"), "stdio"].map(quoteCommandArg).join(" ");
 }
