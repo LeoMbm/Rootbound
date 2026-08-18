@@ -57,7 +57,7 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
 
   server.registerTool("codex.precise_edit", {
     title: "Guarded Precise Project Edit",
-    description: "Apply one guarded exact-text edit through official Codex command/exec under the resolved write permission profile. Successful non-sensitive edits return a mutationId that can be safely undone/redone while hashes still match. Sensitive canonical paths such as .env/private keys are never snapshotted into the undo journal. No Codex model turn is started.",
+    description: "Apply one guarded exact-text edit through official Codex command/exec under the resolved write permission profile. Successful non-sensitive edits return a mutationId that can be safely undone/redone while hashes still match. Sensitive canonical paths such as .env/private keys are never snapshotted into the undo journal and do not return surrounding preview excerpts. No Codex model turn is started.",
     inputSchema: z.object({
       path: z.string().min(1).max(32_768),
       expectedText: z.string().min(1).max(MAX_PRECISE_EDIT_CHARS),
@@ -155,6 +155,7 @@ export async function preciseEditAuthorized({ authorityExecutor, path: requested
   const root = await canonicalRoot(authority);
   const target = await canonicalExistingFile({ requestedPath, cwd: authority.effectiveCwd, root });
   assertWithinEffectiveCwd(authority.effectiveCwd, target);
+  const sensitiveTarget = isSensitivePath(target);
   const initial = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
   const initialBuffer = Buffer.from(initial.text, "utf8");
   const beforeSha256 = sha256(initialBuffer);
@@ -164,7 +165,7 @@ export async function preciseEditAuthorized({ authorityExecutor, path: requested
   const nextText = replaceExactOccurrences(initial.text, expectedText, replacementText, expectedOccurrences);
   const afterBuffer = Buffer.from(nextText, "utf8");
   const afterSha256 = sha256(afterBuffer);
-  const preview = buildPreview(initial.text, nextText, expectedText);
+  const preview = sensitiveTarget ? { suppressed: true, reason: "sensitive_path" } : buildPreview(initial.text, nextText, expectedText);
   if (!previewOnly) {
     const edit = await authorityExecutor.exec({ command: [process.execPath, "-e", PRECISE_EDIT_SCRIPT, target, beforeSha256, String(expectedOccurrences), Buffer.from(expectedText, "utf8").toString("base64"), Buffer.from(replacementText, "utf8").toString("base64")], cwd: authority.effectiveCwd, access: "inherit", timeoutMs: 15_000 });
     if (edit.exitCode !== 0) throw new Error(`precise edit sandbox write failed: ${edit.stderr || `exit ${edit.exitCode}`}`);
@@ -172,7 +173,7 @@ export async function preciseEditAuthorized({ authorityExecutor, path: requested
     const writtenSha256 = sha256(Buffer.from(written.text, "utf8"));
     if (writtenSha256 !== afterSha256) throw new Error("precise edit verification failed: written file hash does not match intended output");
   }
-  const snapshotAllowed = captureSnapshot && !previewOnly && !isSensitivePath(target);
+  const snapshotAllowed = captureSnapshot && !previewOnly && !sensitiveTarget;
   return { status: previewOnly ? "preview" : "applied", path: target, cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: authority.permissionProfile, occurrenceCount, beforeSha256, afterSha256, beforeBytes: initialBuffer.length, afterBytes: afterBuffer.length, changed: beforeSha256 !== afterSha256, previewOnly, preview, modelTurnStarted: false, ...(snapshotAllowed ? { mutationSnapshot: { beforeText: initial.text, afterText: nextText } } : {}) };
 }
 
