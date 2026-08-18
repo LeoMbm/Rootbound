@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { registerProject, resolveProjectRoot } from "./project-registry.mjs";
+import { typedToolResponse } from "./tool-errors.mjs";
 
 const require = createRequire(import.meta.url);
 const z = require("zod/v4");
@@ -15,7 +16,7 @@ export function registerWorkspaceTools(server, { store, authorityExecutor, publi
       inputSchema: z.object({ cwd: z.string().min(1).max(32_768).optional() }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ cwd }) => structured(() => openWorkspace({ cwd, store, authorityExecutor, publicContext }))
+    async ({ cwd }) => typedToolResponse(() => openWorkspace({ cwd, store, authorityExecutor, publicContext }), { operation: "workspace_open" })
   );
 }
 
@@ -37,6 +38,8 @@ export async function openWorkspace({ cwd = null, store, authorityExecutor, publ
       authority: null,
       modelTurnStarted: false,
       errorCode: error.code,
+      category: "permission",
+      retryable: false,
       nextActions: Array.isArray(error.nextActions) ? error.nextActions : ["Authorize the exact workspace root, then retry workspace_open."],
     };
   }
@@ -55,16 +58,4 @@ export async function openWorkspace({ cwd = null, store, authorityExecutor, publ
     context,
     modelTurnStarted: false,
   };
-}
-
-async function structured(task) {
-  try {
-    const payload = await task();
-    return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: false };
-  } catch (error) {
-    const payload = { error: error instanceof Error ? error.message : String(error) };
-    if (typeof error?.code === "string") payload.errorCode = error.code;
-    if (Array.isArray(error?.nextActions)) payload.nextActions = error.nextActions;
-    return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: true };
-  }
 }
