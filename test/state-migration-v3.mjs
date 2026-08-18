@@ -6,13 +6,13 @@ import path from "node:path";
 import { resolveCodexlessPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
-const root = await mkdtemp(path.join(os.tmpdir(), "codexless-state-migration-v3-"));
+const root = await mkdtemp(path.join(os.tmpdir(), "codexless-state-migration-v4-"));
 const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(root, "home") } });
 await mkdir(paths.stateDir, { recursive: true });
 const legacy = new DatabaseSync(paths.dbPath);
 legacy.exec(`
   CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-  INSERT INTO meta(key, value) VALUES('schema_version', '2');
+  INSERT INTO meta(key, value) VALUES('schema_version', '3');
   CREATE TABLE projects (
     project_ref TEXT PRIMARY KEY, root TEXT NOT NULL UNIQUE, git_root TEXT, name TEXT NOT NULL,
     trusted INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_connected_at INTEGER
@@ -24,7 +24,9 @@ legacy.exec(`
   );
   CREATE TABLE commands (
     command_id TEXT PRIMARY KEY, project_ref TEXT NOT NULL, argv_json TEXT NOT NULL, cwd TEXT NOT NULL,
-    status TEXT NOT NULL, exit_code INTEGER, started_at INTEGER NOT NULL, finished_at INTEGER
+    binding_ref TEXT, status TEXT NOT NULL, access TEXT NOT NULL DEFAULT 'readOnly', timeout_ms INTEGER NOT NULL DEFAULT 120000,
+    worker_pid INTEGER, exit_code INTEGER, started_at INTEGER NOT NULL, finished_at INTEGER, updated_at INTEGER,
+    stdout TEXT, stderr TEXT, stdout_truncated INTEGER NOT NULL DEFAULT 0, stderr_truncated INTEGER NOT NULL DEFAULT 0, error TEXT
   );
   CREATE TABLE checkpoints (
     checkpoint_id TEXT PRIMARY KEY, project_ref TEXT NOT NULL, binding_ref TEXT, through_seq INTEGER,
@@ -40,12 +42,20 @@ legacy.close();
 const store = await openStateStore({ paths });
 try {
   const version = store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get();
-  assert.equal(version.value, "3");
-  const columns = new Set(store.db.prepare("PRAGMA table_info(commands)").all().map((row) => row.name));
-  for (const column of ["binding_ref", "access", "timeout_ms", "worker_pid", "updated_at", "stdout", "stderr", "stdout_truncated", "stderr_truncated", "error"]) {
-    assert.equal(columns.has(column), true, `missing migrated command column ${column}`);
-  }
+  assert.equal(version.value, "4");
+  const table = store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='command_output_chunks'").get();
+  assert.equal(table.name, "command_output_chunks");
+
+  const now = Date.now();
+  store.upsertProject({ projectRef: "project_test", root: root, gitRoot: null, name: "test", trusted: false, createdAt: now, updatedAt: now, lastConnectedAt: null });
+  store.createCommand({ commandId: "command_00000000-0000-0000-0000-000000000001", projectRef: "project_test", argv: ["echo", "hi"], cwd: root, status: "running", access: "readOnly", timeoutMs: 1000, startedAt: now, updatedAt: now });
+  const cursor = store.appendCommandOutput({ commandId: "command_00000000-0000-0000-0000-000000000001", stream: "stdout", data: Buffer.from("hello"), createdAt: now });
+  assert.ok(cursor > 0);
+  const chunks = store.listCommandOutputAfter("command_00000000-0000-0000-0000-000000000001", 0, 10);
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].data.toString("utf8"), "hello");
+  assert.equal(store.commandOutputBytes("command_00000000-0000-0000-0000-000000000001"), 5);
 } finally {
   store.close();
 }
-console.log("state-migration-v3: ok");
+console.log("state-migration-v4: ok");
