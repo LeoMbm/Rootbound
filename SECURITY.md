@@ -1,147 +1,349 @@
 # Security
 
-Codexless is a local execution bridge. Treat it as software that can affect real project files and run real commands under your locally authorized Codex environment.
+Codexless is a local execution bridge. It can read project files, edit files, and run commands under authority resolved from the user's local Codex environment. Treat it with the same care as other local development tooling that can affect real repositories.
 
-This document describes the **public Technical Preview** surface in this repository. It does not describe private/internal Toolwire or Workbench capabilities that are intentionally excluded from the public package.
+This document describes the **Codexless V5 public surface** on the V5 feature branch.
 
-## Security model
+## Core security rules
 
-The public design is based on three rules:
+V5 is built around these rules:
 
-1. **Codex remains the local authority source** for borrowed execution capabilities.
-2. **Codexless may narrow authority, but the remote caller must not silently widen it.**
-3. **A real permission or trust denial fails visibly.** Codexless must not silently switch to a more privileged execution path just to make an operation succeed.
+1. **Codex remains the local authority / sandbox source.**
+2. **Codexless may narrow authority, but a remote caller must not silently widen it.**
+3. **Permission / trust denial fails visibly.**
+4. **The public ChatGPT lane must not silently start a Codex model turn.**
+5. **Durable state must not knowingly persist literal credentials.**
+6. **Ambiguous retries must fail closed when replay could duplicate an external mutation.**
 
-A user who has deliberately granted broad local Codex authority should expect Codexless operations that inherit that authority to be correspondingly powerful. Codexless is not a sandbox that magically makes broad local permission risk-free.
+Codexless is not a magic sandbox around deliberately broad local permissions. If the user grants broad workspace authority locally, authorized Codexless operations can be correspondingly powerful.
+
+---
 
 ## Public surface boundary
 
-The first public **service contract** exposes exactly 21 tools, enforced by `src/surface-contracts.mjs` and `test/public-contract.mjs`. In the current ChatGPT App shape, three Task Card actions (`codex.agent_card_state`, `codex.agent_decline`, `codex.agent_commit`) are app-only, so the model may directly see 18 tools while the service contract remains exact 21. Making those card-internal actions model-visible is not required for correctness.
+The canonical public surface is defined only in `src/surface-contracts.mjs` and tested by `test/public-contract.mjs`.
 
-The public package intentionally excludes private/internal capabilities such as:
+Current V5 surface:
 
-- raw host filesystem read/mutation Workbench tools;
-- generic host process control and process receipts;
-- Computer Use;
-- generic MCP catalog/call tooling;
-- direct Browser click/fill operations;
-- household/private integrations.
+- `codexless-public-preview-v5`
+- 27 public tools
+- no public model catalog
+- no public Codex Agent / turn-start tool
+- no public quota-routing surface
 
-Internal availability is not a public safety claim. A capability must be explicitly accepted before it can enter the public contract.
+Private/internal capabilities do not automatically become public capabilities.
 
-## Command execution
+The public package intentionally excludes generic unrestricted host filesystem / process control, unrestricted Browser operation, Computer Use and arbitrary model delegation.
 
-`codex.command_exec` uses the official Codex App Server command execution path and locally resolved authority.
+---
 
-- `readOnly` is the compatibility-safe default exposed by the public schema.
-- `inherit` must be requested explicitly and uses the locally authorized/resolved Codex permission profile.
-- The remote caller does not choose arbitrary permission profiles, trusted roots, sandbox policy, approval policy, or network authority.
-- Supported-platform executable lookup may resolve a bare executable name through the host PATH where applicable. This changes executable lookup only; it does not increase authority.
-- The public model-free lane rejects direct Codex CLI launches and recognized shell/interpreter/launcher wrappers that carry a Codex command. Formal Codex model work must go through `codex.agent_start` / `codex.agent_send`, preserving Task Card, quota state, and task lifecycle.
-- Shell-string wrappers such as `cmd`, PowerShell, and POSIX shells are scanned conservatively. A benign shell command string that merely mentions a `codex` executable token may be rejected; for inspection-only commands, prefer direct argv forms such as `where.exe codex` or `which codex` instead of wrapping them in a shell string.
-- This command classifier is a product guard against direct or accidental nested-Codex routing, not a general-purpose adversarial process sandbox. Arbitrary code execution is inherently capable of hiding secondary process launches; Codexless does not claim that a malicious custom client can be made non-Turing-complete by argv inspection. The supported model-facing contract is that callers must not encode or disguise a Codex launch inside another command.
-- Commands can be destructive. The MCP tool is marked accordingly.
+## Model-free command lane
 
-## Project reads and edits
+Public command tools are:
 
-Public project file operations are intentionally narrower than a generic raw filesystem API.
+- `codex.command_exec`
+- `codex.command_start`
+- `codex.command_poll`
+- `codex.command_write`
+- `codex.command_terminate`
 
-- Multi-file reads are bounded.
-- Guarded edits require an exact expected text match and can optionally verify a SHA-256 before writing.
-- Project authority and trusted-root checks remain part of the local execution path.
-- Symlink/junction escape outside the accepted authority root must fail closed rather than silently following the path.
+These use accepted Codex App Server command primitives under locally resolved authority and are not a public Codex model lane.
 
-Do not interpret these constraints as a substitute for backups or source control.
+Security properties:
 
-## Codex Agent delegation and metered consent
+- direct Codex CLI launches are rejected;
+- recognized wrappers carrying a Codex launch are rejected;
+- model / token-usage side effects observed during the accepted streaming lane fail closed;
+- the caller cannot choose arbitrary local permission profiles;
+- `readOnly` downscoping remains available;
+- destructive commands remain destructive and are marked accordingly;
+- durable commands reject detectable literal credentials before argv is written to SQLite.
 
-Ordinary model-free tool use and metered Codex Agent work are separate lanes.
+The nested-command classifier is a product guard, not a general adversarial-process sandbox. Arbitrary code execution can deliberately hide secondary process launches; V5 does not claim to solve that impossible problem by argv inspection alone. The supported model-facing contract must not deliberately disguise Codex model execution inside unrelated commands.
 
-With `CODEXLESS_AGENT_METERED_CONSENT=always`, the public `codex.agent_start` / `codex.agent_send` tools are prepare-first. They may mint a `consentRef`, but that ref is task identity only: replaying the same `requestId` / `consentRef` through the public tool does not authorize or dispatch a Codex turn.
+### Long-running command output
 
-Approval is a separate server-side state transition. In the ChatGPT App path, rendering the Task Card also yields a per-task commit capability through component metadata; that capability is intentionally absent from model-visible text and `structuredContent`. `codex.agent_commit` requires both the exact `consentRef` and that matching capability before the server marks the task approved and calls the Agent executor. Missing or wrong capabilities fail closed. Exact duplicate commits remain idempotent and must not create a second logical turn.
+Long-command output is stored incrementally in bounded SQLite chunks.
 
-If the Task Card cannot be rendered, the consent-always path fails closed: textual fallback may explain the pending task and quota state, but a chat reply alone is not approval and must not start Codex work. Pending non-terminal task state is never silently replayed after a Codexless restart. Decline is terminal: once a prepared card is rejected, a cached commit capability and same-request replay cannot revive or dispatch that task; a new attempt requires a new request id and card.
+- callers poll with cursors rather than repeatedly receiving the full output;
+- output storage is capped;
+- truncation is surfaced;
+- durable command argv is subject to secret detection before persistence.
 
-This is a defense for the supported ChatGPT App / compliant-host path, not cryptographic proof that an arbitrary custom MCP client is a human. A client that directly controls raw protocol traffic and component metadata is part of the trust boundary. Codexless cannot distinguish a malicious custom client from its human operator solely from MCP messages; do not treat an untrusted host as a user-presence oracle.
+Interactive App Server command streaming is used where the accepted implementation supports it. Windows fallback behavior is explicit; unavailable stdin streaming must return an unsupported error rather than pretending to work.
 
-Where quota context is available, it may be shown to the user; absence of quota context must not be represented as unlimited or free usage.
+---
 
-Approval of a Codex Agent task does not grant a new local permission universe. Local Codex authority remains the ceiling.
+## Project trust
+
+Project trust is exact-root and explicit.
+
+`codexless connect`:
+
+1. resolves the canonical project / Git root;
+2. validates tunnel configuration before touching trust;
+3. requires interactive approval or explicit `--yes`;
+4. backs up Codex config;
+5. adds only the exact project root;
+6. runs doctor / authority validation;
+7. restores the previous config if validation fails.
+
+`codex.workspace_open` never creates or widens trust as a side effect. An unauthorized workspace returns a typed `needs_trust` state.
+
+---
+
+## Project reads
+
+Public project reads are deliberately narrower than a generic filesystem API.
+
+### `codex.read_many`
+
+- canonicalizes real paths;
+- requires paths to remain inside the accepted authority root;
+- paginates bounded UTF-8 output;
+- binds cursors to request parameters;
+- stores the current file SHA in pagination state;
+- refuses continuation if the source file changed between pages.
+
+Sensitive paths such as `.env`, credentials and private keys are refused by default and require explicit `allowSensitive: true`.
+
+### `codex.repo_search`
+
+Search is paginated and request-bound. Sensitive file patterns are excluded by default and require explicit opt-in.
+
+Returned project data can still contain secrets even when the path is not conventionally sensitive. ChatGPT and the user remain responsible for the destination context in which project data is used.
+
+---
+
+## Project edits
+
+### `codex.precise_edit`
+
+Guarded precise edits:
+
+- canonicalize the target;
+- verify that it stays inside the effective workspace;
+- verify exact expected-text occurrence count;
+- optionally verify an expected SHA-256;
+- revalidate the SHA immediately before writing inside the authorized command lane;
+- verify the final hash after writing.
+
+### Undo / redo
+
+`codex.edit_undo` and `codex.edit_redo` do **not** use `git reset`.
+
+For eligible precise edits, Codexless stores exact before/after UTF-8 snapshots locally and records before/after SHA-256 values.
+
+Undo is allowed only if the current file still equals the recorded after-hash. Redo is allowed only if the current file still equals the recorded before-hash. Any external modification causes `UNDO_CONFLICT` and the operation fails closed.
+
+Sensitive files never enter the undo snapshot store. The sensitive-path decision is also checked on the canonical `realpath`, so a benign-looking symlink cannot snapshot a `.env` / key file indirectly.
+
+Backups and source control remain recommended; undo/redo is a guarded convenience, not a replacement for them.
+
+---
+
+## Continuity / stored Codex history
+
+History tools are read-only unless explicitly performing a continuity checkpoint.
+
+Raw reasoning content is not exposed by the public history projection.
+
+Continuity bindings and checkpoint metadata are persisted locally in SQLite.
+
+### Idempotent retries
+
+`continuity_bind` and `continuity_checkpoint` support optional idempotency keys.
+
+Checkpoint flow uses fail-closed state:
+
+1. record `pending` locally;
+2. perform external thread injection;
+3. acknowledge the local checkpoint;
+4. store `completed` replay data.
+
+If a connection fails in the ambiguous interval after `pending`, a retry with the same key returns `IDEMPOTENCY_IN_DOUBT` instead of blindly injecting the checkpoint again.
+
+Reusing the same idempotency key with a different request payload is rejected.
+
+---
+
+## Secret boundaries
+
+V5 tries to minimize accidental durable secret storage.
+
+### Durable commands
+
+Detectable credential-like argv values are rejected before command rows are inserted into SQLite.
+
+### Continuity journals
+
+Command labels stored for continuity are redacted; raw argv is not copied into the checkpoint journal.
+
+### Tunnel configuration
+
+Persistent tunnel config stores an argv **template**, not literal secret values.
+
+Literal credentials are rejected. Secret arguments should use placeholders such as:
+
+```text
+{env:TUNNEL_TOKEN}
+```
+
+The environment variable is resolved only when the tunnel launches.
+
+Tunnel URL query parameters containing token / key / auth / secret values are refused for persistent config.
+
+### Sensitive paths
+
+Common sensitive files include `.env*`, credential / secret JSON files, private-key names and PEM / key material.
+
+- search excludes them by default;
+- `read_many` refuses them by default;
+- undo snapshots are disabled for them even when an explicit edit is authorized.
+
+These patterns reduce accidental leakage; they are not proof that every secret file in every repository will be correctly named.
+
+---
+
+## Diagnostics / logging
+
+`codexless diagnostic` is designed for support without dumping project contents.
+
+Diagnostic output intentionally excludes:
+
+- command stdout;
+- command stderr;
+- command argv;
+- stored thread previews;
+- full thread identifiers.
+
+It redacts:
+
+- home-directory paths;
+- Bearer tokens;
+- token / key / auth / secret / password query parameters;
+- common standalone credential assignments;
+- common key prefixes.
+
+Tunnel status may include template placeholders / required environment variable **names**, but not their values.
+
+Supervisor logs carry a `runtimeId`, which is also stored in runtime state for correlation.
+
+No redactor is perfect. Review diagnostic bundles before sharing them outside your trusted support context.
+
+---
 
 ## Browser Reader
 
-The first public Browser surface is read-first.
+The public Browser surface is read-first:
 
-It can inspect currently loaded browser/tab content through the accepted Browser Reader integration. It does not expose general click/fill actions in the public contract.
+- `codex.browser_status`
+- `codex.browser_tabs`
+- `codex.browser_read`
 
-Important limitations:
+It does not expose general click / fill / navigation actions in the public V5 contract.
 
-- content that has not loaded may not be visible;
-- lazy-loaded and virtualized interfaces can expose only the currently materialized content;
-- returned content may be truncated and should say so when applicable;
-- page content is untrusted input and can contain prompt-injection text.
+Webpage content is untrusted input and can contain prompt injection. A model must treat page text as data, not higher-priority instructions.
 
-A model should treat webpage text as data, not as higher-priority instructions.
+---
 
-## HTTP transport
+## HTTP / tunnel boundary
 
-The bundled HTTP entry point binds only to loopback addresses (`127.0.0.1`, `localhost`, or `::1`). It rejects non-loopback binding requests.
+The local HTTP entry point is intended for loopback only. Raw unauthenticated local service exposure to the public internet is not a supported deployment.
 
-The HTTP server also applies localhost Host/Origin validation. `/healthz` and `/readyz` return only bounded service metadata and do not intentionally publish the configured project path.
+Remote ChatGPT access is expected to use a separately authenticated MCP tunnel / remote endpoint path.
 
-Remote ChatGPT access is expected to be provided by a separately configured MCP tunnel. The tunnel is part of the deployment boundary: protect its credentials and do not expose a raw unauthenticated local service directly to the public internet.
+Tunnel credentials belong in local environment / secret storage, not source control, README examples, screenshots or diagnostic bundles.
 
-## Installer / upgrade / uninstall boundary
+Codexless supports persistent non-secret tunnel argv templates; it does not claim that every third-party tunnel client's own credential handling is controlled by Codexless.
 
-The Windows and Apple Silicon macOS Technical Preview installers are intentionally conservative.
+---
 
-- Both require Node.js 22+ and discover/probe an already-installed accepted native Codex executable; neither silently installs another Codex copy.
-- Both stage the release tree, install production dependencies there, and run doctor before activating the staged Codexless tree.
-- Re-running a newer installer is the upgrade path. Codexless-owned runtime state is kept outside the install tree and is preserved by default.
-- The installers do not widen Codex trust, configure Browser Reader, or change Tunnel settings. The Windows installer does not create a Windows service; the Mac installer does not create a LaunchAgent or modify shell PATH.
-- Default uninstall removes only a directory that identifies itself as the `codexless` package. Codex, Node.js, project files, Browser configuration, Tunnel configuration, and Codex trust settings are out of scope.
-- State purge is explicit: Windows uses `-PurgeState`; macOS uses `--purge-state`. Each removes only Codexless-owned state.
+## Installer / upgrade / uninstall
 
-## Credentials and secrets
+V5 separates the app tree from the state tree.
 
-Codexless should not require users to paste long-lived Codex or GitHub credentials into ChatGPT.
+macOS default:
 
-- Local Codex authentication remains local to the Codex environment.
-- Tunnel/runtime secrets belong in local secret/config storage, not source control or README examples.
-- Do not commit `.env` files, bearer tokens, API keys, session cookies, or copied credential stores.
-- Do not publish screenshots containing tunnel URLs, endpoint secrets, private local paths, account identifiers, or tokens.
+```text
+~/Library/Application Support/Codexless/app
+~/Library/Application Support/Codexless/state
+```
 
-The release process must scan the package and repository for accidental secrets and machine-specific private paths.
+Windows default:
 
-## Local paths and privacy
+```text
+%LOCALAPPDATA%\Codexless\app
+%LOCALAPPDATA%\Codexless\state
+```
 
-Some authenticated project tools necessarily return project paths because path identity is part of local project work. Public unauthenticated health metadata should not expose the configured project path.
+Security / durability properties:
 
-Browser contents, filenames, project text, command output, and Codex responses can all contain private information. Users should only connect Codexless to ChatGPT contexts they are comfortable using for that project.
+- Node >= 22.13.0 is required;
+- installers use staging before activation;
+- doctor runs before the staged app becomes active;
+- existing app installs are backed up during staged replacement;
+- state lives outside the app tree;
+- normal uninstall preserves state;
+- state purge is explicit;
+- upgrade stops the runtime first;
+- legacy Windows root-layout migration installs the new app under `app/` rather than moving / deleting the state root.
 
-## Dependency and supply-chain scope
+The installer does not silently create project trust or persist tunnel credentials.
 
-The public package intentionally keeps a small direct dependency set. See `THIRD_PARTY_NOTICES.md` and `package.json`.
+---
 
-Before a public release:
+## Typed error contract
 
-- install from a clean environment;
-- run the public contract test;
-- review the packed artifact rather than only the source tree;
-- scan packed files for secrets and machine-specific paths;
-- verify the exact dependency/lockfile state used for release.
+Migrated V5 tools use machine-readable errors with fields such as:
 
-## Known Technical Preview limitations
+- `errorCode`
+- `category`
+- `retryable`
+- `nextActions`
+- `operation`
+- `surfaceVersion`
 
-The Technical Preview is not a claim of production-hardening. Windows and Apple Silicon macOS have both passed real-machine installer/doctor acceptance against the public artifact shape, with broader lifecycle and Tunnel coverage on the Mac path and independent reviewer coverage on the final Windows installer/uninstaller path. Release work still includes final repository/security-reporting hygiene, packed-artifact privacy review, and any clean-machine checks required by release notes.
+Clients should use these fields instead of parsing human error strings.
 
-Intel Mac, Computer Use, unrestricted direct browser automation, and private Workbench capability parity are not part of the first public security contract.
+---
+
+## Dependency / release boundary
+
+Before a V5 release or merge:
+
+- install dependencies from a clean trusted environment;
+- regenerate npm lock root metadata using npm, not hand edits;
+- run `npm run test:v5`;
+- run the full test suite;
+- run one controlled macOS + Windows GitHub Actions matrix;
+- inspect the packed artifact;
+- scan the artifact and repository for secrets / machine paths;
+- run real-machine connect / command / edit / restart / upgrade / uninstall acceptance.
+
+The V5 workflow is intentionally manual-only while stabilization is in progress; noisy failing CI must not be re-enabled on every push before it is green.
+
+---
+
+## Known limitations
+
+The Technical Preview is not a claim of production hardening.
+
+Known limitations include:
+
+- Intel macOS is not part of the supported preview;
+- Windows long-command interactivity is limited by the accepted App Server implementation and uses explicit fallback behavior;
+- sensitive-file detection is heuristic and filename-based;
+- argv inspection cannot prevent deliberately obfuscated secondary process execution in arbitrary custom code;
+- Browser Reader is read-first rather than a general browser agent;
+- final V5 release still requires controlled CI and real-machine acceptance evidence.
+
+The durable acceptance checklist is maintained in `docs/plans/codexless-v5.md`.
+
+---
 
 ## Reporting a vulnerability
 
-Do not post credentials, private project data, or a working exploit in a public issue.
+Do not publish credentials, private project data or a working exploit in a public issue.
 
-The public GitHub repository must have **GitHub Private Vulnerability Reporting** enabled before launch. After launch, use the repository's **Security → Advisories → Report a vulnerability** flow so the report is delivered privately to the maintainer. If that private reporting action is not visible, do not disclose the issue in a public ticket; the repository is not release-ready until the private route is enabled and verified.
-
-Enabling and verifying that repository-side setting is a final publication gate, not something the local installer or runtime changes automatically.
+Before public launch, the repository should have a verified private vulnerability-reporting route. If a private reporting mechanism is unavailable, do not post exploit details publicly; contact the maintainer through a private channel and treat the missing private-report route as a release blocker.
