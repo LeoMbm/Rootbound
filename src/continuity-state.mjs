@@ -30,9 +30,7 @@ export function createContinuityState({
 
   function getRequired(bindingRef, { touch = true } = {}) {
     cleanup();
-    if (typeof bindingRef !== "string" || !bindingRef.startsWith("binding_")) {
-      throw new Error("invalid continuity bindingRef");
-    }
+    if (typeof bindingRef !== "string" || !bindingRef.startsWith("binding_")) throw new Error("invalid continuity bindingRef");
     const binding = bindings.get(bindingRef);
     if (!binding) throw new Error("continuity binding is unknown or expired; bind the Codex thread again");
     if (touch) binding.touchedAt = now();
@@ -46,42 +44,26 @@ export function createContinuityState({
       cleanup();
       const bindingRef = `binding_${randomUUID()}`;
       const at = now();
-      bindings.set(bindingRef, {
-        bindingRef,
-        threadId,
-        cwd: path.resolve(cwd),
-        threadPreview,
-        createdAt: at,
-        touchedAt: at,
-        checkpointCount: 0,
-        lastCheckpointAt: null,
-        lastAckSeq: 0,
-        journal: [],
-      });
+      bindings.set(bindingRef, { bindingRef, threadId, cwd: path.resolve(cwd), threadPreview, createdAt: at, touchedAt: at, checkpointCount: 0, lastCheckpointAt: null, lastAckSeq: 0, journal: [] });
       cleanup();
       return this.status(bindingRef);
     },
 
-    status(bindingRef) {
-      return publicBinding(getRequired(bindingRef));
-    },
+    status(bindingRef) { return publicBinding(getRequired(bindingRef)); },
 
     resolve(bindingRef) {
       const binding = getRequired(bindingRef);
-      return {
-        bindingRef: binding.bindingRef,
-        threadId: binding.threadId,
-        cwd: binding.cwd,
-        threadPreview: binding.threadPreview,
-      };
+      return { bindingRef: binding.bindingRef, threadId: binding.threadId, cwd: binding.cwd, threadPreview: binding.threadPreview };
     },
 
     assertCwd(bindingRef, candidateCwd = null) {
       const binding = getRequired(bindingRef);
-      const target = path.resolve(candidateCwd ?? binding.cwd);
-      if (!isPathWithin(binding.cwd, target)) {
-        throw new Error(`continuity binding is scoped to ${binding.cwd}; refused action cwd ${target}`);
-      }
+      const target = candidateCwd === null
+        ? binding.cwd
+        : path.isAbsolute(candidateCwd)
+          ? path.resolve(candidateCwd)
+          : path.resolve(binding.cwd, candidateCwd);
+      if (!isPathWithin(binding.cwd, target)) throw new Error(`continuity binding is scoped to ${binding.cwd}; refused action cwd ${target}`);
       return { bindingRef: binding.bindingRef, threadId: binding.threadId, cwd: binding.cwd, targetCwd: target };
     },
 
@@ -99,13 +81,7 @@ export function createContinuityState({
       const binding = getRequired(bindingRef);
       const journal = binding.journal.filter((entry) => entry.seq > binding.lastAckSeq);
       const throughSeq = journal.length ? journal[journal.length - 1].seq : binding.lastAckSeq;
-      return {
-        binding: publicBinding(binding),
-        threadId: binding.threadId,
-        cwd: binding.cwd,
-        journal: structuredClone(journal),
-        throughSeq,
-      };
+      return { binding: publicBinding(binding), threadId: binding.threadId, cwd: binding.cwd, journal: structuredClone(journal), throughSeq };
     },
 
     acknowledgeCheckpoint(bindingRef, throughSeq) {
@@ -136,17 +112,7 @@ function isPathWithin(root, target) {
 
 function publicBinding(binding) {
   const pending = binding.journal.filter((entry) => entry.seq > binding.lastAckSeq);
-  return {
-    bindingRef: binding.bindingRef,
-    threadId: binding.threadId,
-    cwd: binding.cwd,
-    threadPreview: binding.threadPreview,
-    createdAt: binding.createdAt,
-    touchedAt: binding.touchedAt,
-    checkpointCount: binding.checkpointCount,
-    lastCheckpointAt: binding.lastCheckpointAt,
-    pendingJournalEntries: pending.length,
-  };
+  return { bindingRef: binding.bindingRef, threadId: binding.threadId, cwd: binding.cwd, threadPreview: binding.threadPreview, createdAt: binding.createdAt, touchedAt: binding.touchedAt, checkpointCount: binding.checkpointCount, lastCheckpointAt: binding.lastCheckpointAt, pendingJournalEntries: pending.length };
 }
 
 function sanitizeJournalEvent(event) {
