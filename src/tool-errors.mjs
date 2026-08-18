@@ -1,3 +1,5 @@
+import { PUBLIC_SURFACE_VERSION } from "./surface-contracts.mjs";
+
 const CATEGORY_BY_CODE = new Map([
   ["PERMISSION_APPROVAL_REQUIRED", "permission"],
   ["CODEX_MODEL_LANE_DISABLED", "policy"],
@@ -7,9 +9,7 @@ const CATEGORY_BY_CODE = new Map([
   ["CODEX_MODEL_SIDE_EFFECT_DETECTED", "safety"],
 ]);
 
-const RETRYABLE_CODES = new Set([
-  "COMMAND_SESSION_NOT_ACTIVE",
-]);
+const RETRYABLE_CODES = new Set(["COMMAND_SESSION_NOT_ACTIVE"]);
 
 export class CodexlessToolError extends Error {
   constructor(message, { code = "CODEXLESS_ERROR", category = null, retryable = false, nextActions = [], details = null } = {}) {
@@ -38,6 +38,7 @@ export function normalizeToolError(error, { operation = null } = {}) {
     category,
     retryable,
     nextActions,
+    surfaceVersion: PUBLIC_SURFACE_VERSION,
   };
   if (operation) payload.operation = operation;
   if (error?.details && typeof error.details === "object") payload.details = structuredClone(error.details);
@@ -46,7 +47,10 @@ export function normalizeToolError(error, { operation = null } = {}) {
 
 export async function typedToolResponse(task, { operation = null, isError = null } = {}) {
   try {
-    const payload = await task();
+    const value = await task();
+    const payload = value && typeof value === "object" && !Array.isArray(value)
+      ? { ...value, surfaceVersion: PUBLIC_SURFACE_VERSION }
+      : { value, surfaceVersion: PUBLIC_SURFACE_VERSION };
     const failed = typeof isError === "function" ? Boolean(isError(payload)) : payload?.status === "failed" || payload?.status === "error";
     return {
       content: [{ type: "text", text: JSON.stringify(payload) }],
