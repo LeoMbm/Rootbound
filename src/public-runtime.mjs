@@ -46,7 +46,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       defaultCwd,
       profileOverride,
       configOverrides,
-      maxTimeoutMs: 30_000,
+      maxTimeoutMs: 120_000,
       watchdogGraceMs: 5_000,
       outputBytesCap: 524_288,
       acceptedCodexVersions,
