@@ -20,10 +20,11 @@
     "start:stdio": "node scripts/launch.mjs stdio",
     "start:http": "node scripts/launch.mjs http",
     "doctor": "node scripts/doctor.mjs",
-    "test:contract": "node test/public-command-policy.mjs && node test/public-contract.mjs",
+    "test:contract": "node test/thread-history-tools.mjs && node test/public-command-policy.mjs && node test/public-contract.mjs",
     "test:consent": "node test/metered-consent.mjs && node test/agent-consent-card.mjs",
     "test:browser-reader": "node test/browser-reader-lifecycle.mjs",
-    "test": "node test/metered-consent.mjs && node test/agent-consent-card.mjs && node test/public-command-policy.mjs && node test/browser-reader-lifecycle.mjs && node test/public-contract.mjs"
+    "test:history": "node test/thread-history-tools.mjs",
+    "test": "node test/metered-consent.mjs && node test/agent-consent-card.mjs && node test/public-command-policy.mjs && node test/browser-reader-lifecycle.mjs && node test/thread-history-tools.mjs && node test/public-contract.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/node": "2.0.0",
