@@ -11,8 +11,8 @@ const handle = serveStdio(runtime.createServer, {
 });
 
 console.error(
-  `Codexless Public Preview running; defaultCwd=${runtime.authorityValidation.defaultCwd ?? runtime.defaultCwd}; ` +
-  `consent=${runtime.meteredConsentMode}; surface=${runtime.surfaceVersion}; tools=${runtime.toolNames.length}`
+  `Codexless Local running; defaultCwd=${runtime.authorityValidation.defaultCwd ?? runtime.defaultCwd}; ` +
+  `modelLane=${runtime.modelLane}; surface=${runtime.surfaceVersion}; tools=${runtime.toolNames.length}`
 );
 
 let shutdownPromise = null;
