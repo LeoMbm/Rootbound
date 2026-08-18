@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { clearTunnelConfig, resolveTunnelLaunch, saveTunnelConfig, tunnelConfigStatus } from "../src/tunnel-config.mjs";
@@ -13,6 +13,9 @@ const saved = await saveTunnelConfig({ argv: template, paths });
 assert.equal(saved.configured, true);
 assert.deepEqual(saved.envPlaceholders, ["TUNNEL_TOKEN"]);
 assert.equal(JSON.stringify(saved).includes("real-secret"), false);
+const persisted = await readFile(paths.tunnelConfigPath, "utf8");
+assert.match(persisted, /\{env:TUNNEL_TOKEN\}/);
+assert.equal(persisted.includes("real-secret"), false);
 
 const status = tunnelConfigStatus({ paths, env: {} });
 assert.equal(status.configured, true);
