@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { typedToolResponse } from "./tool-errors.mjs";
 
 const require = createRequire(import.meta.url);
 const z = require("zod/v4");
@@ -18,7 +19,7 @@ export function registerBrowserReaderTools(server, browser) {
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async (input) => structured(() => browser.status(input))
+    async (input) => typedToolResponse(() => browser.status(input), { operation: "browser_status" })
   );
 
   server.registerTool(
@@ -33,7 +34,7 @@ export function registerBrowserReaderTools(server, browser) {
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async (input) => structured(() => browser.listTabs(input))
+    async (input) => typedToolResponse(() => browser.listTabs(input), { operation: "browser_tabs" })
   );
 
   server.registerTool(
@@ -52,18 +53,6 @@ export function registerBrowserReaderTools(server, browser) {
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async (input) => structured(() => browser.readTab(input))
+    async (input) => typedToolResponse(() => browser.readTab(input), { operation: "browser_read" })
   );
-}
-
-async function structured(task) {
-  try {
-    const payload = await task();
-    return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: false };
-  } catch (error) {
-    const payload = { error: error instanceof Error ? error.message : String(error) };
-    if (typeof error?.code === "string") payload.errorCode = error.code;
-    if (Array.isArray(error?.nextActions)) payload.nextActions = error.nextActions;
-    return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: true };
-  }
 }
