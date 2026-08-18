@@ -81,6 +81,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       browserReader,
       continuityState,
       commandManager,
+      stateStore,
       maxConcurrent: 1,
     });
 
