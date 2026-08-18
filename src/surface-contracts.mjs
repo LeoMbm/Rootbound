@@ -1,12 +1,12 @@
-export const PUBLIC_SERVER_VERSION = "0.1.0-preview.4";
+export const PUBLIC_SERVER_VERSION = "0.1.0-preview.5";
 export const PUBLIC_SURFACE_VERSION = "codexless-public-preview-v5";
 
 export const PUBLIC_TOOL_NAMES = Object.freeze([
   "codex.command_exec",
   "codex.command_start",
-  "codex.command_status",
-  "codex.command_output",
-  "codex.command_stop",
+  "codex.command_poll",
+  "codex.command_write",
+  "codex.command_terminate",
   "codex.project_context",
   "codex.skill_list",
   "codex.skill_read",
