@@ -1,47 +1,50 @@
 {
   "schemaVersion": 1,
-  "verifiedCodexVersion": "0.147.0",
-  "additionalAcceptedCodexVersions": ["0.147.0-alpha.6.6"],
-  "verifiedAt": "2026-08-14",
+  "verifiedCodexVersion": "0.148.0-alpha.15",
+  "additionalAcceptedCodexVersions": ["0.148.0-alpha.9"],
+  "verifiedAt": "2026-08-18",
   "defaultAction": "deny",
   "remoteAllowlist": {
     "command/exec": {
       "classification": "model-free",
-      "bridgeTool": "codex.command_exec",
+      "bridgeTools": [
+        "codex.command_exec",
+        "codex.repo_search",
+        "codex.read_many",
+        "codex.apply_patch",
+        "codex.precise_edit",
+        "codex.git_status",
+        "codex.git_diff"
+      ],
       "evidence": [
-        "Codex 0.147.0 stable App Server schema describes command/exec as standalone sandboxed argv execution without creating a thread or turn.",
-        "Acceptance observed no thread/* or turn/* notifications during buffered command/exec execution."
+        "Codex 0.148.0-alpha.15 App Server documentation describes command/exec as running one command without starting a thread/turn.",
+        "The exact alpha.15 upstream test suite covers buffered execution, permissionProfile selection, apply_patch execution, project-root permission enforcement, and command termination.",
+        "Codexless runtime rejects any model-turn/token-usage notification observed during command/exec authority/execution paths."
       ]
     }
   },
   "internalHostAllowlist": {},
   "denyFamilies": [
     {
-      "pattern": "thread/*",
-      "classification": "model-session-or-unsafe-surface",
-      "reason": "Not exported as a generic public control surface. Formal Codex Agent delegation is exposed only through the bounded codex.agent_* lane."
-    },
-    {
       "pattern": "turn/*",
       "classification": "model-execution-surface",
-      "reason": "Not exported generically; metered model work is exposed through codex.agent_* only."
+      "reason": "ChatGPT-only public surface does not expose any Codex model turn or agent delegation path."
     },
     {
       "pattern": "review/*",
       "classification": "model-execution-surface",
-      "reason": "Not part of the first public Technical Preview surface."
+      "reason": "ChatGPT-only public surface does not expose Codex model execution."
+    },
+    {
+      "pattern": "model/*",
+      "classification": "model-routing-surface",
+      "reason": "Model catalog/routing is intentionally absent so ChatGPT cannot select a Codex fallback model."
+    },
+    {
+      "pattern": "account/*",
+      "classification": "codex-account-surface",
+      "reason": "Codex quota/account state is intentionally absent from the ChatGPT-only public surface."
     }
   ],
-  "observeOnly": {
-    "account/usage/read": {
-      "classification": "usage-observability",
-      "remoteExposure": "deny",
-      "reason": "Used internally for metered-call resource transparency; not a generic public App Server method."
-    },
-    "account/rateLimits/read": {
-      "classification": "usage-observability",
-      "remoteExposure": "deny",
-      "reason": "Used internally for metered-call resource transparency; not a generic public App Server method."
-    }
-  }
+  "observeOnly": {}
 }
