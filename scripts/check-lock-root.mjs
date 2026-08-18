@@ -7,17 +7,12 @@ const strict = process.argv.includes("--strict");
 const json = process.argv.includes("--json");
 
 const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
-const packageLock = JSON.parse(await readFile(path.join(root, "package-lock.json"), "utf8"));
 const shrinkwrap = JSON.parse(await readFile(path.join(root, "npm-shrinkwrap.json"), "utf8"));
-
-const packageRoot = packageLock.packages?.[""] ?? {};
 const shrinkRoot = shrinkwrap.packages?.[""] ?? {};
 const problems = [];
 const metadataDrift = [];
 
 for (const [label, value, expected] of [
-  ["package-lock name", packageRoot.name, pkg.name],
-  ["package-lock version", packageRoot.version, pkg.version],
   ["shrinkwrap name", shrinkRoot.name, pkg.name],
   ["shrinkwrap version", shrinkRoot.version, pkg.version],
 ]) {
@@ -25,8 +20,6 @@ for (const [label, value, expected] of [
 }
 
 for (const [label, value, expected] of [
-  ["package-lock dependencies", packageRoot.dependencies ?? {}, pkg.dependencies ?? {}],
-  ["package-lock devDependencies", packageRoot.devDependencies ?? {}, pkg.devDependencies ?? {}],
   ["shrinkwrap dependencies", shrinkRoot.dependencies ?? {}, pkg.dependencies ?? {}],
   ["shrinkwrap devDependencies", shrinkRoot.devDependencies ?? {}, pkg.devDependencies ?? {}],
 ]) {
@@ -34,8 +27,6 @@ for (const [label, value, expected] of [
 }
 
 for (const [label, value, expected] of [
-  ["package-lock engines", packageRoot.engines ?? null, pkg.engines ?? null],
-  ["package-lock bin", packageRoot.bin ?? null, pkg.bin ?? null],
   ["shrinkwrap engines", shrinkRoot.engines ?? null, pkg.engines ?? null],
   ["shrinkwrap bin", shrinkRoot.bin ?? null, pkg.bin ?? null],
 ]) {
@@ -49,14 +40,14 @@ const result = {
   dependencyCompatible: problems.length === 0,
   releaseReady: problems.length === 0 && metadataDrift.length === 0,
   strict,
+  canonicalLock: "npm-shrinkwrap.json",
   problems,
   metadataDrift,
   remediation: metadataDrift.length
     ? [
-        "On a trusted machine with the intended npm version, regenerate lock metadata from package.json.",
+        "Regenerate the canonical npm-shrinkwrap.json metadata from package.json.",
         "Run: npm install --package-lock-only --ignore-scripts",
-        "Then regenerate npm-shrinkwrap.json with: npm shrinkwrap",
-        "Review the diff and rerun: node scripts/check-lock-root.mjs --strict",
+        "Review npm-shrinkwrap.json, then rerun: npm run check:lock:strict",
       ]
     : [],
 };
@@ -64,7 +55,7 @@ const result = {
 if (json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 else {
   const label = status === "ok" ? "PASS" : status === "drift" ? "DRIFT" : "FAIL";
-  process.stdout.write(`Codexless lock check: ${label}${strict ? " (strict)" : ""}\n`);
+  process.stdout.write(`Codexless lock check: ${label}${strict ? " (strict)" : ""}; canonical=npm-shrinkwrap.json\n`);
   for (const problem of problems) process.stdout.write(`[ERROR] ${problem}\n`);
   for (const drift of metadataDrift) process.stdout.write(`[DRIFT] ${drift}\n`);
   for (const action of result.remediation) process.stdout.write(`-> ${action}\n`);
