@@ -3,6 +3,7 @@ import { registerAgentPreviewTools } from "./agent-tools.mjs";
 import { registerBrowserReaderTools } from "./browser-reader-tools.mjs";
 import { registerConstructionTools } from "./construction-tools.mjs";
 import { registerPublicContextTools } from "./public-context-tools.mjs";
+import { registerThreadHistoryTools } from "./thread-history-tools.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION } from "./surface-contracts.mjs";
 
 const require = createRequire(import.meta.url);
@@ -50,7 +51,7 @@ export function createPublicServerFactory({
       },
       {
         instructions:
-          "Codexless Public Technical Preview. Public surface is deliberately small: authority-bounded project construction, Codex project context and Skills, read-only Browser Reader, and explicit metered Codex Agent delegation with visible consent/usage state. Browser click/fill, Computer Use, generic MCP calls/catalogs, raw host filesystem/process Workbench controls, and private household capabilities are not part of this package. Remote callers cannot widen Codex permission profiles, sandbox, approval policy, trusted roots, or network authority. Model-free work and metered Codex Agent work are separate lanes.",
+          "Codexless Public Technical Preview. Public surface is deliberately small: authority-bounded project construction, Codex project context and Skills, authorized persisted thread continuity, read-only Browser Reader, and explicit metered Codex Agent delegation with visible consent/usage state. Thread history is project-authority bounded, paginated, and omits raw reasoning. continuity_push is the only history mutation and injects a clearly labeled external handoff without starting a Codex model turn. Browser click/fill, Computer Use, generic MCP calls/catalogs, raw host filesystem/process Workbench controls, and private household capabilities are not part of this package. Remote callers cannot widen Codex permission profiles, sandbox, approval policy, trusted roots, or network authority. Model-free work and metered Codex Agent work are separate lanes.",
       }
     );
 
@@ -101,6 +102,7 @@ export function createPublicServerFactory({
     );
 
     registerPublicContextTools(server, publicContext);
+    registerThreadHistoryTools(server, { context: publicContext, authorityExecutor });
     registerConstructionTools(server, { authorityExecutor });
     registerBrowserReaderTools(server, browserReader);
     registerAgentPreviewTools(server, {
