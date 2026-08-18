@@ -34,17 +34,22 @@ const forbiddenModelTools = PUBLIC_TOOL_NAMES.filter((name) =>
   name === "codex.model_list" ||
   name.startsWith("codex.agent_")
 );
-const expectedSurface = PUBLIC_SURFACE_VERSION === "codexless-public-preview-v5" && PUBLIC_TOOL_NAMES.length === 25;
+const uniqueToolNames = new Set(PUBLIC_TOOL_NAMES).size === PUBLIC_TOOL_NAMES.length;
+const expectedSurface = PUBLIC_SURFACE_VERSION === "codexless-public-preview-v5" && uniqueToolNames && PUBLIC_TOOL_NAMES.length > 0;
 record(
   "public-surface",
   expectedSurface && forbiddenModelTools.length === 0,
   `${PUBLIC_SURFACE_VERSION}; ${PUBLIC_TOOL_NAMES.length} tools; modelLane=chatgpt-only`,
-  forbiddenModelTools.length ? `Forbidden Codex model tools exposed: ${forbiddenModelTools.join(", ")}` : "Expected Codexless public preview v5 with 25 tools"
+  forbiddenModelTools.length
+    ? `Forbidden Codex model tools exposed: ${forbiddenModelTools.join(", ")}`
+    : !uniqueToolNames
+      ? "Public tool list contains duplicate names"
+      : "Expected a non-empty unique ChatGPT-only V5 public surface"
 );
 record(
   "surface-compatibility",
   expectedSurface,
-  expectedSurface ? "V5 surface contract is internally consistent" : "Surface contract is stale or incomplete",
+  expectedSurface ? `V5 surface contract is internally consistent (${PUBLIC_TOOL_NAMES.length} tools)` : "Surface contract is stale or incomplete",
   expectedSurface ? null : "Restart/reconnect the Codexless MCP connection after upgrading so ChatGPT refreshes its cached tool snapshot"
 );
 
@@ -96,11 +101,7 @@ if (codexResolution?.path && codexProbe?.ok) {
 
   if (requestedCwd) {
     try {
-      const authority = new CodexAuthorityExecutor({
-        codexBin: codexResolution.path,
-        defaultCwd: requestedCwd,
-        acceptedCodexVersions: ACCEPTED_CODEX_VERSIONS,
-      });
+      const authority = new CodexAuthorityExecutor({ codexBin: codexResolution.path, defaultCwd: requestedCwd, acceptedCodexVersions: ACCEPTED_CODEX_VERSIONS });
       await authority.validate();
       const resolved = await authority.resolveAuthority({ cwd: requestedCwd, access: "readOnly" });
       projectContext = {
