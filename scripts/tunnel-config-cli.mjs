@@ -1,5 +1,7 @@
 import process from "node:process";
-import { clearTunnelConfig, saveTunnelConfig, tunnelConfigStatus } from "../src/tunnel-config.mjs";
+import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { rollbackManagedTunnelSetup } from "../src/tunnel-bootstrap.mjs";
+import { saveTunnelConfig, tunnelConfigStatus } from "../src/tunnel-config.mjs";
 
 const args = process.argv.slice(2);
 const command = args.shift() ?? "show";
@@ -35,8 +37,19 @@ function show(argv) {
 }
 async function clear(argv) {
   const json = onlyJson(argv);
-  const result = await clearTunnelConfig();
-  emit({ ok: true, action: "clear", ...result }, json);
+  const paths = resolveCodexlessPaths();
+  const before = tunnelConfigStatus({ paths });
+  await rollbackManagedTunnelSetup({ paths });
+  const after = tunnelConfigStatus({ paths });
+  emit({
+    ok: true,
+    action: "clear",
+    configured: after.configured,
+    cleared: before.source === "persistent",
+    path: paths.tunnelConfigPath,
+    managedArtifactsCleared: true,
+    environmentOverrideActive: after.source === "environment",
+  }, json);
 }
 
 function parseConfigure(argv) {
@@ -76,9 +89,13 @@ function emit(value, json) {
     if (value.path) process.stdout.write(`Config: ${value.path}\n`);
     if (value.argv) process.stdout.write(`Argv: ${value.argv.join(" ")}\n`);
     if (value.envPlaceholders?.length) process.stdout.write(`Required environment: ${value.envPlaceholders.join(", ")}\n`);
-  } else process.stdout.write(`Tunnel config cleared: ${value.cleared ? "yes" : "already absent"}\n`);
+  } else {
+    process.stdout.write(`Tunnel config cleared: ${value.cleared ? "yes" : "already absent"}\n`);
+    if (value.managedArtifactsCleared) process.stdout.write("Guided tunnel setup state cleared.\n");
+    if (value.environmentOverrideActive) process.stdout.write("Note: CODEXLESS_TUNNEL_ARGV_JSON is still active in the environment.\n");
+  }
 }
 function printHelp() {
-  process.stdout.write(`Codexless tunnel configuration\n\nUsage:\n  codexless tunnel configure --argv-json '["tunnel", "--token", "{env:TUNNEL_TOKEN}", ...]'\n  codexless tunnel configure -- tunnel --token '{env:TUNNEL_TOKEN}' ...\n  codexless tunnel show [--json]\n  codexless tunnel clear [--json]\n\nPersistent config refuses literal credentials. Use exact {env:VARIABLE} argv placeholders for secrets.\n`);
+  process.stdout.write(`Codexless tunnel configuration (advanced)\n\nNormal users should run:\n  codexless connect .\n\nAdvanced/manual usage:\n  codexless tunnel configure --argv-json '["tunnel-client", "run", "--profile", "my-profile"]'\n  codexless tunnel configure -- tunnel-client run --profile my-profile\n  codexless tunnel show [--json]\n  codexless tunnel clear [--json]\n\nPersistent manual config refuses literal credentials. The guided connect wizard keeps its runtime key outside argv/tunnel.json.\n`);
 }
 function usage(message) { const error = new Error(message); error.usage = true; return error; }
