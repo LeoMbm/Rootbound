@@ -3,11 +3,13 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { runtimeStatus, tailLog } from "./runtime-state.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "./surface-contracts.mjs";
+import { tunnelConfigStatus } from "./tunnel-config.mjs";
 
 export async function buildDiagnosticSnapshot({ store, packageRoot, maxEvents = 200, maxLogBytes = 64 * 1024 } = {}) {
   if (!store || !packageRoot) throw new Error("diagnostic snapshot requires store and packageRoot");
   const pkg = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
   const runtime = await runtimeStatus(store.paths);
+  const tunnel = safeTunnelStatus(store.paths);
   const projects = store.listProjects().map((project) => ({
     projectRef: project.projectRef,
     name: project.name,
@@ -56,6 +58,7 @@ export async function buildDiagnosticSnapshot({ store, packageRoot, maxEvents = 
     },
     host: { platform: process.platform, arch: process.arch, node: process.version },
     runtime: redactValue(runtime),
+    tunnel: redactValue(tunnel),
     projects,
     bindings,
     events,
@@ -64,6 +67,7 @@ export async function buildDiagnosticSnapshot({ store, packageRoot, maxEvents = 
       stdoutIncluded: false,
       stderrIncluded: false,
       threadPreviewIncluded: false,
+      tunnelSecretValuesIncluded: false,
       homePathsRedacted: true,
       credentialPatternsRedacted: true,
     },
@@ -93,12 +97,22 @@ export function redactText(value, { home = os.homedir() } = {}) {
   return text;
 }
 
+function safeTunnelStatus(paths) {
+  try { return tunnelConfigStatus({ paths }); }
+  catch (error) {
+    return {
+      configured: false,
+      status: "invalid",
+      error: error instanceof Error ? error.message : String(error),
+      errorCode: typeof error?.code === "string" ? error.code : "TUNNEL_CONFIG_INVALID",
+    };
+  }
+}
 function redactIdentifier(value) {
   const text = String(value ?? "");
   if (text.length <= 8) return "<redacted-id>";
   return `${text.slice(0, 4)}…${text.slice(-4)}`;
 }
-
 function replaceAllPortable(text, needle, replacement) {
   if (!needle) return text;
   const variants = new Set([needle, needle.replaceAll("\\", "/"), needle.replaceAll("/", "\\")]);
