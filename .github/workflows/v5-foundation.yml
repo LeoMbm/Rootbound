@@ -1,0 +1,40 @@
+name: V5 Foundation
+
+on:
+  push:
+    branches: ["feat/thread-history-continuity"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+        node: ["22.13.1", "22.16.0"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run test:v5
+      - name: Syntax-check V5 runtime
+        shell: bash
+        run: |
+          node --check bin/codexless.mjs
+          node --check scripts/launch.mjs
+          node --check scripts/supervisor.mjs
+          node --check scripts/command-worker.mjs
+          node --check src/state-store.mjs
+          node --check src/command-manager.mjs
+          node --check src/streaming-command-session.mjs
+          node --check src/command-tools.mjs
+          node --check src/public-runtime.mjs
+          node --check src/public-server-factory.mjs
