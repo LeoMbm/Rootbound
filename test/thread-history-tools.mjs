@@ -1,18 +1,36 @@
 import assert from "node:assert/strict";
-import { buildContinuityHandoff } from "../src/thread-history-tools.mjs";
+import { createContinuityState } from "../src/continuity-state.mjs";
+import { buildContinuityCheckpoint } from "../src/thread-history-tools.mjs";
 import { sanitizeHistoryPayload } from "../src/public-context-executor.mjs";
 
-const handoff = buildContinuityHandoff({
-  summary: "Implemented model-free history continuity.",
-  changedFiles: ["src/thread-history-tools.mjs"],
-  tests: ["npm test"],
+const state = createContinuityState({ now: (() => { let n = 1_000; return () => ++n; })() });
+const bound = state.bind({ threadId: "thr_123", cwd: "/project", threadPreview: "Fix matcher" });
+assert.match(bound.bindingRef, /^binding_/);
+assert.equal(bound.pendingJournalEntries, 0);
+
+state.record(bound.bindingRef, { kind: "command", label: "npm test", cwd: "/project", status: "ok", exitCode: 0 });
+state.record(bound.bindingRef, { kind: "edit", path: "/project/src/index.js", cwd: "/project", status: "applied", changed: true });
+const pending = state.prepareCheckpoint(bound.bindingRef);
+assert.equal(pending.journal.length, 2);
+assert.equal(pending.threadId, "thr_123");
+
+const checkpoint = buildContinuityCheckpoint({
+  summary: "Implemented bound model-free continuity.",
   decisions: ["Raw reasoning stays private."],
-  remainingWork: ["Review upstream compatibility."],
+  remainingWork: ["Run the full suite on a supported machine."],
+  journal: pending.journal,
 });
-assert.match(handoff, /^\[External continuity update from ChatGPT via Codexless\]/);
-assert.match(handoff, /not a previous Codex-generated conclusion/i);
-assert.match(handoff, /Changed files:\n- src\/thread-history-tools\.mjs/);
-assert.match(handoff, /Raw reasoning stays private/);
+assert.match(checkpoint, /^\[External continuity checkpoint from ChatGPT via Codexless\]/);
+assert.match(checkpoint, /not a previous Codex-generated conclusion/i);
+assert.match(checkpoint, /npm test/);
+assert.match(checkpoint, /src\/index\.js/);
+assert.match(checkpoint, /Raw reasoning stays private/);
+
+const acknowledged = state.acknowledgeCheckpoint(bound.bindingRef, pending.throughSeq);
+assert.equal(acknowledged.pendingJournalEntries, 0);
+assert.equal(acknowledged.checkpointCount, 1);
+assert.equal(state.unbind(bound.bindingRef).status, "unbound");
+assert.throws(() => state.status(bound.bindingRef), /unknown or expired/i);
 
 const sanitized = sanitizeHistoryPayload({
   thread: {
