@@ -31,6 +31,7 @@ export function resolveCodexlessPaths({ env = process.env, platform = process.pl
     appDir: path.join(root, "app"),
     stateDir,
     dbPath: path.join(stateDir, "codexless.sqlite3"),
+    tunnelConfigPath: path.join(stateDir, "tunnel.json"),
     runtimeDir,
     runtimeStatePath: path.join(runtimeDir, "runtime.json"),
     logsDir,
