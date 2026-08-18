@@ -4,6 +4,7 @@ import { registerCommandTools } from "./command-tools.mjs";
 import { registerConstructionTools } from "./construction-tools.mjs";
 import { registerPublicContextTools } from "./public-context-tools.mjs";
 import { registerRepoTools } from "./repo-tools.mjs";
+import { summarizeRedactedArgv } from "./secret-boundaries.mjs";
 import { registerThreadHistoryTools } from "./thread-history-tools.mjs";
 import { typedToolResponse } from "./tool-errors.mjs";
 import { registerWorkspaceTools } from "./workspace-tools.mjs";
@@ -29,21 +30,21 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     cwd: z.string().min(1).max(32_768).optional().describe("Optional local working-directory context. cwd does not let the caller select or widen a permission profile."),
     access: z.enum(["inherit", "readOnly"]).default("readOnly").describe("readOnly is the safe compatibility default. inherit uses the locally authorized/resolved Codex permission profile."),
     timeoutMs: z.number().int().positive().max(120_000).default(30_000),
-    bindingRef: bindingRefSchema.describe("Optional opaque continuity binding. When supplied, Codexless scopes execution to the bound project and journals command metadata for the next continuity checkpoint."),
+    bindingRef: bindingRefSchema.describe("Optional opaque continuity binding. When supplied, Codexless scopes execution to the bound project and journals redacted command metadata for the next continuity checkpoint."),
   }).strict();
 
   return function createServer() {
     let inFlight = 0;
     const server = new McpServer(
       { name: "codexless", title: "Codexless Local", version: PUBLIC_SERVER_VERSION, description: "ChatGPT-only local coding bridge built on verified model-free Codex App Server primitives." },
-      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Start project work with workspace_open to resolve the canonical projectRef/root/authority, then prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. Successful precise_edit calls may return a mutationId; use edit_undo/edit_redo for guarded local reversal while hashes still match. On supported platforms command_write can send stdin and command_terminate stops the active process. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. Use idempotencyKey on continuity_bind/checkpoint when network retries are possible; ambiguous checkpoint retries fail closed rather than inject twice. The checkpoint is an external delta handoff only; no Codex model turn is started." }
+      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Start project work with workspace_open to resolve the canonical projectRef/root/authority, then prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. Successful precise_edit calls may return a mutationId; use edit_undo/edit_redo for guarded local reversal while hashes still match. On supported platforms command_write can send stdin and command_terminate stops the active process. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. Use idempotencyKey on continuity_bind/checkpoint when network retries are possible; ambiguous checkpoint retries fail closed rather than inject twice. Long-running command argv is persisted and therefore rejects detected credentials; command_exec continuity labels are redacted before journaling. The checkpoint is an external delta handoff only; no Codex model turn is started." }
     );
 
     server.registerTool(
       "codex.command_exec",
       {
         title: "Run Authorized Project Command",
-        description: "Run one buffered argv command through official Codex App Server command/exec without starting a Codex model turn. ChatGPT remains the reasoning model. Nested Codex CLI launches and wrappers carrying Codex commands are refused. If bindingRef is supplied, execution is scoped to the bound project and bounded command metadata is journaled for the next continuity checkpoint.",
+        description: "Run one buffered argv command through official Codex App Server command/exec without starting a Codex model turn. ChatGPT remains the reasoning model. Nested Codex CLI launches and wrappers carrying Codex commands are refused. If bindingRef is supplied, execution is scoped to the bound project and only redacted command metadata is journaled for the next continuity checkpoint.",
         inputSchema: commandSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       },
@@ -60,7 +61,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
         try {
           const scoped = bindingRef ? continuityState.assertCwd(bindingRef, cwd) : null;
           const result = await executor.exec({ command, cwd: scoped?.targetCwd ?? cwd, access, timeoutMs });
-          if (bindingRef) continuityState.record(bindingRef, { kind: "command", label: summarizeArgv(command), cwd: result.effectiveCwd, status: result.exitCode === 0 ? "ok" : "failed", exitCode: result.exitCode });
+          if (bindingRef) continuityState.record(bindingRef, { kind: "command", label: summarizeRedactedArgv(command), cwd: result.effectiveCwd, status: result.exitCode === 0 ? "ok" : "failed", exitCode: result.exitCode });
           const payload = { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, access, surfaceVersion: PUBLIC_SURFACE_VERSION, modelTurnStarted: false };
           if (typeof result.stdoutTruncated === "boolean") payload.stdoutTruncated = result.stdoutTruncated;
           if (typeof result.stderrTruncated === "boolean") payload.stderrTruncated = result.stderrTruncated;
@@ -84,9 +85,4 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     registerBrowserReaderTools(server, browserReader);
     return server;
   };
-}
-
-function summarizeArgv(command) {
-  const joined = command.join(" ").replace(/\s+/g, " ").trim();
-  return joined.length > 512 ? joined.slice(0, 509) + "..." : joined;
 }
