@@ -26,19 +26,26 @@ let projectContext = null;
 
 const supportedPlatform = process.platform === "win32" || (process.platform === "darwin" && process.arch === "arm64");
 record("platform", supportedPlatform, supportedPlatform ? `${process.platform}/${process.arch}` : `Unsupported platform: ${process.platform}/${process.arch}`);
-const nodeMajor = Number.parseInt(process.versions.node.split(".")[0], 10);
-record("node", Number.isInteger(nodeMajor) && nodeMajor >= 22, `Node ${process.version}`, nodeMajor >= 22 ? null : "Node.js 22+ is required");
+const nodeSupported = compareVersion(process.versions.node, "22.13.0") >= 0;
+record("node", nodeSupported, `Node ${process.version}`, nodeSupported ? null : "Node.js >=22.13.0 is required by the V5 SQLite state layer");
 
 const forbiddenModelTools = PUBLIC_TOOL_NAMES.filter((name) =>
   name === "codex.account_preflight" ||
   name === "codex.model_list" ||
   name.startsWith("codex.agent_")
 );
+const expectedSurface = PUBLIC_SURFACE_VERSION === "codexless-public-preview-v5" && PUBLIC_TOOL_NAMES.length === 24;
 record(
   "public-surface",
-  PUBLIC_SURFACE_VERSION === "codexless-public-preview-v4" && PUBLIC_TOOL_NAMES.length === 20 && forbiddenModelTools.length === 0,
+  expectedSurface && forbiddenModelTools.length === 0,
   `${PUBLIC_SURFACE_VERSION}; ${PUBLIC_TOOL_NAMES.length} tools; modelLane=chatgpt-only`,
-  forbiddenModelTools.length ? `Forbidden Codex model tools exposed: ${forbiddenModelTools.join(", ")}` : "Expected ChatGPT-only preview v4 with 20 tools"
+  forbiddenModelTools.length ? `Forbidden Codex model tools exposed: ${forbiddenModelTools.join(", ")}` : "Expected Codexless public preview v5 with 24 tools"
+);
+record(
+  "surface-compatibility",
+  expectedSurface,
+  expectedSurface ? "V5 surface contract is internally consistent" : "Surface contract is stale or incomplete",
+  expectedSurface ? null : "Restart/reconnect the Codexless MCP connection after upgrading so ChatGPT refreshes its cached tool snapshot"
 );
 
 for (const spec of ["@modelcontextprotocol/node", "@modelcontextprotocol/server", "zod"]) {
@@ -138,6 +145,7 @@ const result = {
     "The public MCP surface is ChatGPT-only and exposes no Codex model/agent/quota routing tools.",
     "Codex App Server remains the local sandbox, permission, history, and command execution substrate.",
     "Doctor does not start a Codex model turn.",
+    "After a surface upgrade, reconnect ChatGPT to refresh its cached MCP tool snapshot.",
     "Tunnel connectivity and optional Browser Reader prerequisites are verified separately."
   ],
 };
@@ -169,6 +177,15 @@ function record(name, ok, detail, action = null) {
 function parseCodexVersion(text) {
   const match = String(text ?? "").match(/codex-cli\s+([^\s]+)/i);
   return match?.[1] ?? null;
+}
+function compareVersion(a, b) {
+  const left = String(a).split(".").map((part) => Number.parseInt(part, 10));
+  const right = String(b).split(".").map((part) => Number.parseInt(part, 10));
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const delta = (left[i] ?? 0) - (right[i] ?? 0);
+    if (delta !== 0) return delta > 0 ? 1 : -1;
+  }
+  return 0;
 }
 function isWithin(root, candidate) {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));

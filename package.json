@@ -44,6 +44,8 @@
     "config",
     "scripts",
     "bin/codexless.mjs",
+    "bin/codexless.cmd",
+    "bin/codexless.sh",
     "bin/codexless-doctor.cmd",
     "bin/codexless-http.cmd",
     "bin/codexless-install.cmd",
