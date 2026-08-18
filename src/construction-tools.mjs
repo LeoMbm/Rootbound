@@ -119,8 +119,9 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
 
 export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCharsPerFile = DEFAULT_PER_FILE_CHARS, maxTotalChars = DEFAULT_TOTAL_CHARS, cursor = null, allowSensitive = false }) {
   const authority = await authorityExecutor.resolveAuthority({ cwd, access: "readOnly" });
+  const effectiveCwd = await realpath(authority.effectiveCwd);
   const root = await canonicalRoot(authority);
-  const signatureInput = { paths, cwd: authority.effectiveCwd, maxCharsPerFile, allowSensitive };
+  const signatureInput = { paths, cwd: effectiveCwd, maxCharsPerFile, allowSensitive };
   const state = decodeCursor(cursor, "read_many", signatureInput) ?? { pathIndex: 0, charOffset: 0, fileSha: null };
   if (!Number.isInteger(state.pathIndex) || state.pathIndex < 0 || state.pathIndex >= paths.length || !Number.isInteger(state.charOffset) || state.charOffset < 0) throw paginationError("Pagination cursor contains an invalid file position.", "PAGINATION_CURSOR_INVALID");
 
@@ -130,9 +131,9 @@ export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCha
   for (let index = state.pathIndex; index < paths.length && remaining > 0; index += 1) {
     const requestedPath = paths[index];
     if (!allowSensitive && isSensitivePath(requestedPath)) throw sensitiveReadError(requestedPath);
-    const target = await canonicalExistingFile({ requestedPath, cwd: authority.effectiveCwd, root: authority.effectiveCwd });
+    const target = await canonicalExistingFile({ requestedPath, cwd: effectiveCwd, root: effectiveCwd });
     if (!allowSensitive && isSensitivePath(target)) throw sensitiveReadError(target);
-    const read = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
+    const read = await readTextViaSandbox({ authorityExecutor, target, cwd: effectiveCwd, access: "readOnly" });
     const text = read.text;
     const buffer = Buffer.from(text, "utf8");
     const fileSha = sha256(buffer);
@@ -147,16 +148,17 @@ export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCha
     if (nextOffset < text.length) { nextCursor = encodeCursor("read_many", signatureInput, { pathIndex: index, charOffset: nextOffset, fileSha }); break; }
     if (remaining === 0 && index + 1 < paths.length) { nextCursor = encodeCursor("read_many", signatureInput, { pathIndex: index + 1, charOffset: 0, fileSha: null }); break; }
   }
-  return { status: "ok", cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: ":read-only", allowSensitive, count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files, hasMore: Boolean(nextCursor), nextCursor, modelTurnStarted: false };
+  return { status: "ok", cwd: effectiveCwd, trustedAncestor: root, permissionProfile: ":read-only", allowSensitive, count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files, hasMore: Boolean(nextCursor), nextCursor, modelTurnStarted: false };
 }
 
 export async function preciseEditAuthorized({ authorityExecutor, path: requestedPath, expectedText, replacementText, expectedOccurrences = 1, expectedSha256, cwd, previewOnly = false, captureSnapshot = false }) {
   const authority = await authorityExecutor.resolveAuthority({ cwd, access: "inherit" });
+  const effectiveCwd = await realpath(authority.effectiveCwd);
   const root = await canonicalRoot(authority);
-  const target = await canonicalExistingFile({ requestedPath, cwd: authority.effectiveCwd, root });
-  assertWithinEffectiveCwd(authority.effectiveCwd, target);
+  const target = await canonicalExistingFile({ requestedPath, cwd: effectiveCwd, root });
+  assertWithinEffectiveCwd(effectiveCwd, target);
   const sensitiveTarget = isSensitivePath(target);
-  const initial = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
+  const initial = await readTextViaSandbox({ authorityExecutor, target, cwd: effectiveCwd, access: "readOnly" });
   const initialBuffer = Buffer.from(initial.text, "utf8");
   const beforeSha256 = sha256(initialBuffer);
   if (expectedSha256 && beforeSha256.toLowerCase() !== expectedSha256.toLowerCase()) throw new Error(`precise edit refused: expectedSha256 does not match current file ${target}`);
@@ -167,14 +169,14 @@ export async function preciseEditAuthorized({ authorityExecutor, path: requested
   const afterSha256 = sha256(afterBuffer);
   const preview = sensitiveTarget ? { suppressed: true, reason: "sensitive_path" } : buildPreview(initial.text, nextText, expectedText);
   if (!previewOnly) {
-    const edit = await authorityExecutor.exec({ command: [process.execPath, "-e", PRECISE_EDIT_SCRIPT, target, beforeSha256, String(expectedOccurrences), Buffer.from(expectedText, "utf8").toString("base64"), Buffer.from(replacementText, "utf8").toString("base64")], cwd: authority.effectiveCwd, access: "inherit", timeoutMs: 15_000 });
+    const edit = await authorityExecutor.exec({ command: [process.execPath, "-e", PRECISE_EDIT_SCRIPT, target, beforeSha256, String(expectedOccurrences), Buffer.from(expectedText, "utf8").toString("base64"), Buffer.from(replacementText, "utf8").toString("base64")], cwd: effectiveCwd, access: "inherit", timeoutMs: 15_000 });
     if (edit.exitCode !== 0) throw new Error(`precise edit sandbox write failed: ${edit.stderr || `exit ${edit.exitCode}`}`);
-    const written = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
+    const written = await readTextViaSandbox({ authorityExecutor, target, cwd: effectiveCwd, access: "readOnly" });
     const writtenSha256 = sha256(Buffer.from(written.text, "utf8"));
     if (writtenSha256 !== afterSha256) throw new Error("precise edit verification failed: written file hash does not match intended output");
   }
   const snapshotAllowed = captureSnapshot && !previewOnly && !sensitiveTarget;
-  return { status: previewOnly ? "preview" : "applied", path: target, cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: authority.permissionProfile, occurrenceCount, beforeSha256, afterSha256, beforeBytes: initialBuffer.length, afterBytes: afterBuffer.length, changed: beforeSha256 !== afterSha256, previewOnly, preview, modelTurnStarted: false, ...(snapshotAllowed ? { mutationSnapshot: { beforeText: initial.text, afterText: nextText } } : {}) };
+  return { status: previewOnly ? "preview" : "applied", path: target, cwd: effectiveCwd, trustedAncestor: root, permissionProfile: authority.permissionProfile, occurrenceCount, beforeSha256, afterSha256, beforeBytes: initialBuffer.length, afterBytes: afterBuffer.length, changed: beforeSha256 !== afterSha256, previewOnly, preview, modelTurnStarted: false, ...(snapshotAllowed ? { mutationSnapshot: { beforeText: initial.text, afterText: nextText } } : {}) };
 }
 
 function publicMutation(row) { return { mutationId: row.mutationId, projectRef: row.projectRef, bindingRef: row.bindingRef, path: row.path, cwd: row.cwd, beforeSha256: row.beforeSha256, afterSha256: row.afterSha256, status: row.status, action: row.action, modelTurnStarted: false }; }
@@ -185,7 +187,7 @@ async function readTextViaSandbox({ authorityExecutor, target, cwd, access }) {
   return { text: result.stdout };
 }
 async function canonicalRoot(authority) { const candidate = authority?.trustedAncestor ?? authority?.effectiveCwd; if (!candidate) throw new Error("authorized construction tool requires a trusted Codex root"); return realpath(candidate); }
-async function canonicalExistingFile({ requestedPath, cwd, root }) { const resolved = path.resolve(cwd, requestedPath); const target = await realpath(resolved); const relative = path.relative(root, target); if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`authorized construction tool refused path outside scope: ${target}`); const info = await stat(target); if (!info.isFile()) throw new Error(`target is not a regular file: ${target}`); return target; }
+async function canonicalExistingFile({ requestedPath, cwd, root }) { const canonicalCwd = await realpath(cwd); const canonicalScope = await realpath(root); const resolved = path.resolve(canonicalCwd, requestedPath); const target = await realpath(resolved); const relative = path.relative(canonicalScope, target); if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`authorized construction tool refused path outside scope: ${target}`); const info = await stat(target); if (!info.isFile()) throw new Error(`target is not a regular file: ${target}`); return target; }
 function assertWithinEffectiveCwd(cwd, target) { const relative = path.relative(cwd, target); if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`precise edit refused path outside effective cwd: ${target}`); }
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
 function countOccurrences(text, needle) { let count = 0; let offset = 0; while (true) { const index = text.indexOf(needle, offset); if (index < 0) return count; count += 1; offset = index + needle.length; } }
