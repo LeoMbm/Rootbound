@@ -1,4 +1,4 @@
-export const PUBLIC_SERVER_VERSION = "0.1.0-preview.7";
+export const PUBLIC_SERVER_VERSION = "0.1.0-preview.8";
 export const PUBLIC_SURFACE_VERSION = "codexless-public-preview-v5";
 
 export const PUBLIC_TOOL_NAMES = Object.freeze([
