@@ -60,7 +60,7 @@ function Copy-ReleaseTree {
   param([Parameter(Mandatory=$true)][string]$From, [Parameter(Mandatory=$true)][string]$To)
   New-Item -ItemType Directory -Force -Path $To | Out-Null
   $entries = @(
-    "src", "config", "scripts", "bin", "package.json",
+    "src", "config", "scripts", "bin", "docs", "package.json",
     "README.md", "README.zh-CN.md", "SECURITY.md", "EXPORT_SYNC.md",
     "THIRD_PARTY_NOTICES.md", "LICENSE"
   )
