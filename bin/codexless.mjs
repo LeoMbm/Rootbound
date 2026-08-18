@@ -20,7 +20,7 @@ import {
   validateTunnelId,
   writeManagedTunnelSetup,
 } from "../src/tunnel-bootstrap.mjs";
-import { ensureExactProjectTrust, resolveCodexConfigPath, rollbackTrustConfig } from "../src/trust-config.mjs";
+import { ensureExactProjectTrust, hasExactTrustedProject, resolveCodexConfigPath, rollbackTrustConfig } from "../src/trust-config.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -52,8 +52,9 @@ async function connectCommand(opts) {
   const resolved = await resolveProjectRoot(input);
   const configPath = resolveCodexConfigPath();
   const tunnel = opts.noStart ? { configured: false, skipped: true, reason: "no-start" } : await ensureTunnelReadyForConnect(opts, resolved.root);
+  const alreadyTrusted = await hasExistingExactTrust(configPath, resolved.root);
 
-  if (!opts.yes) await confirmTrust(resolved.root, configPath);
+  if (!opts.yes && !alreadyTrusted) await confirmTrust(resolved.root, configPath);
   const trust = await ensureExactProjectTrust(resolved.root, { configPath, backupsDir: paths.backupsDir });
   let doctor;
   try {
@@ -275,6 +276,11 @@ async function versionCommand() {
   process.stdout.write(`${pkg.version}\n`);
 }
 
+async function hasExistingExactTrust(configPath, root) {
+  try { return hasExactTrustedProject(await readFile(configPath, "utf8"), root); }
+  catch (error) { if (error?.code === "ENOENT") return false; throw error; }
+}
+
 async function confirmTrust(root, configPath) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new CliUsageError(`connect requires explicit approval in non-interactive mode; retry with --yes to trust exact root ${root}`);
@@ -413,7 +419,7 @@ function printResult(value, opts) {
 }
 
 function printHelp() {
-  process.stdout.write(`Codexless V5 control plane\n\nUsage:\n  codexless connect [path] [--yes] [--no-start] [--json]\n  codexless start [path] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless stop [--force] [--json]\n  codexless version\n\nFor normal setup, run only: codexless connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, securely stores the runtime key in private local state when needed, validates the tunnel, asks for exact-root Codex trust, and starts the supervised runtime.\nUse codexless tunnel ... only for advanced/manual tunnel configuration.\n`);
+  process.stdout.write(`Codexless V5 control plane\n\nUsage:\n  codexless connect [path] [--yes] [--no-start] [--json]\n  codexless start [path] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless stop [--force] [--json]\n  codexless version\n\nFor normal setup, run only: codexless connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, stores the runtime key in private local state when needed, validates the tunnel, asks once for exact-root Codex trust, and starts the supervised runtime.\nUse codexless tunnel ... only for advanced/manual tunnel configuration.\n`);
 }
 
 class CliUsageError extends Error {}
