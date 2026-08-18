@@ -63,7 +63,9 @@ if (process.platform !== "win32") {
 
 const profile = await readFile(paths.tunnelManagedProfilePath, "utf8");
 assert.match(profile, new RegExp(tunnelA));
+assert.match(profile, /base_url:\s+"https:\/\/api\.openai\.com"/);
 assert.match(profile, /api_key:\s+"file:/);
+assert.match(profile, /format: json/);
 assert.match(profile, /channel: main/);
 assert.match(profile, /launch\.mjs/);
 assert.equal(profile.includes(secret), false, "managed tunnel profile must not contain the runtime key");
@@ -75,6 +77,10 @@ assert.equal(JSON.stringify(persistedStatus).includes(secret), false);
 
 const commandWithSpaces = buildStdioCommand({ nodePath: "/Applications/Node Runtime/node", packageRoot: "/Users/example/Library/Application Support/Codexless/app" });
 assert.equal(commandWithSpaces, "'/Applications/Node Runtime/node' '/Users/example/Library/Application Support/Codexless/app/scripts/launch.mjs' stdio");
+assert.equal(
+  buildStdioCommand({ packageRoot: "/Users/example/Library/Application Support/Codexless/app" }),
+  "node '/Users/example/Library/Application Support/Codexless/app/scripts/launch.mjs' stdio"
+);
 
 await rollbackManagedTunnelSetup({ paths });
 assert.equal(tunnelConfigStatus({ paths, env: {} }).configured, false);
