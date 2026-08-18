@@ -142,45 +142,62 @@ try {
   const requestId = `contract-consent-${randomUUID()}`;
   const prompt = "Codexless contract probe: prepare only; do not start Codex.";
   const prepared = await client.callTool({ name: "codex.agent_start", arguments: { prompt, requestId } });
-  assert.equal(prepared.isError, false);
-  assert.equal(prepared.structuredContent?.status, "consent_required");
-  assert.equal(prepared.structuredContent?.turnId, null);
-  assert.equal(prepared.structuredContent?.agentRef, null);
-  assert.equal(prepared.structuredContent?.manualFallback?.kind, "task_card_required");
-  assert.match((prepared.structuredContent?.manualFallback?.lines ?? []).join(" "), /No Codex turn has started/i);
-  const consentRef = prepared.structuredContent?.meteredConsent?.consentRef;
-  assert.match(consentRef ?? "", /^consent_/);
 
-  const replay = await client.callTool({ name: "codex.agent_start", arguments: { prompt, requestId, consentRef } });
-  assert.equal(replay.structuredContent?.status, "consent_required");
-  assert.equal(replay.structuredContent?.turnId, null);
-  assert.equal(replay.structuredContent?.agentRef, null);
-  assert.equal(replay.structuredContent?.duplicate, true);
+  if (prepared.isError) {
+    const errorCode = prepared.structuredContent?.errorCode ?? null;
+    const errorText = prepared.structuredContent?.error ?? prepared.content?.[0]?.text ?? "unknown error";
+    if (testCwd) {
+      assert.fail(`codex.agent_start failed for CODEXLESS_TEST_CWD=${testCwd}: ${errorCode ?? "no-code"}: ${errorText}`);
+    }
+    assert.equal(
+      errorCode,
+      "PERMISSION_APPROVAL_REQUIRED",
+      `agent consent contract failed for an unexpected reason: ${errorCode ?? "no-code"}: ${errorText}`
+    );
+    assert.match(errorText, /trusted project|trusted.*root|explicitly trust|authorize/i);
+    console.log("public contract agent consent flow SKIP: Codexless repo is not a trusted Codex project; set CODEXLESS_TEST_CWD to run the trusted-project end-to-end lane");
+  } else {
+    assert.equal(prepared.structuredContent?.status, "consent_required");
+    assert.equal(prepared.structuredContent?.turnId, null);
+    assert.equal(prepared.structuredContent?.agentRef, null);
+    assert.equal(prepared.structuredContent?.manualFallback?.kind, "task_card_required");
+    assert.match((prepared.structuredContent?.manualFallback?.lines ?? []).join(" "), /No Codex turn has started/i);
+    const consentRef = prepared.structuredContent?.meteredConsent?.consentRef;
+    assert.match(consentRef ?? "", /^consent_/);
 
-  const rendered = await client.callTool({ name: "codex.agent_card_render", arguments: { consentRef } });
-  const commitToken = rendered._meta?.codexlessCommitToken;
-  assert.match(commitToken ?? "", /^commit_/);
-  assert.equal(JSON.stringify(rendered.structuredContent).includes(commitToken), false);
-  assert.equal((rendered.content?.[0]?.text ?? "").includes(commitToken), false);
+    const replay = await client.callTool({ name: "codex.agent_start", arguments: { prompt, requestId, consentRef } });
+    assert.equal(replay.structuredContent?.status, "consent_required");
+    assert.equal(replay.structuredContent?.turnId, null);
+    assert.equal(replay.structuredContent?.agentRef, null);
+    assert.equal(replay.structuredContent?.duplicate, true);
 
-  const missingCapability = await client.callTool({ name: "codex.agent_commit", arguments: { consentRef } }).catch((error) => ({ isError: true, error }));
-  assert.equal(missingCapability.isError, true);
+    const rendered = await client.callTool({ name: "codex.agent_card_render", arguments: { consentRef } });
+    const commitToken = rendered._meta?.codexlessCommitToken;
+    assert.match(commitToken ?? "", /^commit_/);
+    assert.equal(JSON.stringify(rendered.structuredContent).includes(commitToken), false);
+    assert.equal((rendered.content?.[0]?.text ?? "").includes(commitToken), false);
 
-  const wrongCapability = await client.callTool({
-    name: "codex.agent_commit",
-    arguments: { consentRef, commitToken: `commit_wrong_${randomUUID()}` },
-  });
-  assert.equal(wrongCapability.isError, true);
+    const missingCapability = await client.callTool({ name: "codex.agent_commit", arguments: { consentRef } }).catch((error) => ({ isError: true, error }));
+    assert.equal(missingCapability.isError, true);
 
-  const declineRequestId = `contract-decline-${randomUUID()}`;
-  const declinePrompt = "Codexless contract probe: prepare, decline, and stay terminal without starting Codex.";
-  const declinePrepared = await client.callTool({ name: "codex.agent_start", arguments: { prompt: declinePrompt, requestId: declineRequestId } });
-  const declineConsentRef = declinePrepared.structuredContent?.meteredConsent?.consentRef;
-  const declined = await client.callTool({ name: "codex.agent_decline", arguments: { consentRef: declineConsentRef } });
-  assert.equal(declined.structuredContent?.status, "rejected");
-  assert.equal(declined.structuredContent?.terminal, true);
-  assert.equal(declined.structuredContent?.agentRef, null);
-  assert.equal(declined.structuredContent?.turnId, null);
+    const wrongCapability = await client.callTool({
+      name: "codex.agent_commit",
+      arguments: { consentRef, commitToken: `commit_wrong_${randomUUID()}` },
+    });
+    assert.equal(wrongCapability.isError, true);
+
+    const declineRequestId = `contract-decline-${randomUUID()}`;
+    const declinePrompt = "Codexless contract probe: prepare, decline, and stay terminal without starting Codex.";
+    const declinePrepared = await client.callTool({ name: "codex.agent_start", arguments: { prompt: declinePrompt, requestId: declineRequestId } });
+    assert.equal(declinePrepared.isError, false, `decline preparation failed: ${declinePrepared.structuredContent?.error ?? "unknown error"}`);
+    const declineConsentRef = declinePrepared.structuredContent?.meteredConsent?.consentRef;
+    assert.match(declineConsentRef ?? "", /^consent_/);
+    const declined = await client.callTool({ name: "codex.agent_decline", arguments: { consentRef: declineConsentRef } });
+    assert.equal(declined.structuredContent?.status, "rejected");
+    assert.equal(declined.structuredContent?.terminal, true);
+    assert.equal(declined.structuredContent?.agentRef, null);
+    assert.equal(declined.structuredContent?.turnId, null);
+  }
 } finally {
   await client.close().catch(() => {});
   await transport.close().catch(() => {});
