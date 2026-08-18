@@ -13,8 +13,11 @@
     "url": "https://github.com/liyana31811/Codexless/issues"
   },
   "type": "module",
+  "bin": {
+    "codexless": "bin/codexless.mjs"
+  },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "start:stdio": "node scripts/launch.mjs stdio",
@@ -25,7 +28,8 @@
     "test:browser-reader": "node test/browser-reader-lifecycle.mjs",
     "test:history": "node test/thread-history-tools.mjs",
     "test:repo-tools": "node test/repo-tools.mjs",
-    "test": "node test/metered-consent.mjs && node test/agent-consent-card.mjs && node test/public-command-policy.mjs && node test/browser-reader-lifecycle.mjs && node test/thread-history-tools.mjs && node test/repo-tools.mjs && node test/public-contract.mjs"
+    "test:v5": "node test/foundation-v5.mjs && node test/runtime-state-v5.mjs",
+    "test": "node test/metered-consent.mjs && node test/agent-consent-card.mjs && node test/public-command-policy.mjs && node test/browser-reader-lifecycle.mjs && node test/thread-history-tools.mjs && node test/repo-tools.mjs && node test/public-contract.mjs && node test/foundation-v5.mjs && node test/runtime-state-v5.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/node": "2.0.0",
@@ -39,6 +43,7 @@
     "src",
     "config",
     "scripts",
+    "bin/codexless.mjs",
     "bin/codexless-doctor.cmd",
     "bin/codexless-http.cmd",
     "bin/codexless-install.cmd",
