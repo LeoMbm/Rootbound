@@ -1,6 +1,6 @@
 # Codexless V5 — Durable Daily Driver Plan
 
-Status: implementation substantially complete on `feat/thread-history-continuity`; release validation is still pending.
+Status: P0/P1 implementation is substantially complete on `feat/thread-history-continuity`. The core local release suite passed on an Apple Silicon Mac before the guided-connect changes; the new one-command onboarding must now be revalidated before merge.
 
 This document is the durable source of truth for V5. Features existing in source is not enough: V5 is ready only when the validation / real-machine checklist below is green.
 
@@ -12,12 +12,15 @@ This document is the durable source of truth for V5. Features existing in source
 - No hidden model fallback.
 - No remote caller may widen the local permission ceiling.
 - Daily-driver state survives MCP / runtime restarts.
+- **Normal onboarding is one command: `codexless connect .`. Tunnel plumbing is an implementation detail, not user workflow.**
 
 ## P0 — implementation
 
 ### Control plane
 
 - [x] `codexless connect .`
+- [x] guided one-command first-run wizard
+- [x] returning exact-trusted project skips repeat trust prompt
 - [x] `codexless start`
 - [x] `codexless status`
 - [x] `codexless stop`
@@ -26,7 +29,25 @@ This document is the durable source of truth for V5. Features existing in source
 - [x] `codexless self-test`
 - [x] `codexless upgrade --from <release-dir>`
 - [x] `codexless diagnostic`
-- [x] `codexless tunnel configure/show/clear`
+- [x] advanced/manual `codexless tunnel configure/show/clear`
+
+### Guided tunnel onboarding
+
+- [x] detect `tunnel-client`
+- [x] reuse `CONTROL_PLANE_TUNNEL_ID` when supplied
+- [x] discover tunnel IDs from local tunnel-client profiles
+- [x] prompt for tunnel ID only when discovery is insufficient
+- [x] reuse runtime key from `CONTROL_PLANE_API_KEY` / `OPENAI_API_KEY`
+- [x] hidden interactive runtime-key entry when no key is already available
+- [x] generate Codexless-managed tunnel-client profile
+- [x] launch Codexless directly over stdio; no manual HTTP + tunnel split
+- [x] keep runtime key out of `tunnel.json`, process argv, SQLite and Codexless logs
+- [x] macOS/POSIX secret file mode `0600`
+- [x] Windows current-account ACL hardening with fail-closed setup
+- [x] run `tunnel-client doctor` before Codex trust mutation
+- [x] rollback generated tunnel profile/secret/config on tunnel validation failure
+- [x] `codexless tunnel clear` removes guided tunnel profile + secret
+- [x] manual argv/profile flow retained only as an advanced/debug escape hatch
 
 ### Runtime
 
@@ -43,6 +64,7 @@ This document is the durable source of truth for V5. Features existing in source
 - [x] deterministic durable `projectRef`
 - [x] SQLite project registry
 - [x] explicit exact-root trust flow
+- [x] no repeat prompt for an already exact-trusted canonical root
 - [x] Codex config backup
 - [x] trust rollback when validation fails
 - [x] tunnel validation before trust mutation
@@ -55,6 +77,7 @@ This document is the durable source of truth for V5. Features existing in source
 - [x] durable commands
 - [x] incremental command output chunks
 - [x] schema migration through current V5 schema
+- [x] tunnel runtime credential isolated outside SQLite in dedicated private local secret state
 
 ### Command contract
 
@@ -85,10 +108,11 @@ This document is the durable source of truth for V5. Features existing in source
 - [x] staged activation
 - [x] Mac `app/` vs state separation
 - [x] Windows `app/` vs state separation
+- [x] Mac installer marks lifecycle/stdio wrappers executable
 - [x] uninstall preserves state by default
 - [x] explicit state purge
 - [x] upgrade preserves state / handles legacy root layout
-- [ ] regenerate npm lock root metadata using npm on trusted execution
+- [x] npm shrinkwrap root metadata regenerated and strict lock check passed on trusted Mac before guided-connect changes
 
 ## P1 — implementation
 
@@ -160,9 +184,10 @@ This document is the durable source of truth for V5. Features existing in source
 
 - [x] durable argv credential detection
 - [x] continuity command-label redaction
-- [x] persistent tunnel literal credential refusal
-- [x] tunnel `{env:NAME}` runtime expansion
-- [x] diagnostic redaction
+- [x] advanced persistent tunnel literal credential refusal
+- [x] guided tunnel key isolated in dedicated private local secret file
+- [x] guided tunnel profile references key with `file:` instead of embedding it
+- [x] diagnostic redaction / exclusion
 - [x] sensitive read/search opt-in
 - [x] sensitive undo snapshot disabled
 
@@ -184,12 +209,37 @@ This document is the durable source of truth for V5. Features existing in source
 - [x] doctor / public contract fixed to avoid stale hardcoded tool counts
 - [x] `test/source-integrity-v5.mjs` checks relative import targets and npm script paths
 - [x] `test/release-contract-v5.mjs` guards surface / docs / metadata / manual-CI policy
-- [x] README rewritten for V5
-- [x] SECURITY rewritten for V5
+- [x] release contract guards one-command onboarding as the normal README flow
+- [x] `test/tunnel-bootstrap-v5.mjs` covers managed tunnel discovery/config/secret isolation/cleanup without network
+- [x] README rewritten around one-command onboarding
+- [x] SECURITY rewritten around guided tunnel secret boundary
 - [x] stale Chinese V4 README replaced with explicit V5-sync notice
 - [x] EXPORT_SYNC rewritten around V5 source-of-truth contracts
 - [x] package metadata points at `LeoMbm/Codexless`
 - [x] durable plan included in package file list
+
+## Validation evidence already obtained
+
+Before the guided-connect implementation was added, a trusted Apple Silicon Mac completed successfully:
+
+- `npm ci`
+- strict shrinkwrap check
+- `npm run validate:v5`
+- `npm test`
+- `npm pack --dry-run`
+- `npm run validate:release`
+
+Real local acceptance also demonstrated:
+
+- exact-root trust creation with backup
+- `doctor` status `ok`
+- `self-test` PASS for App Server, read, model-free command and workspace write/read/delete cleanup
+- project persisted as trusted
+- supervised runtime reached `running`
+- tunnel child PID was present
+- no Codex model turn was started by self-test
+
+Those results prove the core V5 lane, but **they do not certify the new guided-connect code added afterward**. Re-run the release suite and then exercise a clean guided setup before merge.
 
 ## Current automated suite
 
@@ -207,7 +257,8 @@ This document is the durable source of truth for V5. Features existing in source
 - pagination
 - continuity idempotency
 - secret boundaries
-- persistent tunnel config
+- guided tunnel bootstrap
+- persistent/manual tunnel config
 - static release contract
 
 ## CI policy during stabilization
@@ -216,32 +267,42 @@ The V5 GitHub Actions workflow remains manual-only.
 
 Do not restore push / PR triggers until:
 
-1. `npm run test:v5` passes on trusted execution;
+1. the post-wizard `npm run validate:v5` passes on trusted execution;
 2. syntax checks pass;
-3. lock root metadata is regenerated with npm;
-4. the full repository test run is reviewed;
-5. one controlled macOS + Windows Actions matrix is green;
-6. notification policy is chosen deliberately.
+3. the full repository test run is reviewed;
+4. one controlled macOS + Windows validation run is green;
+5. notification policy is chosen deliberately.
 
 ## Remaining release blockers
 
-### Automated validation
+### Post-wizard automated validation
 
-- [ ] trusted-machine `npm ci`
-- [ ] trusted-machine `npm run test:v5`
-- [ ] trusted-machine `npm test`
-- [ ] `npm pack --dry-run` + packed-file review
-- [ ] regenerate / review lock metadata
-- [ ] one manual GitHub Actions matrix run on macOS + Windows
-- [ ] inspect every failing job before restoring any automatic trigger
+- [ ] trusted-machine `npm run validate:v5` after guided-connect changes
+- [ ] trusted-machine `npm test` after guided-connect changes
+- [ ] `npm pack --dry-run` + packed-file review after guided-connect changes
+- [ ] `npm run validate:release` after guided-connect changes
+- [ ] one controlled Mac + Windows validation run before supported release
 
 ### Real-machine Mac acceptance
 
-- [ ] fresh install
-- [ ] tunnel configure
-- [ ] `connect .`
+Already proven before the guided wizard:
+
+- [x] exact-root trust
+- [x] doctor
+- [x] self-test read/command/write cleanup
+- [x] project registry
+- [x] supervised runtime running
+
+Must now be repeated/extended with the new normal flow:
+
+- [ ] stop current runtime
+- [ ] clear Codexless tunnel config/state
+- [ ] run plain `codexless connect .` and verify tunnel discovery/reuse
+- [ ] verify runtime key never echoes and managed secret file is `0600`
+- [ ] verify `tunnel-client doctor` is automatic
+- [ ] verify already trusted project does not prompt again
 - [ ] `status`
-- [ ] `workspace_open`
+- [ ] real ChatGPT `workspace_open`
 - [ ] read/search
 - [ ] short command
 - [ ] long streaming command / poll / stdin / terminate
@@ -256,8 +317,9 @@ Do not restore push / PR triggers until:
 
 - [ ] fresh install into `app/`
 - [ ] state preservation outside `app/`
-- [ ] tunnel configure
-- [ ] `connect .`
+- [ ] plain `codexless connect .` guided tunnel flow
+- [ ] current-account ACL applied to guided tunnel key
+- [ ] exact-root trust without repeat prompt
 - [ ] workspace/read/edit/short-command path
 - [ ] buffered long-command fallback
 - [ ] explicit stdin streaming unsupported error
@@ -269,19 +331,19 @@ Do not restore push / PR triggers until:
 - [ ] final branch diff review
 - [ ] third-party notices / package contents review
 - [ ] verify private vulnerability-reporting route
-- [ ] create PR only when validation evidence is attached
+- [ ] update draft PR with final validation evidence
 
 ## Definition of done
 
 V5 is ready to merge only when:
 
-1. P0 implementation is complete.
+1. P0 implementation is complete, including one-command normal onboarding.
 2. P1 implementation is complete or an item is explicitly deferred to P2.
 3. no public tool can silently start a Codex model turn.
 4. normal upgrade cannot delete Codexless state.
-5. durable command / tunnel / diagnostic paths do not knowingly persist literal credentials.
-6. `npm run test:v5` and `npm test` are green on trusted execution.
-7. one controlled Actions matrix is green on supported OSes.
-8. real-machine acceptance covers connect, command, edit, restart, upgrade and uninstall.
+5. credentials do not enter SQLite, command/tunnel argv, normal metadata, logs or diagnostics; the guided tunnel runtime key is isolated in dedicated private local secret state.
+6. post-wizard `npm run test:v5`, `npm test` and release validation are green on trusted execution.
+7. supported-OS validation is completed before release.
+8. real-machine acceptance covers guided connect, command, edit, restart, upgrade and uninstall.
 9. README / SECURITY / public contract match the implementation.
 10. `main` remains untouched until that evidence exists.
