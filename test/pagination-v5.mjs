@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { decodeCursor, encodeCursor } from "../src/pagination.mjs";
@@ -18,7 +18,7 @@ await writeFile(a, "abcdefghij", "utf8");
 await writeFile(b, "klmnop", "utf8");
 
 const readExecutor = {
-  async resolveAuthority({ cwd }) { return { effectiveCwd: cwd, trustedAncestor: cwd, permissionProfile: ":read-only" }; },
+  async resolveAuthority({ cwd }) { return { effectiveCwd: cwd, trustedAncestor: root, permissionProfile: ":read-only" }; },
   async exec({ command }) {
     const target = command[3];
     return { exitCode: 0, stdout: await readFile(target, "utf8"), stderr: "", stdoutTruncated: false };
@@ -38,6 +38,17 @@ await writeFile(a, "CHANGED", "utf8");
 await assert.rejects(
   () => readManyAuthorized({ authorityExecutor: readExecutor, paths: ["a.txt", "b.txt"], cwd: root, maxCharsPerFile: 5, maxTotalChars: 5, cursor: firstRead.nextCursor }),
   (error) => error?.code === "PAGINATION_SOURCE_CHANGED"
+);
+
+const narrow = path.join(root, "narrow");
+await mkdir(narrow);
+await writeFile(path.join(narrow, "inside.txt"), "inside", "utf8");
+await writeFile(path.join(root, "sibling.txt"), "sibling", "utf8");
+const inside = await readManyAuthorized({ authorityExecutor: readExecutor, paths: ["inside.txt"], cwd: narrow, maxCharsPerFile: 1000, maxTotalChars: 1000 });
+assert.equal(inside.files[0].text, "inside");
+await assert.rejects(
+  () => readManyAuthorized({ authorityExecutor: readExecutor, paths: ["../sibling.txt"], cwd: narrow, maxCharsPerFile: 1000, maxTotalChars: 1000 }),
+  /outside scope/i
 );
 
 const matches = ["a:1:1:first", "a:2:1:second", "b:3:1:third", "c:4:1:fourth"];
