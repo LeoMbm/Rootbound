@@ -305,7 +305,9 @@ export function sanitizeHistoryPayload(value) {
   const output = {};
   for (const [key, child] of Object.entries(value)) {
     const lower = key.toLowerCase();
-    if (lower === "path" && (value.id || value.cwd)) continue;
+    // Stored Thread objects expose their rollout storage path. Preserve ordinary
+    // item paths (for example fileChange paths) while removing only Thread.path.
+    if (lower === "path" && typeof value.id === "string" && typeof value.cwd === "string") continue;
     if (lower === "encryptedcontent" || lower === "encrypted_content") continue;
     if (lower === "rawreasoning" || lower === "raw_reasoning" || lower === "rawcontent" || lower === "raw_content") continue;
     output[key] = sanitizeHistoryPayload(child);
