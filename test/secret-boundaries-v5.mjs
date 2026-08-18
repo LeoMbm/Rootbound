@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readManyAuthorized } from "../src/construction-tools.mjs";
+import { preciseEditAuthorized, readManyAuthorized } from "../src/construction-tools.mjs";
 import { assertDurableCommandHasNoSecrets, inspectSensitiveArgv, isSensitivePath, redactArgv, summarizeRedactedArgv } from "../src/secret-boundaries.mjs";
 
 const argv = ["curl", "--token", "super-secret-token-value", "https://example.test"];
@@ -30,7 +30,9 @@ const root = await mkdtemp(path.join(os.tmpdir(), "codexless-sensitive-read-"));
 const envFile = path.join(root, ".env");
 await writeFile(envFile, "API_KEY=very-secret\n", "utf8");
 const authorityExecutor = {
-  async resolveAuthority({ cwd }) { return { effectiveCwd: cwd, trustedAncestor: cwd, permissionProfile: ":read-only" }; },
+  async resolveAuthority({ cwd, access }) {
+    return { effectiveCwd: cwd, trustedAncestor: cwd, permissionProfile: access === "readOnly" ? ":read-only" : ":workspace", permissionCeiling: ":workspace" };
+  },
   async exec({ command }) {
     return { exitCode: 0, stdout: await readFile(command[3], "utf8"), stderr: "", stdoutTruncated: false };
   },
@@ -42,5 +44,18 @@ await assert.rejects(
 const sensitiveRead = await readManyAuthorized({ authorityExecutor, paths: [".env"], cwd: root, allowSensitive: true });
 assert.equal(sensitiveRead.files[0].text, "API_KEY=very-secret\n");
 assert.equal(sensitiveRead.allowSensitive, true);
+
+const sensitivePreview = await preciseEditAuthorized({
+  authorityExecutor,
+  path: ".env",
+  expectedText: "very-secret",
+  replacementText: "rotated-secret",
+  cwd: root,
+  previewOnly: true,
+  captureSnapshot: true,
+});
+assert.deepEqual(sensitivePreview.preview, { suppressed: true, reason: "sensitive_path" });
+assert.equal(Object.hasOwn(sensitivePreview, "mutationSnapshot"), false);
+assert.equal((await readFile(envFile, "utf8")), "API_KEY=very-secret\n");
 
 console.log("secret-boundaries-v5: ok");
