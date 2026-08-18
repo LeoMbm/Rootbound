@@ -42,9 +42,12 @@ for (const [label, value, expected] of [
   if (stable(value) !== stable(expected)) metadataDrift.push(`${label}: ${stable(value)} -> ${stable(expected)}`);
 }
 
+const status = problems.length ? "error" : metadataDrift.length ? "drift" : "ok";
 const result = {
   ok: problems.length === 0 && (!strict || metadataDrift.length === 0),
+  status,
   dependencyCompatible: problems.length === 0,
+  releaseReady: problems.length === 0 && metadataDrift.length === 0,
   strict,
   problems,
   metadataDrift,
@@ -60,7 +63,8 @@ const result = {
 
 if (json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 else {
-  process.stdout.write(`Codexless lock check: ${result.ok ? "PASS" : strict ? "FAIL" : "DRIFT"}\n`);
+  const label = status === "ok" ? "PASS" : status === "drift" ? "DRIFT" : "FAIL";
+  process.stdout.write(`Codexless lock check: ${label}${strict ? " (strict)" : ""}\n`);
   for (const problem of problems) process.stdout.write(`[ERROR] ${problem}\n`);
   for (const drift of metadataDrift) process.stdout.write(`[DRIFT] ${drift}\n`);
   for (const action of result.remediation) process.stdout.write(`-> ${action}\n`);
