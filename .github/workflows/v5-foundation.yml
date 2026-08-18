@@ -37,8 +37,9 @@ jobs:
           node --check src/streaming-command-session.mjs
           node --check src/command-tools.mjs
           node --check src/workspace-tools.mjs
-          node --check src/error-contract.mjs
+          node --check src/tool-errors.mjs
           node --check src/diagnostics.mjs
-          node --check src/undo-store.mjs
+          node --check src/edit-mutations.mjs
+          node --check src/pagination.mjs
           node --check src/public-runtime.mjs
           node --check src/public-server-factory.mjs
