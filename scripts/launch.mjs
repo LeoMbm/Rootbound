@@ -12,9 +12,10 @@ if (!supportedPlatform) {
   process.exit(1);
 }
 
-const nodeMajor = Number.parseInt(process.versions.node.split(".")[0], 10);
-if (!Number.isInteger(nodeMajor) || nodeMajor < 22) {
-  process.stderr.write(`Codexless requires Node.js 22+. Current: ${process.version}\n`);
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map((value) => Number.parseInt(value, 10));
+const supportedNode = Number.isInteger(nodeMajor) && Number.isInteger(nodeMinor) && (nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13));
+if (!supportedNode) {
+  process.stderr.write(`Codexless V5 requires Node.js 22.13+. Current: ${process.version}\n`);
   process.exit(1);
 }
 
