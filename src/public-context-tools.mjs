@@ -11,7 +11,7 @@ export function registerPublicContextTools(server, context) {
     {
       title: "Codex Project Context",
       description:
-        "Read a fresh model-free Codex project bootstrap for cwd: workspace roots, effective permission profile, instruction sources, approval policy, sandbox projection, and CLI version. This does not start a Codex model turn and does not let the remote caller choose a stronger permission profile.",
+        "Read a fresh model-free Codex project bootstrap for cwd: workspace roots, effective permission profile, instruction sources, approval policy, sandbox projection, and CLI version. The bootstrap is explicitly downscoped to :read-only so project inspection cannot create or widen Codex trust as a side effect.",
       inputSchema: z.object({ cwd: z.string().min(1).max(32_768).optional() }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -19,23 +19,11 @@ export function registerPublicContextTools(server, context) {
   );
 
   server.registerTool(
-    "codex.account_preflight",
-    {
-      title: "Codex Account / Quota Preflight",
-      description:
-        "Model-free account/quota preflight using a short-lived official Codex App Server client. Returns sanitized account presence/auth/plan and quota facts only; credentials are never returned and no model turn is started.",
-      inputSchema: z.object({}).strict(),
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    },
-    async () => structured(() => context.accountPreflight())
-  );
-
-  server.registerTool(
     "codex.skill_list",
     {
       title: "List Current Codex Skills",
       description:
-        "List enabled Codex Skills for the current project context. This public tool is intentionally Skills-only; it does not expose Codex plugin, app, or generic MCP inventories.",
+        "List enabled Codex Skills for the current project context. This public tool is intentionally Skills-only; it does not expose Codex plugin, app, model, quota, agent, or generic MCP inventories.",
       inputSchema: z.object({
         cwd: z.string().min(1).max(32_768).optional(),
         query: z.string().max(32_768).default(""),
