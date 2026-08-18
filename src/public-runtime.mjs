@@ -7,6 +7,7 @@ import { CodexBrowserReaderExecutor } from "./browser-reader-executor.mjs";
 import { resolveCodexExecutable } from "./codex-bin.mjs";
 import { readCodexQuotaSnapshot } from "./codex-quota-snapshot.mjs";
 import { createPreviewTelemetryClient } from "./codex-preview-account-preflight.mjs";
+import { createContinuityState } from "./continuity-state.mjs";
 import { readJsonFile } from "./json-file.mjs";
 import { CodexPublicContextExecutor } from "./public-context-executor.mjs";
 import { createPublicServerFactory } from "./public-server-factory.mjs";
@@ -101,6 +102,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       meteredQuotaProvider: resourceSnapshotProvider,
       taskStateFile: agentTaskStateFile,
     });
+    const continuityState = createContinuityState();
 
     const browserReader = new CodexBrowserReaderExecutor({ context: publicContext, defaultCwd });
     const createServer = createPublicServerFactory({
@@ -109,6 +111,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       publicContext,
       browserReader,
       agentExecutor,
+      continuityState,
       meteredConsentMode,
       meteredQuotaProvider: resourceSnapshotProvider,
       agentPreviewState,
