@@ -36,17 +36,19 @@ try {
   });
   await executor.validate();
   store.updateCommand(commandId, { status: "running", workerPid: process.pid, updatedAt: Date.now() });
-  store.recordEvent({ projectRef: command.projectRef, bindingRef: command.bindingRef, kind: "command.running", payload: { commandId }, createdAt: Date.now() });
+  store.recordEvent({ projectRef: command.projectRef, bindingRef: command.bindingRef, kind: "command.running", payload: { commandId, mode: "buffered" }, createdAt: Date.now() });
   const result = await executor.exec({ command: command.argv, cwd: command.cwd, access: command.access, timeoutMs: command.timeoutMs });
   const at = Date.now();
   terminal = true;
+  if (result.stdout) store.appendCommandOutput({ commandId, stream: "stdout", data: Buffer.from(result.stdout, "utf8"), createdAt: at });
+  if (result.stderr) store.appendCommandOutput({ commandId, stream: "stderr", data: Buffer.from(result.stderr, "utf8"), createdAt: at });
   store.updateCommand(commandId, {
     status: result.exitCode === 0 ? "completed" : "failed",
     exitCode: result.exitCode,
     finishedAt: at,
     workerPid: null,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout: null,
+    stderr: null,
     stdoutTruncated: result.stdoutTruncated === true,
     stderrTruncated: result.stderrTruncated === true,
     error: result.exitCode === 0 ? null : `command exited with code ${result.exitCode}`,
