@@ -184,9 +184,9 @@ export class CodexPublicContextExecutor {
 
   async injectContinuity({ threadId, text }) {
     if (typeof text !== "string" || !text.trim()) throw new Error("continuity text must be non-empty");
-    // thread/inject_items operates on a loaded thread. Resuming is model-free and
-    // deliberately does not call turn/start; it only restores the persisted thread.
-    await this.#request("thread/resume", { threadId });
+    // thread/inject_items operates on a loaded thread. Resuming with turns excluded
+    // is model-free and avoids materializing the whole transcript before injection.
+    await this.#request("thread/resume", { threadId, excludeTurns: true });
     await this.#request("thread/inject_items", {
       threadId,
       items: [
