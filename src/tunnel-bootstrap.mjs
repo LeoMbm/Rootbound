@@ -175,6 +175,29 @@ async function writePrivateFile(target, content, { platform }) {
   if (platform === "win32") await unlink(target).catch((error) => { if (error?.code !== "ENOENT") throw error; });
   await rename(temp, target);
   if (platform !== "win32") await chmod(target, 0o600);
+  else await hardenWindowsPrivateFile(target);
+}
+
+async function hardenWindowsPrivateFile(target) {
+  const username = process.env.USERNAME;
+  const domain = process.env.USERDOMAIN;
+  const principal = username ? (domain ? `${domain}\\${username}` : username) : null;
+  if (!principal) {
+    const error = new Error("Cannot determine the current Windows account for tunnel secret ACL hardening.");
+    error.code = "TUNNEL_SECRET_ACL_FAILED";
+    throw error;
+  }
+  try {
+    await execFileAsync("icacls", [target, "/inheritance:r", "/grant:r", `${principal}:(F)`], {
+      windowsHide: true,
+      timeout: 10_000,
+      maxBuffer: 512 * 1024,
+    });
+  } catch {
+    const error = new Error("Failed to restrict the guided tunnel secret file to the current Windows account.");
+    error.code = "TUNNEL_SECRET_ACL_FAILED";
+    throw error;
+  }
 }
 
 function quoteCommandArg(value) {
