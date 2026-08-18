@@ -70,6 +70,14 @@ try {
   assert.equal(finished.chunks.length, 0);
   assert.equal(closeCalls, 1);
 
+  const beforeRejected = store.db.prepare("SELECT COUNT(*) AS count FROM commands").get().count;
+  await assert.rejects(
+    manager.start({ command: ["curl", "--token", "super-secret-token-value"], cwd: projectRoot, access: "readOnly", timeoutMs: 10_000 }),
+    (error) => error?.code === "SECRET_PERSISTENCE_BLOCKED" && JSON.stringify(error?.details ?? {}).includes("super-secret-token-value") === false
+  );
+  const afterRejected = store.db.prepare("SELECT COUNT(*) AS count FROM commands").get().count;
+  assert.equal(afterRejected, beforeRejected, "rejected secret argv must not create a durable command row");
+
   await assert.rejects(
     manager.start({ command: ["/usr/bin/codex", "--version"], cwd: projectRoot, access: "readOnly", timeoutMs: 10_000 }),
     (error) => error?.code === "CODEX_MODEL_LANE_DISABLED"
