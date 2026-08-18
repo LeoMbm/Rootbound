@@ -1,6 +1,5 @@
 import path from "node:path";
 import { CodexAppServerClient } from "./codex-app-server-client.mjs";
-import { readPreviewAccountPreflight } from "./codex-preview-account-preflight.mjs";
 
 const CHROME_SKILL_NAME = "chrome:control-chrome";
 const NODE_REPL_SERVER = "node_repl";
@@ -51,17 +50,9 @@ export class CodexPublicContextExecutor {
     this.#client = clientFactory ? clientFactory(options) : new CodexAppServerClient(options);
   }
 
-  get generation() {
-    return this.#generation;
-  }
-
-  get running() {
-    return this.#client.running;
-  }
-
-  async start() {
-    return this.#ensureStarted();
-  }
+  get generation() { return this.#generation; }
+  get running() { return this.#client.running; }
+  async start() { return this.#ensureStarted(); }
 
   async close() {
     this.#threadsByCwd.clear();
@@ -70,7 +61,7 @@ export class CodexPublicContextExecutor {
 
   async projectContext({ cwd = this.#defaultCwd } = {}) {
     const effectiveCwd = path.resolve(cwd);
-    const started = await this.#request("thread/start", { cwd: effectiveCwd, ephemeral: true });
+    const started = await this.#request("thread/start", { cwd: effectiveCwd, ephemeral: true, permissions: ":read-only" });
     return {
       threadId: started?.thread?.id ?? null,
       cwd: started?.cwd ?? started?.thread?.cwd ?? effectiveCwd,
@@ -81,15 +72,9 @@ export class CodexPublicContextExecutor {
       approvalsReviewer: started?.approvalsReviewer ?? null,
       sandbox: started?.sandbox ?? null,
       cliVersion: started?.thread?.cliVersion ?? null,
+      modelTurnStarted: false,
+      requestedPermissionProfile: ":read-only",
     };
-  }
-
-  async accountPreflight() {
-    return readPreviewAccountPreflight({
-      codexBin: this.#codexBin,
-      defaultCwd: this.#defaultCwd,
-      configOverrides: this.#configOverrides,
-    });
   }
 
   async skillList({ cwd = this.#defaultCwd, query = "" } = {}) {
@@ -113,10 +98,7 @@ export class CodexPublicContextExecutor {
     const exact = skills.find((skill) => skill.name === name);
     const matches = exact ? [exact] : skills.filter((skill) => skill.name.toLowerCase().includes(name.toLowerCase()));
     if (matches.length !== 1) {
-      return {
-        status: matches.length ? "ambiguous" : "not_found",
-        matches: matches.map((skill) => ({ name: skill.name, path: skill.path })),
-      };
+      return { status: matches.length ? "ambiguous" : "not_found", matches: matches.map((skill) => ({ name: skill.name, path: skill.path })) };
     }
     const skill = matches[0];
     const read = await this.#request("fs/readFile", { path: skill.path });
@@ -129,26 +111,11 @@ export class CodexPublicContextExecutor {
     };
   }
 
-  async threadList({
-    cwd = this.#defaultCwd,
-    cursor,
-    limit = 20,
-    sortKey = "updated_at",
-    sortDirection = "desc",
-    archived = false,
-    searchTerm,
-  } = {}) {
-    const params = {
-      cwd: path.resolve(cwd),
-      limit,
-      sortKey,
-      sortDirection,
-      archived,
-    };
+  async threadList({ cwd = this.#defaultCwd, cursor, limit = 20, sortKey = "updated_at", sortDirection = "desc", archived = false, searchTerm } = {}) {
+    const params = { cwd: path.resolve(cwd), limit, sortKey, sortDirection, archived };
     if (cursor) params.cursor = cursor;
     if (searchTerm) params.searchTerm = searchTerm;
-    const result = await this.#request("thread/list", params);
-    return sanitizeHistoryPayload(result);
+    return sanitizeHistoryPayload(await this.#request("thread/list", params));
   }
 
   async threadMetadata({ threadId }) {
@@ -163,11 +130,7 @@ export class CodexPublicContextExecutor {
     const threadMetadata = metadata ?? await this.threadMetadata({ threadId });
     const params = { threadId, limit, sortDirection };
     if (cursor) params.cursor = cursor;
-    const turns = await this.#request("thread/turns/list", params);
-    return {
-      thread: threadMetadata.thread,
-      turns: sanitizeHistoryPayload(turns),
-    };
+    return { thread: threadMetadata.thread, turns: sanitizeHistoryPayload(await this.#request("thread/turns/list", params)) };
   }
 
   async threadItems({ threadId, turnId, cursor, limit = 50, sortDirection = "asc", metadata = null }) {
@@ -175,27 +138,15 @@ export class CodexPublicContextExecutor {
     const params = { threadId, limit, sortDirection };
     if (turnId) params.turnId = turnId;
     if (cursor) params.cursor = cursor;
-    const items = await this.#request("thread/items/list", params);
-    return {
-      thread: threadMetadata.thread,
-      items: sanitizeHistoryPayload(items),
-    };
+    return { thread: threadMetadata.thread, items: sanitizeHistoryPayload(await this.#request("thread/items/list", params)) };
   }
 
   async injectContinuity({ threadId, text }) {
     if (typeof text !== "string" || !text.trim()) throw new Error("continuity text must be non-empty");
-    // thread/inject_items operates on a loaded thread. Resuming with turns excluded
-    // is model-free and avoids materializing the whole transcript before injection.
     await this.#request("thread/resume", { threadId, excludeTurns: true });
     await this.#request("thread/inject_items", {
       threadId,
-      items: [
-        {
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text }],
-        },
-      ],
+      items: [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
     });
     return { status: "injected", threadId, modelTurnStarted: false };
   }
@@ -205,22 +156,14 @@ export class CodexPublicContextExecutor {
     const skillsResult = await this.#request("skills/list", { cwds: [effectiveCwd], forceReload: false });
     const skills = (skillsResult?.data ?? []).flatMap((row) => row?.skills ?? []);
     const chromeSkill = skills.find((skill) => skill?.name === CHROME_SKILL_NAME && skill?.enabled !== false);
-    if (!chromeSkill?.path) {
-      return { status: "unavailable", reason: "chrome_skill_unavailable", chromeSkillPath: null, nodeRepl: false };
-    }
+    if (!chromeSkill?.path) return { status: "unavailable", reason: "chrome_skill_unavailable", chromeSkillPath: null, nodeRepl: false };
 
     const mcp = await this.#request("mcpServerStatus/list", { detail: "toolsAndAuthOnly", limit: 50 });
     const nodeRepl = (mcp?.data ?? []).find((server) => server?.name === NODE_REPL_SERVER);
     const tools = nodeRepl?.tools && typeof nodeRepl.tools === "object" ? Object.values(nodeRepl.tools) : [];
     const js = tools.find((tool) => tool?.name === NODE_REPL_TOOL);
     if (!js || nodeRepl?.error) {
-      return {
-        status: "unavailable",
-        reason: "node_repl_unavailable",
-        chromeSkillPath: chromeSkill.path,
-        nodeRepl: false,
-        nodeReplError: nodeRepl?.error ?? null,
-      };
+      return { status: "unavailable", reason: "node_repl_unavailable", chromeSkillPath: chromeSkill.path, nodeRepl: false, nodeReplError: nodeRepl?.error ?? null };
     }
     return { status: "ok", chromeSkillPath: chromeSkill.path, nodeRepl: true };
   }
@@ -232,9 +175,7 @@ export class CodexPublicContextExecutor {
     if (meta && typeof meta === "object") params._meta = meta;
     const result = await this.#request("mcpServer/tool/call", params, { timeoutMs: 60_000, expectedGeneration });
     const contentItems = Array.isArray(result?.content) ? structuredClone(result.content) : [];
-    const textParts = contentItems
-      .filter((item) => item?.type === "text" && typeof item.text === "string")
-      .map((item) => item.text);
+    const textParts = contentItems.filter((item) => item?.type === "text" && typeof item.text === "string").map((item) => item.text);
     return {
       isError: result?.isError === true,
       text: textParts.length ? textParts.join("\n") : null,
@@ -253,20 +194,14 @@ export class CodexPublicContextExecutor {
       this.#generation += 1;
       return initialized;
     })();
-    try {
-      return await this.#startPromise;
-    } finally {
-      this.#startPromise = null;
-    }
+    try { return await this.#startPromise; }
+    finally { this.#startPromise = null; }
   }
 
   async #request(method, params, { expectedGeneration = null, ...options } = {}) {
     await this.#ensureStarted();
     if (expectedGeneration !== null && expectedGeneration !== this.#generation) {
-      throw new Error(
-        `PUBLIC_CONTEXT_GENERATION_STALE: expected=${expectedGeneration} current=${this.#generation}; ` +
-        "the Codex app-server restarted before this request was dispatched"
-      );
+      throw new Error(`PUBLIC_CONTEXT_GENERATION_STALE: expected=${expectedGeneration} current=${this.#generation}; the Codex app-server restarted before this request was dispatched`);
     }
     return this.#client.request(method, params, options);
   }
@@ -274,14 +209,11 @@ export class CodexPublicContextExecutor {
   async #ensureThread(cwd, expectedGeneration = null) {
     await this.#ensureStarted();
     if (expectedGeneration !== null && expectedGeneration !== this.#generation) {
-      throw new Error(
-        `PUBLIC_CONTEXT_GENERATION_STALE: expected=${expectedGeneration} current=${this.#generation}; ` +
-        "the Codex app-server restarted before this request was dispatched"
-      );
+      throw new Error(`PUBLIC_CONTEXT_GENERATION_STALE: expected=${expectedGeneration} current=${this.#generation}; the Codex app-server restarted before this request was dispatched`);
     }
     const existing = this.#threadsByCwd.get(cwd);
     if (existing) return existing;
-    const started = await this.#request("thread/start", { cwd, ephemeral: true }, { expectedGeneration });
+    const started = await this.#request("thread/start", { cwd, ephemeral: true, permissions: ":read-only" }, { expectedGeneration });
     const threadId = started?.thread?.id;
     if (!threadId) throw new Error("thread/start returned no thread id for public runtime context");
     this.#threadsByCwd.set(cwd, threadId);
@@ -305,8 +237,6 @@ export function sanitizeHistoryPayload(value) {
   const output = {};
   for (const [key, child] of Object.entries(value)) {
     const lower = key.toLowerCase();
-    // Stored Thread objects expose their rollout storage path. Preserve ordinary
-    // item paths (for example fileChange paths) while removing only Thread.path.
     if (lower === "path" && typeof value.id === "string" && typeof value.cwd === "string") continue;
     if (lower === "encryptedcontent" || lower === "encrypted_content") continue;
     if (lower === "rawreasoning" || lower === "raw_reasoning" || lower === "rawcontent" || lower === "raw_content") continue;
