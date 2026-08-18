@@ -29,6 +29,7 @@ jobs:
           node --check bin/codexless.mjs
           node --check scripts/self-test.mjs
           node --check scripts/upgrade.mjs
+          node --check scripts/tunnel-config-cli.mjs
           node --check scripts/launch.mjs
           node --check scripts/supervisor.mjs
           node --check scripts/command-worker.mjs
@@ -43,6 +44,7 @@ jobs:
           node --check src/pagination.mjs
           node --check src/continuity-idempotency.mjs
           node --check src/secret-boundaries.mjs
+          node --check src/tunnel-config.mjs
           node --check src/repo-tools.mjs
           node --check src/construction-tools.mjs
           node --check src/thread-history-tools.mjs
