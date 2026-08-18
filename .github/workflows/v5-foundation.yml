@@ -28,7 +28,9 @@ jobs:
       - name: Syntax-check V5 runtime
         shell: bash
         run: |
+          node --check bin/codexless-entry.mjs
           node --check bin/codexless.mjs
+          node --check scripts/self-test.mjs
           node --check scripts/launch.mjs
           node --check scripts/supervisor.mjs
           node --check scripts/command-worker.mjs
