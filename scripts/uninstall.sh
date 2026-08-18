@@ -2,7 +2,7 @@
 set -eu
 
 DEFAULT_INSTALL_DIR="$HOME/Library/Application Support/Codexless/app"
-DEFAULT_STATE_DIR="$HOME/.config/codexless"
+DEFAULT_STATE_DIR="$HOME/Library/Application Support/Codexless"
 INSTALL_DIR=$DEFAULT_INSTALL_DIR
 STATE_DIR=$DEFAULT_STATE_DIR
 PURGE_STATE=0
@@ -48,7 +48,7 @@ emit_json() {
   version=$2
   state_purged=$3
   [ -n "$NODE" ] || return 1
-  ACTION_ENV=$action VERSION_ENV=$version INSTALL_DIR_ENV=$INSTALL_DIR STATE_PURGED_ENV=$state_purged \
+  ACTION_ENV=$action VERSION_ENV=$version INSTALL_DIR_ENV=$INSTALL_DIR STATE_DIR_ENV=$STATE_DIR STATE_PURGED_ENV=$state_purged \
     "$NODE" -e '
       const e = process.env;
       process.stdout.write(JSON.stringify({
@@ -56,10 +56,11 @@ emit_json() {
         action: e.ACTION_ENV,
         ...(e.VERSION_ENV ? {version: e.VERSION_ENV} : {}),
         installDir: e.INSTALL_DIR_ENV,
+        stateRoot: e.STATE_DIR_ENV,
         statePurged: e.STATE_PURGED_ENV === "true",
         notes: [
           "Codex, Node.js, projects, Browser configuration, Tunnel configuration, Codex trust, and shell PATH were not changed.",
-          e.STATE_PURGED_ENV === "true" ? "Codexless-owned state was purged." : "Codexless-owned state was preserved."
+          e.STATE_PURGED_ENV === "true" ? "Codexless-owned state/runtime/log/backups were purged." : "Codexless-owned state was preserved."
         ]
       }) + "\n");
     '
@@ -76,7 +77,8 @@ fail() {
 }
 
 if [ ! -e "$INSTALL_DIR" ]; then
-  if [ "$JSON" -eq 1 ]; then emit_json "already-absent" "" "false" || fail "Node.js is required for --json output."; else printf 'Codexless is already absent: %s\n' "$INSTALL_DIR"; fi
+  if [ "$PURGE_STATE" -eq 1 ] && [ -e "$STATE_DIR" ]; then rm -rf "$STATE_DIR"; fi
+  if [ "$JSON" -eq 1 ]; then emit_json "already-absent" "" "$([ "$PURGE_STATE" -eq 1 ] && printf true || printf false)" || fail "Node.js is required for --json output."; else printf 'Codexless is already absent: %s\n' "$INSTALL_DIR"; fi
   exit 0
 fi
 
