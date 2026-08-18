@@ -12,7 +12,7 @@ V5 is built around these rules:
 2. **Codexless may narrow authority, but a remote caller must not silently widen it.**
 3. **Permission / trust denial fails visibly.**
 4. **The public ChatGPT lane must not silently start a Codex model turn.**
-5. **Durable state must not knowingly persist literal credentials.**
+5. **Credentials must not enter ordinary durable state such as SQLite, command argv, logs, diagnostics, or non-secret tunnel metadata.** A credential that the guided tunnel setup must retain is isolated in a dedicated local private-secret file with restricted permissions.
 6. **Ambiguous retries must fail closed when replay could duplicate an external mutation.**
 
 Codexless is not a magic sandbox around deliberately broad local permissions. If the user grants broad workspace authority locally, authorized Codexless operations can be correspondingly powerful.
@@ -78,15 +78,16 @@ Interactive App Server command streaming is used where the accepted implementati
 
 Project trust is exact-root and explicit.
 
-`codexless connect`:
+For normal onboarding, `codexless connect .` is a guided setup. It:
 
 1. resolves the canonical project / Git root;
-2. validates tunnel configuration before touching trust;
-3. requires interactive approval or explicit `--yes`;
-4. backs up Codex config;
-5. adds only the exact project root;
-6. runs doctor / authority validation;
-7. restores the previous config if validation fails.
+2. resolves or creates the local tunnel configuration and validates it before touching Codex trust;
+3. requires interactive approval or explicit `--yes` before adding a previously untrusted root;
+4. skips the prompt only when that exact canonical root is already trusted;
+5. backs up Codex config;
+6. adds only the exact project root;
+7. runs doctor / authority validation;
+8. restores the previous config if post-trust validation fails.
 
 `codex.workspace_open` never creates or widens trust as a side effect. An unauthorized workspace returns a typed `needs_trust` state.
 
@@ -169,7 +170,7 @@ Reusing the same idempotency key with a different request payload is rejected.
 
 ## Secret boundaries
 
-V5 tries to minimize accidental durable secret storage.
+V5 separates ordinary durable state from credentials needed by the local tunnel runtime.
 
 ### Durable commands
 
@@ -179,11 +180,43 @@ Detectable credential-like argv values are rejected before command rows are inse
 
 Command labels stored for continuity are redacted; raw argv is not copied into the checkpoint journal.
 
-### Tunnel configuration
+### Guided tunnel setup
 
-Persistent tunnel config stores an argv **template**, not literal secret values.
+Normal users run:
 
-Literal credentials are rejected. Secret arguments should use placeholders such as:
+```text
+codexless connect .
+```
+
+The wizard may need a Tunnel runtime API key. It first reuses `CONTROL_PLANE_API_KEY` / `OPENAI_API_KEY` when already present. Otherwise interactive input is hidden while the key is entered.
+
+When Codexless needs to retain that key for future supervised starts, it is written to a dedicated local secret file under the Codexless state directory. The generated tunnel-client profile contains only a `file:` reference to that secret file.
+
+The runtime key is intentionally excluded from:
+
+- `tunnel.json`;
+- the tunnel process argv;
+- SQLite;
+- Codexless supervisor logs;
+- diagnostics;
+- generated README/config examples.
+
+File protections:
+
+- macOS / POSIX: the secret file is written mode `0600`;
+- Windows: Codexless removes inherited ACLs and grants full access to the current Windows account with `icacls`; setup fails closed if that ACL hardening cannot be applied.
+
+`tunnel-client doctor` is run against the generated profile before Codex trust is changed. If guided tunnel setup validation fails, Codexless removes the generated tunnel metadata/profile/secret artifacts.
+
+`codexless tunnel clear` also removes the guided tunnel profile and dedicated secret file. An environment override such as `CODEXLESS_TUNNEL_ARGV_JSON` remains outside Codexless's control and is reported as still active.
+
+This Technical Preview uses filesystem permissions / ACLs for the guided local tunnel secret rather than claiming OS Keychain or Credential Manager vault integration.
+
+### Advanced manual tunnel configuration
+
+`codexless tunnel configure ...` remains an operator/debug path.
+
+Persistent manual tunnel config stores an argv **template**, not literal secret values. Detectable literal credentials are rejected; secret arguments should use placeholders such as:
 
 ```text
 {env:TUNNEL_TOKEN}
@@ -191,7 +224,7 @@ Literal credentials are rejected. Secret arguments should use placeholders such 
 
 The environment variable is resolved only when the tunnel launches.
 
-Tunnel URL query parameters containing token / key / auth / secret values are refused for persistent config.
+Tunnel URL query parameters containing token / key / auth / secret values are refused for persistent manual config.
 
 ### Sensitive paths
 
@@ -215,7 +248,8 @@ Diagnostic output intentionally excludes:
 - command stderr;
 - command argv;
 - stored thread previews;
-- full thread identifiers.
+- full thread identifiers;
+- guided tunnel secret contents.
 
 It redacts:
 
@@ -225,7 +259,7 @@ It redacts:
 - common standalone credential assignments;
 - common key prefixes.
 
-Tunnel status may include template placeholders / required environment variable **names**, but not their values.
+Tunnel status can describe its non-secret launch template / source, but must not print the guided runtime key.
 
 Supervisor logs carry a `runtimeId`, which is also stored in runtime state for correlation.
 
@@ -251,11 +285,9 @@ Webpage content is untrusted input and can contain prompt injection. A model mus
 
 The local HTTP entry point is intended for loopback only. Raw unauthenticated local service exposure to the public internet is not a supported deployment.
 
-Remote ChatGPT access is expected to use a separately authenticated MCP tunnel / remote endpoint path.
+Normal ChatGPT access uses the authenticated OpenAI tunnel path and launches Codexless over stdio. The HTTP launcher remains an advanced/local compatibility surface, not the normal V5 onboarding path.
 
-Tunnel credentials belong in local environment / secret storage, not source control, README examples, screenshots or diagnostic bundles.
-
-Codexless supports persistent non-secret tunnel argv templates; it does not claim that every third-party tunnel client's own credential handling is controlled by Codexless.
+Codexless manages the local stdio command/profile and secret boundary, but it does not control the security of external tunnel infrastructure or a separately supplied manual tunnel command.
 
 ---
 
@@ -287,9 +319,10 @@ Security / durability properties:
 - normal uninstall preserves state;
 - state purge is explicit;
 - upgrade stops the runtime first;
-- legacy Windows root-layout migration installs the new app under `app/` rather than moving / deleting the state root.
+- legacy Windows root-layout migration installs the new app under `app/` rather than moving / deleting the state root;
+- Mac lifecycle/stdio launchers are marked executable by the installer.
 
-The installer does not silently create project trust or persist tunnel credentials.
+The installer itself does not create project trust or tunnel credentials. Those changes happen only through explicit `codexless connect` onboarding.
 
 ---
 
@@ -316,10 +349,11 @@ Before a V5 release or merge:
 - regenerate npm lock root metadata using npm, not hand edits;
 - run `npm run test:v5`;
 - run the full test suite;
-- run one controlled macOS + Windows GitHub Actions matrix;
 - inspect the packed artifact;
+- run guided `codexless connect .` acceptance on a real Mac;
+- run one controlled macOS + Windows matrix / real-machine acceptance before supported release;
 - scan the artifact and repository for secrets / machine paths;
-- run real-machine connect / command / edit / restart / upgrade / uninstall acceptance.
+- run real-machine command / edit / restart / upgrade / uninstall acceptance.
 
 The V5 workflow is intentionally manual-only while stabilization is in progress; noisy failing CI must not be re-enabled on every push before it is green.
 
@@ -333,6 +367,7 @@ Known limitations include:
 
 - Intel macOS is not part of the supported preview;
 - Windows long-command interactivity is limited by the accepted App Server implementation and uses explicit fallback behavior;
+- the guided tunnel runtime key is protected by filesystem permissions / ACLs rather than OS-native vault integration;
 - sensitive-file detection is heuristic and filename-based;
 - argv inspection cannot prevent deliberately obfuscated secondary process execution in arbitrary custom code;
 - Browser Reader is read-first rather than a general browser agent;
