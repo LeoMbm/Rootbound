@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { open } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -11,6 +12,7 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const paths = await ensureCodexlessStateDirs(resolveCodexlessPaths());
 const projectRoot = process.env.CODEXLESS_PROJECT_ROOT || null;
 const projectRef = process.env.CODEXLESS_PROJECT_REF || null;
+const runtimeId = `runtime_${randomUUID()}`;
 const restartLimit = parseBoundedInt(process.env.CODEXLESS_TUNNEL_RESTART_LIMIT ?? "3", 0, 20, "CODEXLESS_TUNNEL_RESTART_LIMIT");
 const launch = resolveTunnelLaunch({ packageRoot, projectRoot });
 const logHandle = await open(paths.logPath, "a", 0o600);
@@ -18,7 +20,7 @@ let child = null;
 let stopping = false;
 let restarts = 0;
 
-log(`supervisor start pid=${process.pid} project=${projectRef ?? "none"}`);
+log(`supervisor start pid=${process.pid} project=${projectRef ?? "none"} tunnelSource=${launch.source ?? "unknown"}`);
 await startChild();
 
 process.on("SIGINT", () => void shutdown("SIGINT"));
@@ -42,6 +44,7 @@ async function startChild() {
   await writeRuntimeState(paths, {
     schemaVersion: 1,
     status: "running",
+    runtimeId,
     supervisorPid: process.pid,
     pid: process.pid,
     tunnelPid: child.pid,
@@ -49,6 +52,7 @@ async function startChild() {
     projectRef,
     projectRoot,
     transport: "secure-mcp-tunnel",
+    tunnelSource: launch.source ?? null,
   });
   log(`tunnel running pid=${child.pid}`);
   child.once("exit", (code, signal) => void onChildExit(code, signal));
@@ -91,7 +95,7 @@ async function shutdown(signal) {
   process.exit(0);
 }
 
-function log(message) { logHandle.write(`${new Date().toISOString()} ${message}\n`); }
+function log(message) { logHandle.write(`${new Date().toISOString()} [${runtimeId}] ${message}\n`); }
 function parseBoundedInt(value, min, max, label) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || String(parsed) !== String(value) || parsed < min || parsed > max) throw new Error(`${label} must be an integer between ${min} and ${max}`);
