@@ -10,7 +10,6 @@ const checks = [];
 let resolution = null;
 let executor = null;
 let authority = null;
-let command = null;
 
 try {
   resolution = await resolveCodexExecutable({ acceptedVersions: ACCEPTED_CODEX_VERSIONS });
@@ -41,25 +40,48 @@ if (executor && checks.at(-1)?.ok) {
     authority = await executor.resolveAuthority({ cwd, access: "readOnly", timeoutMs: 10_000 });
     record("authority", true, `${authority.permissionProfile} within ${authority.trustedAncestor ?? cwd}`);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    record("authority", false, detail, error?.code, error?.nextActions);
+    record("authority", false, error instanceof Error ? error.message : String(error), error?.code, error?.nextActions);
   }
 }
 
 if (authority && executor) {
-  try {
-    const marker = `codexless-self-test-${process.pid}`;
-    command = await executor.exec({
+  await runCheck("read", async () => {
+    const result = await executor.exec({
+      command: [process.execPath, "-e", "const fs=require('node:fs');const rows=fs.readdirSync('.',{withFileTypes:true});process.stdout.write(String(rows.length));"],
+      cwd,
+      access: "readOnly",
+      timeoutMs: 10_000,
+    });
+    const count = Number.parseInt(result.stdout, 10);
+    const ok = result.exitCode === 0 && Number.isInteger(count) && count >= 0;
+    return { ok, detail: ok ? `read-only sandbox listed ${count} entries` : commandDetail(result) };
+  });
+
+  await runCheck("command-exec", async () => {
+    const marker = `codexless-self-test-command-${process.pid}`;
+    const result = await executor.exec({
       command: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(marker)})`],
       cwd,
       access: "readOnly",
       timeoutMs: 10_000,
     });
-    const ok = command.exitCode === 0 && command.stdout === marker;
-    record("command-exec", ok, ok ? `model-free command/exec returned expected marker; profile=${command.permissionProfile}` : `unexpected result exit=${command.exitCode} stdout=${JSON.stringify(command.stdout)} stderr=${JSON.stringify(command.stderr)}`);
-  } catch (error) {
-    record("command-exec", false, error instanceof Error ? error.message : String(error), error?.code, error?.nextActions);
-  }
+    const ok = result.exitCode === 0 && result.stdout === marker;
+    return { ok, detail: ok ? `model-free command/exec returned expected marker; profile=${result.permissionProfile}` : commandDetail(result) };
+  });
+
+  await runCheck("write-cleanup", async () => {
+    const marker = `codexless-self-test-write-${process.pid}-${Date.now()}`;
+    const filename = `.codexless-self-test-${process.pid}-${Date.now()}.tmp`;
+    const script = `const fs=require('node:fs');const p=${JSON.stringify(filename)};const marker=${JSON.stringify(marker)};let ok=false;try{fs.writeFileSync(p,marker,'utf8');ok=fs.readFileSync(p,'utf8')===marker;process.stdout.write(ok?marker:'mismatch');}finally{try{fs.unlinkSync(p);}catch{}}`;
+    const result = await executor.exec({
+      command: [process.execPath, "-e", script],
+      cwd,
+      access: "inherit",
+      timeoutMs: 10_000,
+    });
+    const ok = result.exitCode === 0 && result.stdout === marker;
+    return { ok, detail: ok ? `workspace write/read/delete probe succeeded; profile=${result.permissionProfile}` : commandDetail(result) };
+  });
 }
 
 const ok = checks.every((check) => check.ok);
@@ -87,13 +109,23 @@ else {
 }
 process.exitCode = ok ? 0 : 1;
 
+async function runCheck(name, task) {
+  try {
+    const value = await task();
+    record(name, value.ok, value.detail);
+  } catch (error) {
+    record(name, false, error instanceof Error ? error.message : String(error), error?.code, error?.nextActions);
+  }
+}
+function commandDetail(result) {
+  return `unexpected result exit=${result.exitCode} stdout=${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)}`;
+}
 function record(name, okValue, detail, errorCode = null, nextActions = null) {
   const check = { name, ok: Boolean(okValue), detail: String(detail ?? "") };
   if (typeof errorCode === "string") check.errorCode = errorCode;
   if (Array.isArray(nextActions)) check.nextActions = nextActions.filter((value) => typeof value === "string");
   checks.push(check);
 }
-
 function parseArgs(argv) {
   const parsed = { cwd: null, json: false };
   for (let index = 0; index < argv.length; index += 1) {
