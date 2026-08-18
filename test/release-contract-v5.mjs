@@ -7,6 +7,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const workflowPath = path.join(root, ".github", "workflows", "v5-foundation.yml");
 const workflow = await readFile(workflowPath, "utf8");
 const readme = await readFile(path.join(root, "README.md"), "utf8");
+const readmeZh = await readFile(path.join(root, "README.zh-CN.md"), "utf8");
 const security = await readFile(path.join(root, "SECURITY.md"), "utf8");
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 
@@ -28,7 +29,10 @@ for (const relative of checkedPaths) await access(path.join(root, relative));
 
 assert.equal(packageJson.engines?.node, ">=22.13.0");
 assert.equal(packageJson.bin?.codexless, "bin/codexless-entry.mjs");
-assert.match(packageJson.scripts?.["test:v5"] ?? "", /release-contract-v5\.mjs|$/, "test:v5 should be reviewable as one durable contract");
+assert.equal(packageJson.repository?.url, "git+https://github.com/LeoMbm/Codexless.git");
+assert.equal(packageJson.homepage, "https://github.com/LeoMbm/Codexless#readme");
+assert.equal(packageJson.bugs?.url, "https://github.com/LeoMbm/Codexless/issues");
+assert.match(packageJson.scripts?.["test:v5"] ?? "", /release-contract-v5\.mjs/, "test:v5 must include the release contract guard");
 
 assert.match(readme, /codexless-public-preview-v5/);
 assert.match(readme, /27 public tools/);
@@ -39,5 +43,9 @@ assert.match(security, /Codexless V5 public surface/);
 assert.match(security, /27 public tools/);
 assert.doesNotMatch(security, /codex\.agent_(?:start|send|commit)/);
 assert.doesNotMatch(security, /exactly 21 tools/);
+
+assert.match(readmeZh, /V5/);
+assert.match(readmeZh, /README\.md/);
+assert.doesNotMatch(readmeZh, /codex\.agent_(?:start|send|commit)/);
 
 console.log("release-contract-v5: ok");
