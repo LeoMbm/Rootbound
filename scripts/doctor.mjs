@@ -13,7 +13,9 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, "..");
 const packageJson = await readJsonFile(path.join(projectRoot, "package.json"), "package.json");
 const args = parseArgs(process.argv.slice(2));
-const requestedCwd = args.cwd ? path.resolve(args.cwd) : null;
+const callerCwd = path.resolve(process.cwd());
+const explicitCwd = args.cwd ? path.resolve(args.cwd) : null;
+const requestedCwd = explicitCwd ?? (callerCwd !== projectRoot ? callerCwd : null);
 const runtimeCwd = requestedCwd ?? projectRoot;
 const checks = [];
 const warnings = [];
@@ -37,7 +39,12 @@ record(
 );
 const nodeMajor = Number.parseInt(process.versions.node.split(".")[0], 10);
 record("node", Number.isInteger(nodeMajor) && nodeMajor >= 22, `Node ${process.version}`, nodeMajor >= 22 ? null : "Node.js 22+ is required");
-record("public-surface", PUBLIC_TOOL_NAMES.length === 21, `${PUBLIC_SURFACE_VERSION}; ${PUBLIC_TOOL_NAMES.length} tools`);
+record(
+  "public-surface",
+  PUBLIC_SURFACE_VERSION === "codexless-public-preview-v3" && PUBLIC_TOOL_NAMES.length === 28,
+  `${PUBLIC_SURFACE_VERSION}; ${PUBLIC_TOOL_NAMES.length} tools`,
+  "Expected continuity preview v3 with 28 public tools"
+);
 
 for (const spec of ["@modelcontextprotocol/node", "@modelcontextprotocol/server", "zod"]) {
   try {
@@ -153,7 +160,8 @@ if (codexResolution?.path && codexProbe?.ok) {
 
 notes.push("Browser Reader is conditional; unavailable Browser/Node REPL prerequisites do not make the Codexless core install invalid.");
 notes.push("Permission fields have different meanings: permissionCeiling is the locally authorized maximum for an operation, while permissionProfile is the profile actually used. Read-only operations downscope; explicit write operations may inherit the local Codex ceiling. Remote callers cannot select a stronger profile.");
-notes.push("codex.project_context reports a fresh Codex bootstrap projection for its cwd; per-operation authority is resolved separately. Doctor --cwd uses the same Codexless authority resolver as project execution rather than treating the bootstrap projection as a global permission result.");
+notes.push("When doctor is launched from outside the Codexless install root, the current working directory is treated as the project to verify; --cwd remains an explicit override.");
+notes.push("codex.project_context reports a fresh Codex bootstrap projection for its cwd; per-operation authority is resolved separately. Doctor project checks use the same Codexless authority resolver as project execution rather than treating the bootstrap projection as a global permission result.");
 notes.push("Tunnel connectivity is intentionally not changed or provisioned by doctor. Verify the release-candidate tunnel separately after local install/doctor passes.");
 notes.push("Doctor does not start a Codex model turn.");
 
