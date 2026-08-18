@@ -43,7 +43,7 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
 
   server.registerTool("codex.read_many", {
     title: "Read Multiple Authorized Project Files",
-    description: "Read UTF-8 project files through the authorized Codex sandbox with request-bound pagination. Sensitive files such as .env/private keys/credentials require allowSensitive=true. If a page ends inside a file, nextCursor resumes at the exact character offset and refuses to continue if that file changed in between. No Codex model turn is started.",
+    description: "Read UTF-8 files inside the requested effective cwd through the authorized Codex sandbox with request-bound pagination. Sensitive files such as .env/private keys/credentials require allowSensitive=true. If a page ends inside a file, nextCursor resumes at the exact character offset and refuses to continue if that file changed in between. No Codex model turn is started.",
     inputSchema: z.object({
       paths: z.array(z.string().min(1).max(32_768)).min(1).max(20),
       cwd: z.string().min(1).max(32_768).optional(),
@@ -130,7 +130,7 @@ export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCha
   for (let index = state.pathIndex; index < paths.length && remaining > 0; index += 1) {
     const requestedPath = paths[index];
     if (!allowSensitive && isSensitivePath(requestedPath)) throw sensitiveReadError(requestedPath);
-    const target = await canonicalExistingFile({ requestedPath, cwd: authority.effectiveCwd, root });
+    const target = await canonicalExistingFile({ requestedPath, cwd: authority.effectiveCwd, root: authority.effectiveCwd });
     if (!allowSensitive && isSensitivePath(target)) throw sensitiveReadError(target);
     const read = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
     const text = read.text;
@@ -185,7 +185,7 @@ async function readTextViaSandbox({ authorityExecutor, target, cwd, access }) {
   return { text: result.stdout };
 }
 async function canonicalRoot(authority) { const candidate = authority?.trustedAncestor ?? authority?.effectiveCwd; if (!candidate) throw new Error("authorized construction tool requires a trusted Codex root"); return realpath(candidate); }
-async function canonicalExistingFile({ requestedPath, cwd, root }) { const resolved = path.resolve(cwd, requestedPath); const target = await realpath(resolved); const relative = path.relative(root, target); if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`authorized construction tool refused path outside trusted root: ${target}`); const info = await stat(target); if (!info.isFile()) throw new Error(`target is not a regular file: ${target}`); return target; }
+async function canonicalExistingFile({ requestedPath, cwd, root }) { const resolved = path.resolve(cwd, requestedPath); const target = await realpath(resolved); const relative = path.relative(root, target); if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`authorized construction tool refused path outside scope: ${target}`); const info = await stat(target); if (!info.isFile()) throw new Error(`target is not a regular file: ${target}`); return target; }
 function assertWithinEffectiveCwd(cwd, target) { const relative = path.relative(cwd, target); if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`precise edit refused path outside effective cwd: ${target}`); }
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
 function countOccurrences(text, needle) { let count = 0; let offset = 0; while (true) { const index = text.indexOf(needle, offset); if (index < 0) return count; count += 1; offset = index + needle.length; } }
