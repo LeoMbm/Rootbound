@@ -34,8 +34,8 @@ function createIsolatedPublicTestEnv(extra = {}) {
   return env;
 }
 
-assert.equal(PUBLIC_SURFACE_VERSION, "codexless-public-preview-v1");
-assert.equal(PUBLIC_TOOL_NAMES.length, 21);
+assert.equal(PUBLIC_SURFACE_VERSION, "codexless-public-preview-v2");
+assert.equal(PUBLIC_TOOL_NAMES.length, 25);
 
 const forbiddenNames = [
   "codex.browser_prepare_click",
@@ -48,6 +48,9 @@ const forbiddenNames = [
   "codex.process_receipt",
   "codex.catalog",
   "codex.mcp_call",
+  "codex.thread_archive",
+  "codex.thread_delete",
+  "codex.thread_rollback",
 ];
 
 const client = new Client({ name: "codexless-public-contract", version: "0.1.0" });
@@ -68,7 +71,7 @@ try {
   const tools = await client.listTools();
   const names = tools.tools.map((tool) => tool.name);
   assert.deepEqual([...names].sort(), [...PUBLIC_TOOL_NAMES].sort());
-  assert.equal(names.length, 21);
+  assert.equal(names.length, 25);
 
   for (const name of forbiddenNames) {
     assert.equal(names.includes(name), false, `${name} must not be exposed by the public preview`);
@@ -83,6 +86,10 @@ try {
   const commandTool = tools.tools.find((tool) => tool.name === "codex.command_exec");
   const preciseEditTool = tools.tools.find((tool) => tool.name === "codex.precise_edit");
   const skillListTool = tools.tools.find((tool) => tool.name === "codex.skill_list");
+  const threadListTool = tools.tools.find((tool) => tool.name === "codex.thread_list");
+  const threadReadTool = tools.tools.find((tool) => tool.name === "codex.thread_read");
+  const threadItemsTool = tools.tools.find((tool) => tool.name === "codex.thread_items");
+  const continuityPushTool = tools.tools.find((tool) => tool.name === "codex.continuity_push");
   const appOnlyCardToolNames = ["codex.agent_card_state", "codex.agent_decline", "codex.agent_commit"];
   assert.equal(commandTool?.annotations?.destructiveHint, true);
   assert.match(commandTool?.description ?? "", /must not launch Codex CLI|refuses nested Codex/i);
@@ -96,6 +103,12 @@ try {
   assert.equal(preciseEditTool?.annotations?.destructiveHint, true);
   assert.deepEqual(Object.keys(skillListTool?.inputSchema?.properties ?? {}).sort(), ["cwd", "query"]);
   assert.equal(Object.hasOwn(skillListTool?.inputSchema?.properties ?? {}, "kind"), false);
+  assert.equal(threadListTool?.annotations?.readOnlyHint, true);
+  assert.equal(threadReadTool?.annotations?.readOnlyHint, true);
+  assert.equal(threadItemsTool?.annotations?.readOnlyHint, true);
+  assert.equal(continuityPushTool?.annotations?.destructiveHint, true);
+  assert.match(threadReadTool?.description ?? "", /raw reasoning.*omitted/i);
+  assert.match(continuityPushTool?.description ?? "", /does not start a Codex model turn/i);
   for (const name of appOnlyCardToolNames) {
     const tool = tools.tools.find((candidate) => candidate.name === name);
     assert.deepEqual(tool?._meta?.ui?.visibility, ["app"], `${name} must remain app-only`);
@@ -280,7 +293,7 @@ try {
     await httpClient.connect(httpTransport);
     const httpTools = await httpClient.listTools();
     const httpNames = httpTools.tools.map((tool) => tool.name);
-    assert.equal(httpNames.length, 21);
+    assert.equal(httpNames.length, 25);
     assert.deepEqual([...httpNames].sort(), [...PUBLIC_TOOL_NAMES].sort());
     for (const name of forbiddenNames) {
       assert.equal(httpNames.includes(name), false, `${name} must not be exposed by the public HTTP preview`);
