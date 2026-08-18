@@ -6,10 +6,11 @@ const z = require("zod/v4");
 const cwdSchema = z.string().min(1).max(32_768).optional();
 const cursorSchema = z.string().min(1).max(32_768).optional();
 const threadIdSchema = z.string().min(1).max(4_096);
+const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i);
 const lineSchema = z.string().min(1).max(8_192);
 
-export function registerThreadHistoryTools(server, { context, authorityExecutor }) {
-  if (!context || !authorityExecutor) return;
+export function registerThreadHistoryTools(server, { context, authorityExecutor, continuityState }) {
+  if (!context || !authorityExecutor || !continuityState) return;
 
   server.registerTool(
     "codex.thread_list",
@@ -81,47 +82,105 @@ export function registerThreadHistoryTools(server, { context, authorityExecutor 
   );
 
   server.registerTool(
-    "codex.continuity_push",
+    "codex.continuity_bind",
     {
-      title: "Push ChatGPT Continuity Back To Codex",
+      title: "Bind This Chat To A Codex Conversation",
       description:
-        "Persist one explicitly targeted external handoff into an authorized Codex thread using official thread/inject_items. This does not start a Codex model turn or consume Codex model quota, but it does modify the thread's future model-visible history. The injected message is clearly labeled as external ChatGPT/Codexless continuity rather than a prior Codex conclusion.",
+        "Bind the current ChatGPT workflow to one authorized persisted Codex thread. Returns an opaque bindingRef that should be reused for subsequent Codexless project actions and continuity checkpoints in this chat. Binding itself is model-free and does not modify the Codex thread.",
+      inputSchema: z.object({ threadId: threadIdSchema }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ threadId }) => structured(async () => {
+      const metadata = await context.threadMetadata({ threadId });
+      const authority = await authorizeThread(authorityExecutor, metadata.thread);
+      const binding = continuityState.bind({
+        threadId,
+        cwd: authority.effectiveCwd,
+        threadPreview: metadata.thread?.preview ?? null,
+      });
+      return withAuthority({ status: "bound", ...binding }, authority);
+    })
+  );
+
+  server.registerTool(
+    "codex.continuity_status",
+    {
+      title: "Read Codex Continuity Binding Status",
+      description:
+        "Read the current state of one opaque continuity binding, including pending local journal entries and checkpoint count. This does not read or modify the Codex thread.",
+      inputSchema: z.object({ bindingRef: bindingRefSchema }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ bindingRef }) => structured(() => ({ status: "bound", ...continuityState.status(bindingRef) }))
+  );
+
+  server.registerTool(
+    "codex.continuity_checkpoint",
+    {
+      title: "Checkpoint ChatGPT Continuity Into Codex",
+      description:
+        "Write one delta checkpoint into the Codex thread bound by bindingRef. Include only new project decisions/current state since the prior checkpoint; Codexless automatically appends its pending journal of observed local commands and edits. Uses thread/inject_items and never starts a Codex model turn. When a binding is active, call this before each final response that materially changes or advances the bound project.",
       inputSchema: z.object({
-        threadId: threadIdSchema,
+        bindingRef: bindingRefSchema,
         summary: z.string().min(1).max(30_000),
-        changedFiles: z.array(lineSchema).max(100).default([]),
-        tests: z.array(lineSchema).max(100).default([]),
         decisions: z.array(lineSchema).max(100).default([]),
         remainingWork: z.array(lineSchema).max(100).default([]),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (input) => structured(async () => {
-      const metadata = await context.threadMetadata({ threadId: input.threadId });
+      const pending = continuityState.prepareCheckpoint(input.bindingRef);
+      const metadata = await context.threadMetadata({ threadId: pending.threadId });
       const authority = await authorizeThread(authorityExecutor, metadata.thread);
-      const text = buildContinuityHandoff(input);
-      const result = await context.injectContinuity({ threadId: input.threadId, text });
+      if (authority.effectiveCwd !== pending.cwd) {
+        throw new Error("continuity binding cwd no longer matches the authorized Codex thread cwd; bind again");
+      }
+      const text = buildContinuityCheckpoint({
+        summary: input.summary,
+        decisions: input.decisions,
+        remainingWork: input.remainingWork,
+        journal: pending.journal,
+      });
+      const result = await context.injectContinuity({ threadId: pending.threadId, text });
+      const binding = continuityState.acknowledgeCheckpoint(input.bindingRef, pending.throughSeq);
       return withAuthority({
         ...result,
+        status: "checkpointed",
+        binding,
+        journalEntriesIncluded: pending.journal.length,
         injectedChars: text.length,
         externalSource: "ChatGPT via Codexless",
       }, authority);
     })
   );
+
+  server.registerTool(
+    "codex.continuity_unbind",
+    {
+      title: "Unbind This Chat From Codex",
+      description:
+        "Remove one continuity binding from Codexless. This does not delete, archive, roll back, or otherwise modify the Codex conversation itself.",
+      inputSchema: z.object({ bindingRef: bindingRefSchema }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ bindingRef }) => structured(() => continuityState.unbind(bindingRef))
+  );
 }
 
-export function buildContinuityHandoff({ summary, changedFiles = [], tests = [], decisions = [], remainingWork = [] }) {
+export function buildContinuityCheckpoint({ summary, decisions = [], remainingWork = [], journal = [] }) {
   const sections = [
-    "[External continuity update from ChatGPT via Codexless]",
+    "[External continuity checkpoint from ChatGPT via Codexless]",
     "",
-    "This is a handoff record from an external ChatGPT session. It is not a previous Codex-generated conclusion.",
+    "This is a delta handoff record from an external ChatGPT session. It is not a previous Codex-generated conclusion.",
     "",
-    "Work completed / current state:",
+    "New project state since the prior checkpoint:",
     summary.trim(),
   ];
-  appendList(sections, "Changed files:", changedFiles);
-  appendList(sections, "Tests / verification:", tests);
-  appendList(sections, "Decisions and constraints:", decisions);
+  appendList(sections, "New decisions / constraints:", decisions);
+  if (journal.length) {
+    sections.push("", "Observed local activity:");
+    for (const entry of journal) sections.push(`- ${formatJournalEntry(entry)}`);
+  }
   appendList(sections, "Remaining work:", remainingWork);
   return sections.join("\n").trimEnd() + "\n";
 }
@@ -150,6 +209,16 @@ function withAuthority(payload, authority) {
 function appendList(target, title, values) {
   if (!values.length) return;
   target.push("", title, ...values.map((value) => `- ${String(value).trim()}`));
+}
+
+function formatJournalEntry(entry) {
+  const pieces = [entry.kind];
+  if (entry.label) pieces.push(entry.label);
+  if (entry.path) pieces.push(entry.path);
+  if (entry.status) pieces.push(`status=${entry.status}`);
+  if (entry.exitCode !== undefined) pieces.push(`exit=${entry.exitCode}`);
+  if (entry.changed !== undefined) pieces.push(`changed=${entry.changed}`);
+  return pieces.join(" · ");
 }
 
 async function structured(task) {
