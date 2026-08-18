@@ -31,8 +31,13 @@ function createIsolatedPublicTestEnv(extra = {}) {
 }
 
 assert.equal(PUBLIC_SURFACE_VERSION, "codexless-public-preview-v5");
-assert.equal(PUBLIC_TOOL_NAMES.length, 25);
+assert.ok(PUBLIC_TOOL_NAMES.length >= 27);
+assert.equal(new Set(PUBLIC_TOOL_NAMES).size, PUBLIC_TOOL_NAMES.length);
 
+const requiredNames = [
+  "codex.command_start", "codex.command_poll", "codex.command_write", "codex.command_terminate",
+  "codex.workspace_open", "codex.precise_edit", "codex.edit_undo", "codex.edit_redo",
+];
 const forbiddenNames = [
   "codex.account_preflight", "codex.model_list", "codex.agent_start", "codex.agent_card_render", "codex.agent_card_state",
   "codex.agent_show", "codex.agent_send", "codex.agent_decline", "codex.agent_commit", "codex.agent_approve", "codex.agent_reject",
@@ -43,8 +48,9 @@ const forbiddenNames = [
 async function assertPublicSurface(client) {
   const tools = await client.listTools();
   const names = tools.tools.map((tool) => tool.name);
-  assert.equal(names.length, 25);
+  assert.equal(names.length, PUBLIC_TOOL_NAMES.length);
   assert.deepEqual([...names].sort(), [...PUBLIC_TOOL_NAMES].sort());
+  for (const name of requiredNames) assert.equal(names.includes(name), true, `${name} must be exposed by V5 surface`);
   for (const name of forbiddenNames) assert.equal(names.includes(name), false, `${name} must not be exposed by ChatGPT-only surface`);
   assert.equal(names.some((name) => name.startsWith("codex.agent_")), false);
 
@@ -54,17 +60,22 @@ async function assertPublicSurface(client) {
   const commandWriteTool = tools.tools.find((tool) => tool.name === "codex.command_write");
   const commandTerminateTool = tools.tools.find((tool) => tool.name === "codex.command_terminate");
   const workspaceTool = tools.tools.find((tool) => tool.name === "codex.workspace_open");
+  const undoTool = tools.tools.find((tool) => tool.name === "codex.edit_undo");
+  const redoTool = tools.tools.find((tool) => tool.name === "codex.edit_redo");
   const searchTool = tools.tools.find((tool) => tool.name === "codex.repo_search");
   const patchTool = tools.tools.find((tool) => tool.name === "codex.apply_patch");
   const statusTool = tools.tools.find((tool) => tool.name === "codex.git_status");
   const diffTool = tools.tools.find((tool) => tool.name === "codex.git_diff");
   const contextTool = tools.tools.find((tool) => tool.name === "codex.project_context");
+
   assert.equal(commandTool?.annotations?.destructiveHint, true);
   assert.equal(commandStartTool?.annotations?.destructiveHint, true);
   assert.equal(commandPollTool?.annotations?.readOnlyHint, true);
   assert.equal(commandWriteTool?.annotations?.destructiveHint, true);
   assert.equal(commandTerminateTool?.annotations?.destructiveHint, true);
   assert.equal(workspaceTool?.annotations?.readOnlyHint, true);
+  assert.equal(undoTool?.annotations?.destructiveHint, true);
+  assert.equal(redoTool?.annotations?.destructiveHint, true);
   assert.equal(searchTool?.annotations?.readOnlyHint, true);
   assert.equal(statusTool?.annotations?.readOnlyHint, true);
   assert.equal(diffTool?.annotations?.readOnlyHint, true);
@@ -74,7 +85,9 @@ async function assertPublicSurface(client) {
   assert.match(commandPollTool?.description ?? "", /incremental/i);
   assert.match(commandWriteTool?.description ?? "", /stdin/i);
   assert.match(commandTerminateTool?.description ?? "", /terminate/i);
-  assert.match(workspaceTool?.description ?? "", /never creates or widens Codex trust/i);
+  assert.match(workspaceTool?.description ?? "", /never creates|never.*trust|does not.*trust/i);
+  assert.match(undoTool?.description ?? "", /hash|SHA/i);
+  assert.match(redoTool?.description ?? "", /hash|SHA/i);
   assert.match(patchTool?.description ?? "", /does not start a Codex model turn/i);
   assert.match(contextTool?.description ?? "", /read-only/i);
 
@@ -119,7 +132,7 @@ try {
   const health = await waitForHttpHealth();
   assert.equal(health.ok, true);
   assert.equal(health.surfaceVersion, PUBLIC_SURFACE_VERSION);
-  assert.equal(health.toolCount, 25);
+  assert.equal(health.toolCount, PUBLIC_TOOL_NAMES.length);
   const httpClient = new Client({ name: "codexless-public-contract-http", version: "0.1.0" });
   const httpTransport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`));
   try { await httpClient.connect(httpTransport); await assertPublicSurface(httpClient); }
