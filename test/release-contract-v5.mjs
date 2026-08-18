@@ -12,6 +12,7 @@ const security = await readFile(path.join(root, "SECURITY.md"), "utf8");
 const installSh = await readFile(path.join(root, "scripts", "install.sh"), "utf8");
 const installPs1 = await readFile(path.join(root, "scripts", "install.ps1"), "utf8");
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+const methodRegistry = JSON.parse(await readFile(path.join(root, "config", "toolbox-method-registry.json"), "utf8"));
 
 assert.equal(PUBLIC_SURFACE_VERSION, "codexless-public-preview-v5");
 assert.equal(new Set(PUBLIC_TOOL_NAMES).size, PUBLIC_TOOL_NAMES.length, "public tool names must be unique");
@@ -20,6 +21,14 @@ assert.ok(PUBLIC_TOOL_NAMES.includes("codex.command_poll"));
 assert.ok(PUBLIC_TOOL_NAMES.includes("codex.edit_undo"));
 assert.ok(PUBLIC_TOOL_NAMES.includes("codex.edit_redo"));
 assert.equal(PUBLIC_TOOL_NAMES.some((name) => name.startsWith("codex.agent_")), false);
+
+assert.equal(methodRegistry.defaultAction, "deny");
+for (const [method, entry] of Object.entries(methodRegistry.remoteAllowlist ?? {})) {
+  assert.equal(entry.classification, "model-free", `${method} must remain model-free`);
+  for (const tool of entry.bridgeTools ?? []) {
+    assert.ok(PUBLIC_TOOL_NAMES.includes(tool), `${method} registry references non-public bridge tool ${tool}`);
+  }
+}
 
 assert.match(workflow, /workflow_dispatch\s*:/);
 assert.doesNotMatch(workflow, /^\s*push\s*:/m, "V5 CI must remain manual-only during stabilization");
@@ -43,6 +52,7 @@ assert.ok(packageJson.files?.includes("docs/plans/codexless-v5.md"), "V5 plan mu
 
 assert.match(installSh, /for entry in[^\n]*\bdocs\b/);
 assert.match(installPs1, /"docs"/);
+assert.match(installPs1, /Join-Path \(Join-Path \$env:LOCALAPPDATA "Codexless"\) "app"/);
 
 assert.match(readme, /codexless-public-preview-v5/);
 assert.match(readme, /27 public tools/);
