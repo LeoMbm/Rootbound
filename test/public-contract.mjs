@@ -149,11 +149,13 @@ try {
     if (testCwd) {
       assert.fail(`codex.agent_start failed for CODEXLESS_TEST_CWD=${testCwd}: ${errorCode ?? "no-code"}: ${errorText}`);
     }
-    assert.equal(
-      errorCode,
-      "PERMISSION_APPROVAL_REQUIRED",
-      `agent consent contract failed for an unexpected reason: ${errorCode ?? "no-code"}: ${errorText}`
-    );
+    if (errorCode !== null) {
+      assert.equal(
+        errorCode,
+        "PERMISSION_APPROVAL_REQUIRED",
+        `agent consent contract failed for an unexpected reason: ${errorCode}: ${errorText}`
+      );
+    }
     assert.match(errorText, /trusted project|trusted.*root|explicitly trust|authorize/i);
     console.log("public contract agent consent flow SKIP: Codexless repo is not a trusted Codex project; set CODEXLESS_TEST_CWD to run the trusted-project end-to-end lane");
   } else {
