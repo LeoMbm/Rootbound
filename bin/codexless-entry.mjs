@@ -10,10 +10,10 @@ const command = args[0] ?? "help";
 
 if (command === "self-test") {
   const forwarded = args.slice(1);
-  const cwdIndex = forwarded.findIndex((value) => value === "--cwd");
-  const hasExplicitCwd = cwdIndex >= 0;
-  const positionals = forwarded.filter((value, index) => !value.startsWith("-") && (index === 0 || forwarded[index - 1] !== "--cwd"));
-  if (!hasExplicitCwd && positionals[0]) forwarded.unshift("--cwd", positionals[0]);
+  if (!forwarded.includes("--cwd") && forwarded[0] && !forwarded[0].startsWith("-")) {
+    const project = forwarded.shift();
+    forwarded.unshift("--cwd", project);
+  }
   const child = spawn(process.execPath, [path.join(binDir, "..", "scripts", "self-test.mjs"), ...forwarded], {
     cwd: process.cwd(),
     env: process.env,
