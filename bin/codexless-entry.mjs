@@ -8,7 +8,9 @@ const binDir = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
 
-if (command === "self-test") {
+if (command === "help" || command === "--help" || command === "-h") {
+  printHelp();
+} else if (command === "self-test") {
   const forwarded = args.slice(1);
   if (!forwarded.includes("--cwd") && forwarded[0] && !forwarded[0].startsWith("-")) {
     const project = forwarded.shift();
@@ -36,4 +38,8 @@ async function runScript(scriptName, forwarded) {
     child.once("error", reject);
     child.once("close", (code) => resolve(code ?? 1));
   });
+}
+
+function printHelp() {
+  process.stdout.write(`Codexless V5\n\nUsage:\n  codexless connect [path] [--yes] [--no-start] [--json]\n  codexless start [path] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless self-test [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless diagnostic [--output file] [--json]\n  codexless tunnel configure --argv-json '<json argv>'\n  codexless tunnel configure -- <argv...>\n  codexless tunnel show [--json]\n  codexless tunnel clear [--json]\n  codexless stop [--force] [--json]\n  codexless upgrade --from <release-directory> [--json]\n  codexless version\n\nTrust is exact-root and explicit. Persistent tunnel config refuses literal credentials; use {env:VARIABLE} placeholders for secrets. No Codex model is started by self-test or the public model-free tool surface.\n`);
 }
