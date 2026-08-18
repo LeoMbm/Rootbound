@@ -43,6 +43,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
 
   let publicContext = null;
   let stateStore = null;
+  let commandManager = null;
   let closed = false;
 
   try {
@@ -63,10 +64,12 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     stateStore = await openStateStore({ paths: resolveCodexlessPaths({ env }) });
 
     const continuityState = createPersistentContinuityState({ store: stateStore });
-    const commandManager = createCommandManager({
+    commandManager = createCommandManager({
       store: stateStore,
       continuityState,
+      authorityExecutor,
       codexBin,
+      configOverrides,
       packageRoot: path.resolve(import.meta.dirname, ".."),
       env,
     });
@@ -84,8 +87,11 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     async function close() {
       if (closed) return;
       closed = true;
-      try { await publicContext?.close(); }
-      finally { stateStore?.close(); }
+      try { await commandManager?.close(); }
+      finally {
+        try { await publicContext?.close(); }
+        finally { stateStore?.close(); }
+      }
     }
 
     return {
@@ -99,6 +105,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       modelLane: "chatgpt-only",
     };
   } catch (error) {
+    await commandManager?.close().catch(() => {});
     await publicContext?.close().catch(() => {});
     try { stateStore?.close(); } catch {}
     throw error;
