@@ -3,7 +3,7 @@
   "version": "0.1.0-preview.0",
   "private": true,
   "license": "Apache-2.0",
-  "description": "Windows and Apple Silicon macOS Technical Preview: let ChatGPT use accepted Codex-backed local capabilities and escalate to Codex only when needed.",
+  "description": "Windows and Apple Silicon macOS Technical Preview: let ChatGPT do local coding work through verified model-free Codex App Server primitives.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/liyana31811/Codexless.git"
@@ -20,11 +20,12 @@
     "start:stdio": "node scripts/launch.mjs stdio",
     "start:http": "node scripts/launch.mjs http",
     "doctor": "node scripts/doctor.mjs",
-    "test:contract": "node test/thread-history-tools.mjs && node test/public-command-policy.mjs && node test/public-contract.mjs",
+    "test:contract": "node test/thread-history-tools.mjs && node test/repo-tools.mjs && node test/public-command-policy.mjs && node test/public-contract.mjs",
     "test:consent": "node test/metered-consent.mjs && node test/agent-consent-card.mjs",
     "test:browser-reader": "node test/browser-reader-lifecycle.mjs",
     "test:history": "node test/thread-history-tools.mjs",
-    "test": "node test/metered-consent.mjs && node test/agent-consent-card.mjs && node test/public-command-policy.mjs && node test/browser-reader-lifecycle.mjs && node test/thread-history-tools.mjs && node test/public-contract.mjs"
+    "test:repo-tools": "node test/repo-tools.mjs",
+    "test": "node test/metered-consent.mjs && node test/agent-consent-card.mjs && node test/public-command-policy.mjs && node test/browser-reader-lifecycle.mjs && node test/thread-history-tools.mjs && node test/repo-tools.mjs && node test/public-contract.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/node": "2.0.0",
