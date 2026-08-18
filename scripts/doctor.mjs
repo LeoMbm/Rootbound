@@ -34,12 +34,12 @@ const forbiddenModelTools = PUBLIC_TOOL_NAMES.filter((name) =>
   name === "codex.model_list" ||
   name.startsWith("codex.agent_")
 );
-const expectedSurface = PUBLIC_SURFACE_VERSION === "codexless-public-preview-v5" && PUBLIC_TOOL_NAMES.length === 24;
+const expectedSurface = PUBLIC_SURFACE_VERSION === "codexless-public-preview-v5" && PUBLIC_TOOL_NAMES.length === 25;
 record(
   "public-surface",
   expectedSurface && forbiddenModelTools.length === 0,
   `${PUBLIC_SURFACE_VERSION}; ${PUBLIC_TOOL_NAMES.length} tools; modelLane=chatgpt-only`,
-  forbiddenModelTools.length ? `Forbidden Codex model tools exposed: ${forbiddenModelTools.join(", ")}` : "Expected Codexless public preview v5 with 24 tools"
+  forbiddenModelTools.length ? `Forbidden Codex model tools exposed: ${forbiddenModelTools.join(", ")}` : "Expected Codexless public preview v5 with 25 tools"
 );
 record(
   "surface-compatibility",
