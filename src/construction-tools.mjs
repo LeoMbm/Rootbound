@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { createEditMutationJournal } from "./edit-mutations.mjs";
 import { decodeCursor, encodeCursor } from "./pagination.mjs";
 import { projectRefForRoot } from "./project-registry.mjs";
+import { isSensitivePath } from "./secret-boundaries.mjs";
 import { typedToolResponse } from "./tool-errors.mjs";
 
 const require = createRequire(import.meta.url);
@@ -62,7 +63,7 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
     "codex.precise_edit",
     {
       title: "Guarded Precise Project Edit",
-      description: "Apply one guarded exact-text edit through official Codex command/exec under the resolved write permission profile. Codexless canonicalizes the path, validates SHA-256 and exact occurrence count, revalidates both inside the sandbox immediately before writing, then verifies the resulting hash. Successful V5 edits return a mutationId that can be safely undone/redone while hashes still match. ChatGPT supplies the edit; no Codex model turn is started.",
+      description: "Apply one guarded exact-text edit through official Codex command/exec under the resolved write permission profile. Successful non-sensitive edits return a mutationId that can be safely undone/redone while hashes still match. Sensitive paths such as .env/private keys are never snapshot into the undo journal. No Codex model turn is started.",
       inputSchema: z.object({
         path: z.string().min(1).max(32_768),
         expectedText: z.string().min(1).max(MAX_PRECISE_EDIT_CHARS),
@@ -77,7 +78,13 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
     },
     async ({ bindingRef, ...input }) => typedToolResponse(async () => {
       const scoped = bindingRef && continuityState ? continuityState.assertCwd(bindingRef, input.cwd) : null;
-      const result = await preciseEditAuthorized({ authorityExecutor, ...input, cwd: scoped?.targetCwd ?? input.cwd, captureSnapshot: Boolean(mutationJournal && !input.previewOnly) });
+      const sensitive = isSensitivePath(input.path);
+      const result = await preciseEditAuthorized({
+        authorityExecutor,
+        ...input,
+        cwd: scoped?.targetCwd ?? input.cwd,
+        captureSnapshot: Boolean(mutationJournal && !input.previewOnly && !sensitive),
+      });
       const { mutationSnapshot, ...publicResult } = result;
       let mutationId = null;
       if (mutationJournal && mutationSnapshot && publicResult.changed) {
@@ -106,6 +113,7 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
       return {
         ...publicResult,
         ...(mutationId ? { mutationId, undoAvailable: true } : {}),
+        ...(!mutationId && sensitive && !publicResult.previewOnly ? { undoAvailable: false, undoUnavailableReason: "sensitive_path" } : {}),
         ...(bindingRef ? { continuityJournaled: !publicResult.previewOnly } : {}),
       };
     }, { operation: "precise_edit" })
@@ -163,17 +171,7 @@ export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCha
     const allowed = Math.max(0, Math.min(maxCharsPerFile, remaining, text.length - start));
     const returnedText = text.slice(start, start + allowed);
     const nextOffset = start + returnedText.length;
-    files.push({
-      requestedPath,
-      path: target,
-      text: returnedText,
-      chars: text.length,
-      offset: start,
-      returnedChars: returnedText.length,
-      truncated: nextOffset < text.length,
-      byteLength: buffer.length,
-      sha256: fileSha,
-    });
+    files.push({ requestedPath, path: target, text: returnedText, chars: text.length, offset: start, returnedChars: returnedText.length, truncated: nextOffset < text.length, byteLength: buffer.length, sha256: fileSha });
     remaining -= returnedText.length;
 
     if (nextOffset < text.length) {
@@ -186,19 +184,7 @@ export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCha
     }
   }
 
-  return {
-    status: "ok",
-    cwd: authority.effectiveCwd,
-    trustedAncestor: root,
-    permissionProfile: ":read-only",
-    count: files.length,
-    returnedChars: maxTotalChars - remaining,
-    totalCharsLimit: maxTotalChars,
-    files,
-    hasMore: Boolean(nextCursor),
-    nextCursor,
-    modelTurnStarted: false,
-  };
+  return { status: "ok", cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: ":read-only", count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files, hasMore: Boolean(nextCursor), nextCursor, modelTurnStarted: false };
 }
 
 export async function preciseEditAuthorized({ authorityExecutor, path: requestedPath, expectedText, replacementText, expectedOccurrences = 1, expectedSha256, cwd, previewOnly = false, captureSnapshot = false }) {
@@ -220,16 +206,7 @@ export async function preciseEditAuthorized({ authorityExecutor, path: requested
 
   if (!previewOnly) {
     const edit = await authorityExecutor.exec({
-      command: [
-        process.execPath,
-        "-e",
-        PRECISE_EDIT_SCRIPT,
-        target,
-        beforeSha256,
-        String(expectedOccurrences),
-        Buffer.from(expectedText, "utf8").toString("base64"),
-        Buffer.from(replacementText, "utf8").toString("base64"),
-      ],
+      command: [process.execPath, "-e", PRECISE_EDIT_SCRIPT, target, beforeSha256, String(expectedOccurrences), Buffer.from(expectedText, "utf8").toString("base64"), Buffer.from(replacementText, "utf8").toString("base64")],
       cwd: authority.effectiveCwd,
       access: "inherit",
       timeoutMs: 15_000,
@@ -260,18 +237,7 @@ export async function preciseEditAuthorized({ authorityExecutor, path: requested
 }
 
 function publicMutation(row) {
-  return {
-    mutationId: row.mutationId,
-    projectRef: row.projectRef,
-    bindingRef: row.bindingRef,
-    path: row.path,
-    cwd: row.cwd,
-    beforeSha256: row.beforeSha256,
-    afterSha256: row.afterSha256,
-    status: row.status,
-    action: row.action,
-    modelTurnStarted: false,
-  };
+  return { mutationId: row.mutationId, projectRef: row.projectRef, bindingRef: row.bindingRef, path: row.path, cwd: row.cwd, beforeSha256: row.beforeSha256, afterSha256: row.afterSha256, status: row.status, action: row.action, modelTurnStarted: false };
 }
 async function readTextViaSandbox({ authorityExecutor, target, cwd, access }) {
   const result = await authorityExecutor.exec({ command: [process.execPath, "-e", READ_FILE_SCRIPT, target], cwd, access, timeoutMs: 10_000 });
