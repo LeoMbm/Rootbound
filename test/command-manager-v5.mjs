@@ -70,8 +70,8 @@ try {
   assert.equal(finished.chunks.length, 0);
   assert.equal(closeCalls, 1);
 
-  assert.throws(
-    () => manager.start({ command: ["/usr/bin/codex", "--version"], cwd: projectRoot, access: "readOnly", timeoutMs: 10_000 }),
+  await assert.rejects(
+    manager.start({ command: ["/usr/bin/codex", "--version"], cwd: projectRoot, access: "readOnly", timeoutMs: 10_000 }),
     (error) => error?.code === "CODEX_MODEL_LANE_DISABLED"
   );
 } finally {
