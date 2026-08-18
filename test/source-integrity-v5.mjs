@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 const root = path.resolve(import.meta.dirname, "..");
 const scanRoots = ["src", "scripts", "bin", "test"];
@@ -44,7 +43,14 @@ const binEntry = pkg.bin?.codexless;
 assert.equal(typeof binEntry, "string");
 await access(path.join(root, binEntry));
 
-console.log(`source-integrity-v5: ok (${sourceFiles.length} source/test files scanned)`);
+assert.ok(Array.isArray(pkg.files) && pkg.files.length > 0, "package.json#files must be a non-empty array");
+for (const relative of pkg.files) {
+  assert.equal(typeof relative, "string", "package.json#files entries must be strings");
+  assert.equal(/[*!?{}[\]]/.test(relative), false, `release contract uses explicit package paths; glob entry must be reviewed separately: ${relative}`);
+  await access(path.join(root, relative));
+}
+
+console.log(`source-integrity-v5: ok (${sourceFiles.length} source/test files scanned; ${pkg.files.length} package paths verified)`);
 
 async function collect(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
