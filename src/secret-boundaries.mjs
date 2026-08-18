@@ -4,6 +4,9 @@ import { CodexlessToolError } from "./tool-errors.mjs";
 const SECRET_FLAG = /^(?:--?|\/)(?:api[-_]?key|apikey|token|access[-_]?token|refresh[-_]?token|secret|client[-_]?secret|password|passwd|authorization|auth|cookie|private[-_]?key)(?:=(.*))?$/i;
 const SECRET_VALUE = /^(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}$|^gh[pousr]_[A-Za-z0-9_]{20,}$|^github_pat_[A-Za-z0-9_]{20,}$|^xox[baprs]-[A-Za-z0-9-]{10,}$|^[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}$/;
 const AUTH_HEADER = /^(?:authorization\s*:\s*)?(?:bearer|basic)\s+\S+/i;
+const SECRET_ASSIGNMENT = /^(?:api[-_]?key|apikey|token|access[-_]?token|refresh[-_]?token|secret|client[-_]?secret|password|passwd|authorization|auth|cookie|private[-_]?key)=.+$/i;
+const URL_CREDENTIALS = /^https?:\/\/[^/\s:@]+:[^/\s@]+@/i;
+const URL_SECRET_QUERY = /[?&](?:token|key|api_key|apikey|auth|authorization|sig|signature|secret|password)=[^&\s]+/i;
 const SENSITIVE_BASENAMES = new Set([
   ".env", "credentials", "credentials.json", "secrets", "secrets.json", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
 ]);
@@ -19,7 +22,10 @@ export function inspectSensitiveArgv(command) {
       else if (index + 1 < command.length) findings.push({ index: index + 1, kind: "secret-flag-value" });
       continue;
     }
-    if (SECRET_VALUE.test(value) || AUTH_HEADER.test(value)) findings.push({ index, kind: "secret-value" });
+    if (SECRET_ASSIGNMENT.test(value)) findings.push({ index, kind: "secret-assignment" });
+    else if (URL_CREDENTIALS.test(value)) findings.push({ index, kind: "url-credentials" });
+    else if (URL_SECRET_QUERY.test(value)) findings.push({ index, kind: "url-secret-query" });
+    else if (SECRET_VALUE.test(value) || AUTH_HEADER.test(value)) findings.push({ index, kind: "secret-value" });
   }
   return dedupe(findings);
 }
@@ -44,7 +50,7 @@ export function redactArgv(command) {
   const output = command.map((value) => String(value));
   for (const finding of inspectSensitiveArgv(output)) {
     const value = output[finding.index];
-    if (finding.kind === "secret-flag-inline") {
+    if (finding.kind === "secret-flag-inline" || finding.kind === "secret-assignment") {
       const equal = value.indexOf("=");
       output[finding.index] = equal >= 0 ? `${value.slice(0, equal + 1)}<redacted>` : "<redacted>";
     } else output[finding.index] = "<redacted>";
