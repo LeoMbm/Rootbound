@@ -88,6 +88,7 @@ export function redactText(value, { home = os.homedir() } = {}) {
   text = text
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{8,}=*/gi, "Bearer <redacted>")
     .replace(/([?&](?:token|key|api_key|apikey|auth|authorization|sig|signature|secret|password)=)[^&\s"']+/gi, "$1<redacted>")
+    .replace(/\b(token|api[_-]?key|apikey|auth|authorization|secret|password)\s*=\s*[^\s,;"']+/gi, "$1=<redacted>")
     .replace(/\b(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}\b/g, "<redacted-key>");
   return text;
 }
