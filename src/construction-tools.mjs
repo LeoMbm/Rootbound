@@ -3,6 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { createEditMutationJournal } from "./edit-mutations.mjs";
+import { decodeCursor, encodeCursor } from "./pagination.mjs";
 import { projectRefForRoot } from "./project-registry.mjs";
 import { typedToolResponse } from "./tool-errors.mjs";
 
@@ -44,12 +45,13 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
     "codex.read_many",
     {
       title: "Read Multiple Authorized Project Files",
-      description: "Read several UTF-8 text files through official Codex command/exec under the resolved read-only permission profile. Paths are canonicalized and must remain inside the trusted Codex root. The actual file read occurs inside the Codex sandbox; no Codex model turn is started.",
+      description: "Read UTF-8 project files through the authorized Codex sandbox with request-bound pagination. If a page ends inside a file, nextCursor resumes at the exact character offset and refuses to continue if that file changed in between. No Codex model turn is started.",
       inputSchema: z.object({
         paths: z.array(z.string().min(1).max(32_768)).min(1).max(20),
         cwd: z.string().min(1).max(32_768).optional(),
         maxCharsPerFile: z.number().int().min(1_000).max(MAX_PER_FILE_CHARS).default(DEFAULT_PER_FILE_CHARS),
         maxTotalChars: z.number().int().min(1_000).max(MAX_TOTAL_CHARS).default(DEFAULT_TOTAL_CHARS),
+        cursor: z.string().max(2_048).optional(),
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -133,22 +135,70 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
   }
 }
 
-export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCharsPerFile = DEFAULT_PER_FILE_CHARS, maxTotalChars = DEFAULT_TOTAL_CHARS }) {
+export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCharsPerFile = DEFAULT_PER_FILE_CHARS, maxTotalChars = DEFAULT_TOTAL_CHARS, cursor = null }) {
   const authority = await authorityExecutor.resolveAuthority({ cwd, access: "readOnly" });
   const root = await canonicalRoot(authority);
+  const signatureInput = { paths, cwd: authority.effectiveCwd, maxCharsPerFile };
+  const state = decodeCursor(cursor, "read_many", signatureInput) ?? { pathIndex: 0, charOffset: 0, fileSha: null };
+  if (!Number.isInteger(state.pathIndex) || state.pathIndex < 0 || state.pathIndex >= paths.length || !Number.isInteger(state.charOffset) || state.charOffset < 0) {
+    throw paginationError("Pagination cursor contains an invalid file position.", "PAGINATION_CURSOR_INVALID");
+  }
+
   let remaining = maxTotalChars;
   const files = [];
-  for (const requestedPath of paths) {
+  let nextCursor = null;
+  for (let index = state.pathIndex; index < paths.length && remaining > 0; index += 1) {
+    const requestedPath = paths[index];
     const target = await canonicalExistingFile({ requestedPath, cwd: authority.effectiveCwd, root });
     const read = await readTextViaSandbox({ authorityExecutor, target, cwd: authority.effectiveCwd, access: "readOnly" });
     const text = read.text;
-    const allowed = Math.max(0, Math.min(maxCharsPerFile, remaining));
-    const returnedText = text.slice(0, allowed);
     const buffer = Buffer.from(text, "utf8");
-    files.push({ requestedPath, path: target, text: returnedText, chars: text.length, returnedChars: returnedText.length, truncated: returnedText.length < text.length, byteLength: buffer.length, sha256: sha256(buffer) });
+    const fileSha = sha256(buffer);
+    const start = index === state.pathIndex ? state.charOffset : 0;
+    if (index === state.pathIndex && state.fileSha && state.fileSha !== fileSha) {
+      throw paginationError(`Cannot continue read_many because ${target} changed after the previous page.`, "PAGINATION_SOURCE_CHANGED");
+    }
+    if (start > text.length) throw paginationError(`Pagination offset exceeds current file length: ${target}`, "PAGINATION_SOURCE_CHANGED");
+
+    const allowed = Math.max(0, Math.min(maxCharsPerFile, remaining, text.length - start));
+    const returnedText = text.slice(start, start + allowed);
+    const nextOffset = start + returnedText.length;
+    files.push({
+      requestedPath,
+      path: target,
+      text: returnedText,
+      chars: text.length,
+      offset: start,
+      returnedChars: returnedText.length,
+      truncated: nextOffset < text.length,
+      byteLength: buffer.length,
+      sha256: fileSha,
+    });
     remaining -= returnedText.length;
+
+    if (nextOffset < text.length) {
+      nextCursor = encodeCursor("read_many", signatureInput, { pathIndex: index, charOffset: nextOffset, fileSha });
+      break;
+    }
+    if (remaining === 0 && index + 1 < paths.length) {
+      nextCursor = encodeCursor("read_many", signatureInput, { pathIndex: index + 1, charOffset: 0, fileSha: null });
+      break;
+    }
   }
-  return { status: "ok", cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: ":read-only", count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files, modelTurnStarted: false };
+
+  return {
+    status: "ok",
+    cwd: authority.effectiveCwd,
+    trustedAncestor: root,
+    permissionProfile: ":read-only",
+    count: files.length,
+    returnedChars: maxTotalChars - remaining,
+    totalCharsLimit: maxTotalChars,
+    files,
+    hasMore: Boolean(nextCursor),
+    nextCursor,
+    modelTurnStarted: false,
+  };
 }
 
 export async function preciseEditAuthorized({ authorityExecutor, path: requestedPath, expectedText, replacementText, expectedOccurrences = 1, expectedSha256, cwd, previewOnly = false, captureSnapshot = false }) {
@@ -276,4 +326,12 @@ function buildPreview(before, after, needle) {
   const afterIndex = Math.max(0, Math.min(after.length, index));
   const afterEnd = Math.min(after.length, afterIndex + Math.max(needle.length, 1) + radius * 2);
   return { beforeExcerpt: before.slice(beforeStart, beforeEnd), afterExcerpt: after.slice(Math.max(0, afterIndex - radius), afterEnd) };
+}
+function paginationError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  error.category = "state";
+  error.retryable = false;
+  error.nextActions = ["Restart read_many without a cursor to read the current file version."];
+  return error;
 }
