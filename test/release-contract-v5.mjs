@@ -9,6 +9,8 @@ const workflow = await readFile(workflowPath, "utf8");
 const readme = await readFile(path.join(root, "README.md"), "utf8");
 const readmeZh = await readFile(path.join(root, "README.zh-CN.md"), "utf8");
 const security = await readFile(path.join(root, "SECURITY.md"), "utf8");
+const installSh = await readFile(path.join(root, "scripts", "install.sh"), "utf8");
+const installPs1 = await readFile(path.join(root, "scripts", "install.ps1"), "utf8");
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 
 assert.equal(PUBLIC_SURFACE_VERSION, "codexless-public-preview-v5");
@@ -25,6 +27,7 @@ assert.doesNotMatch(workflow, /^\s*pull_request\s*:/m, "V5 CI must remain manual
 assert.match(workflow, /node scripts\/validate-v5-syntax\.mjs/);
 assert.match(workflow, /node scripts\/check-lock-root\.mjs/);
 await access(path.join(root, "scripts", "validate-v5-syntax.mjs"));
+await access(path.join(root, "scripts", "validate-v5.mjs"));
 await access(path.join(root, "scripts", "check-lock-root.mjs"));
 
 assert.equal(packageJson.engines?.node, ">=22.13.0");
@@ -32,8 +35,14 @@ assert.equal(packageJson.bin?.codexless, "bin/codexless-entry.mjs");
 assert.equal(packageJson.repository?.url, "git+https://github.com/LeoMbm/Codexless.git");
 assert.equal(packageJson.homepage, "https://github.com/LeoMbm/Codexless#readme");
 assert.equal(packageJson.bugs?.url, "https://github.com/LeoMbm/Codexless/issues");
+assert.equal(packageJson.scripts?.["check:syntax"], "node scripts/validate-v5-syntax.mjs");
+assert.equal(packageJson.scripts?.["validate:v5"], "node scripts/validate-v5.mjs");
+assert.match(packageJson.scripts?.["validate:release"] ?? "", /check:lock:strict/);
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /release-contract-v5\.mjs/, "test:v5 must include the release contract guard");
 assert.ok(packageJson.files?.includes("docs/plans/codexless-v5.md"), "V5 plan must be packaged because README links to it");
+
+assert.match(installSh, /for entry in[^\n]*\bdocs\b/);
+assert.match(installPs1, /"docs"/);
 
 assert.match(readme, /codexless-public-preview-v5/);
 assert.match(readme, /27 public tools/);
