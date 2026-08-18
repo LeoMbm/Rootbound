@@ -19,9 +19,7 @@ function Invoke-Checked {
     [Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments
   )
   & $Command @Arguments
-  if ($LASTEXITCODE -ne 0) {
-    throw "Command failed ($LASTEXITCODE): $Command $($Arguments -join ' ')"
-  }
+  if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $Command $($Arguments -join ' ')" }
 }
 
 function Read-JsonCommand {
@@ -45,12 +43,16 @@ function Get-RequiredCommand {
   throw "$Label was not found on PATH."
 }
 
-function Assert-Node22 {
+function Assert-NodeV5 {
   param([Parameter(Mandatory=$true)][string]$Node)
   $version = (& $Node -p "process.versions.node").Trim()
   if ($LASTEXITCODE -ne 0 -or -not $version) { throw "Unable to read Node.js version." }
-  $major = [int]($version.Split('.')[0])
-  if ($major -lt 22) { throw "Codexless requires Node.js 22+. Current: v$version" }
+  $parts = $version.Split('.')
+  $major = [int]$parts[0]
+  $minor = [int]$parts[1]
+  if ($major -lt 22 -or ($major -eq 22 -and $minor -lt 13)) {
+    throw "Codexless V5 requires Node.js 22.13+. Current: v$version"
+  }
   return $version
 }
 
@@ -58,8 +60,7 @@ function Copy-ReleaseTree {
   param([Parameter(Mandatory=$true)][string]$From, [Parameter(Mandatory=$true)][string]$To)
   New-Item -ItemType Directory -Force -Path $To | Out-Null
   $entries = @(
-    "src", "config", "scripts", "bin",
-    "package.json",
+    "src", "config", "scripts", "bin", "package.json",
     "README.md", "README.zh-CN.md", "SECURITY.md", "EXPORT_SYNC.md",
     "THIRD_PARTY_NOTICES.md", "LICENSE"
   )
@@ -72,9 +73,7 @@ function Copy-ReleaseTree {
   $shrinkwrap = Join-Path $From "npm-shrinkwrap.json"
   $packageLock = Join-Path $From "package-lock.json"
   $selfDeletingBatchWrapper = Join-Path $To "bin\codexless-uninstall.cmd"
-  if (Test-Path -LiteralPath $selfDeletingBatchWrapper) {
-    Remove-Item -LiteralPath $selfDeletingBatchWrapper -Force
-  }
+  if (Test-Path -LiteralPath $selfDeletingBatchWrapper) { Remove-Item -LiteralPath $selfDeletingBatchWrapper -Force }
 
   if (Test-Path -LiteralPath $shrinkwrap) {
     Copy-Item -LiteralPath $shrinkwrap -Destination (Join-Path $To "npm-shrinkwrap.json") -Force
@@ -92,9 +91,7 @@ function Run-DoctorJson {
   $exit = $LASTEXITCODE
   if (-not $text) { throw "Codexless doctor returned no output." }
   $parsed = $text | ConvertFrom-Json
-  if ($exit -ne 0 -or $parsed.status -eq "error") {
-    throw "Codexless doctor failed in $Root.`n$text"
-  }
+  if ($exit -ne 0 -or $parsed.status -eq "error") { throw "Codexless doctor failed in $Root.`n$text" }
   return $parsed
 }
 
@@ -103,12 +100,10 @@ try {
 
   $node = Get-RequiredCommand -Names @("node.exe", "node") -Label "Node.js"
   $npm = Get-RequiredCommand -Names @("npm.cmd", "npm") -Label "npm"
-  $nodeVersion = Assert-Node22 -Node $node
+  $nodeVersion = Assert-NodeV5 -Node $node
 
   $codexResolution = Read-JsonCommand $node (Join-Path $SourceRoot "scripts\resolve-codex.mjs")
-  if (-not $codexResolution.ok -or -not $codexResolution.path) {
-    throw ("Codex prerequisite check failed: " + $codexResolution.error)
-  }
+  if (-not $codexResolution.ok -or -not $codexResolution.path) { throw ("Codex prerequisite check failed: " + $codexResolution.error) }
   $env:CODEX_BIN = [string]$codexResolution.path
 
   New-Item -ItemType Directory -Force -Path $ParentDir | Out-Null
@@ -118,19 +113,13 @@ try {
   try {
     Invoke-Checked $npm ci --omit=dev --ignore-scripts --no-audit --no-fund
     $stageDoctor = Run-DoctorJson -Root $StageDir -Node $node
-  } finally {
-    Pop-Location
-  }
+  } finally { Pop-Location }
 
   if (Test-Path -LiteralPath $InstallDir) {
     $installedPackage = Join-Path $InstallDir "package.json"
-    if (-not (Test-Path -LiteralPath $installedPackage)) {
-      throw "Refusing to replace a non-Codexless-looking directory: $InstallDir"
-    }
+    if (-not (Test-Path -LiteralPath $installedPackage)) { throw "Refusing to replace a non-Codexless-looking directory: $InstallDir" }
     $existingName = (Get-Content -LiteralPath $installedPackage -Raw | ConvertFrom-Json).name
-    if ($existingName -ne "codexless") {
-      throw "Refusing to replace directory whose package name is not codexless: $InstallDir"
-    }
+    if ($existingName -ne "codexless") { throw "Refusing to replace directory whose package name is not codexless: $InstallDir" }
     $BackupDir = Join-Path $ParentDir ("Codexless-backup-" + [guid]::NewGuid().ToString("N"))
     Move-Item -LiteralPath $InstallDir -Destination $BackupDir
   }
@@ -167,6 +156,7 @@ try {
     codexResolutionSource = $codexResolution.source
     doctorStatus = $installedDoctor.status
     commands = [ordered]@{
+      codexless = (Join-Path $InstallDir "bin\codexless.cmd")
       doctor = (Join-Path $InstallDir "bin\codexless-doctor.cmd")
       http = (Join-Path $InstallDir "bin\codexless-http.cmd")
       stdio = (Join-Path $InstallDir "bin\codexless-stdio.cmd")
@@ -182,8 +172,9 @@ try {
   else {
     Write-Host "Codexless installed: $($package.version)"
     Write-Host "Location: $InstallDir"
-    Write-Host "Doctor: $($result.commands.doctor)"
-    Write-Host "HTTP:   $($result.commands.http)"
+    Write-Host "CLI:      $($result.commands.codexless)"
+    Write-Host "Doctor:   $($result.commands.doctor)"
+    Write-Host "HTTP:     $($result.commands.http)"
     Write-Host "No PATH, service, Browser, or Tunnel settings were changed."
   }
 } catch {
@@ -193,8 +184,6 @@ try {
   }
   if ($Json) {
     [ordered]@{ ok = $false; action = "install-failed"; error = $_.Exception.Message } | ConvertTo-Json -Depth 4
-  } else {
-    Write-Error $_.Exception.Message
-  }
+  } else { Write-Error $_.Exception.Message }
   exit 1
 }
