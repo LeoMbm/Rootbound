@@ -5,8 +5,8 @@ import process from "node:process";
 const root = path.resolve(import.meta.dirname, "..");
 const checks = [
   { label: "lock metadata", command: process.execPath, args: [path.join(root, "scripts", "check-lock-root.mjs")] },
-  { label: "V5 tests", command: npmCommand(), args: ["run", "test:v5"] },
   { label: "syntax", command: process.execPath, args: [path.join(root, "scripts", "validate-v5-syntax.mjs")] },
+  { label: "V5 tests", command: npmCommand(), args: ["run", "test:v5"] },
 ];
 
 const results = [];
