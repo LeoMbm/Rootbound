@@ -51,6 +51,7 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ bindingRef, ...input }) => structured(async () => {
+      if (bindingRef && continuityState) continuityState.resolve(bindingRef);
       const result = await preciseEditAuthorized({ authorityExecutor, ...input });
       if (bindingRef && continuityState && !result.previewOnly) {
         continuityState.record(bindingRef, {
