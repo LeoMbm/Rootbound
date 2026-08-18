@@ -1,12 +1,6 @@
-import os from "node:os";
-import path from "node:path";
-import { createAgentPreviewState } from "./agent-tools.mjs";
-import { CodexAgentExecutor } from "./codex-agent-executor.mjs";
 import { ACCEPTED_CODEX_VERSIONS, CodexAuthorityExecutor } from "./codex-authority-executor.mjs";
 import { CodexBrowserReaderExecutor } from "./browser-reader-executor.mjs";
 import { resolveCodexExecutable } from "./codex-bin.mjs";
-import { readCodexQuotaSnapshot } from "./codex-quota-snapshot.mjs";
-import { createPreviewTelemetryClient } from "./codex-preview-account-preflight.mjs";
 import { createContinuityState } from "./continuity-state.mjs";
 import { readJsonFile } from "./json-file.mjs";
 import { CodexPublicContextExecutor } from "./public-context-executor.mjs";
@@ -43,18 +37,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     throw new Error("CODEXLESS_CONFIG_OVERRIDES_FILE must contain { overrides: [\"key=value\", ...] }");
   }
 
-  const meteredConsentMode = envString(env, "CODEXLESS_AGENT_METERED_CONSENT", "always");
-  if (!["off", "always"].includes(meteredConsentMode)) {
-    throw new Error("CODEXLESS_AGENT_METERED_CONSENT must be off or always");
-  }
-  const agentTaskStateFile = envString(
-    env,
-    "CODEXLESS_AGENT_TASK_STATE_FILE",
-    path.join(os.homedir(), ".config", "codexless", "agent-task-cards.json")
-  );
-
   let publicContext = null;
-  let agentExecutor = null;
   let closed = false;
 
   try {
@@ -65,7 +48,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       configOverrides,
       maxTimeoutMs: 30_000,
       watchdogGraceMs: 5_000,
-      outputBytesCap: 32_768,
+      outputBytesCap: 64_000,
       acceptedCodexVersions,
     });
     const authorityValidation = await authorityExecutor.validate();
@@ -73,59 +56,21 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     publicContext = new CodexPublicContextExecutor({ codexBin, defaultCwd, configOverrides });
     await publicContext.start();
 
-    const resourceSnapshotProvider = async () => {
-      const telemetry = createPreviewTelemetryClient({
-        codexBin,
-        defaultCwd,
-        configOverrides,
-        stderrHandler: () => {},
-      });
-      try {
-        await telemetry.start();
-        return await readCodexQuotaSnapshot({ client: telemetry });
-      } finally {
-        await telemetry.close().catch(() => {});
-      }
-    };
-
-    agentExecutor = new CodexAgentExecutor({
-      codexBin,
-      defaultCwd,
-      configOverrides,
-      requestTimeoutMs: 30_000,
-      resourceSnapshotProvider,
-    });
-    await agentExecutor.open();
-
-    const agentPreviewState = createAgentPreviewState({
-      meteredConsentMode,
-      meteredQuotaProvider: resourceSnapshotProvider,
-      taskStateFile: agentTaskStateFile,
-    });
     const continuityState = createContinuityState();
-
     const browserReader = new CodexBrowserReaderExecutor({ context: publicContext, defaultCwd });
     const createServer = createPublicServerFactory({
       executor: authorityExecutor,
       authorityExecutor,
       publicContext,
       browserReader,
-      agentExecutor,
       continuityState,
-      meteredConsentMode,
-      meteredQuotaProvider: resourceSnapshotProvider,
-      agentPreviewState,
       maxConcurrent: 1,
     });
 
     async function close() {
       if (closed) return;
       closed = true;
-      try {
-        await agentExecutor?.close();
-      } finally {
-        await publicContext?.close();
-      }
+      await publicContext?.close();
     }
 
     return {
@@ -135,15 +80,11 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       surfaceVersion: PUBLIC_SURFACE_VERSION,
       toolNames: PUBLIC_TOOL_NAMES,
       defaultCwd,
-      meteredConsentMode,
       authorityValidation,
+      modelLane: "chatgpt-only",
     };
   } catch (error) {
-    try {
-      await agentExecutor?.close();
-    } finally {
-      await publicContext?.close();
-    }
+    await publicContext?.close().catch(() => {});
     throw error;
   }
 }
