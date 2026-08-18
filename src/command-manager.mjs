@@ -4,6 +4,7 @@ import path from "node:path";
 import { assertNoNestedCodexInvocation } from "./public-command-policy.mjs";
 import { projectRefForRoot } from "./project-registry.mjs";
 import { isProcessAlive } from "./runtime-state.mjs";
+import { assertDurableCommandHasNoSecrets } from "./secret-boundaries.mjs";
 import { openStreamingCommandSession } from "./streaming-command-session.mjs";
 
 const ACTIVE = new Set(["starting", "running", "stopping"]);
@@ -99,6 +100,7 @@ export function createCommandManager({
       if (!["inherit", "readOnly"].includes(access)) throw new Error("access must be inherit or readOnly");
       if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 30 * 60_000) throw new Error("timeoutMs must be between 1000 and 1800000");
       assertNoNestedCodexInvocation(command, { codexBin });
+      assertDurableCommandHasNoSecrets(command);
       const scope = scopeFor({ bindingRef, cwd });
       const at = now();
       const commandId = `command_${randomUUID()}`;
@@ -153,13 +155,7 @@ export function createCommandManager({
       const row = store.getCommand(commandId);
       if (!row) throw new Error(`unknown commandId: ${commandId}`);
       const command = reconcile(row);
-      const chunks = store.listCommandOutputAfter(commandId, cursor, limit).map((chunk) => ({
-        cursor: chunk.cursor,
-        stream: chunk.stream,
-        text: chunk.data.toString("utf8"),
-        bytes: chunk.data.length,
-        at: chunk.at,
-      }));
+      const chunks = store.listCommandOutputAfter(commandId, cursor, limit).map((chunk) => ({ cursor: chunk.cursor, stream: chunk.stream, text: chunk.data.toString("utf8"), bytes: chunk.data.length, at: chunk.at }));
       return {
         commandId,
         status: command.status,
@@ -176,11 +172,7 @@ export function createCommandManager({
     },
 
     async write(commandId, { data = "", closeStdin = false } = {}) {
-      if (platform === "win32") throw typedError(
-        "COMMAND_STDIN_UNSUPPORTED",
-        "command_write is not supported by the accepted Codex Windows streaming implementation.",
-        ["Run the command non-interactively on Windows.", "Use macOS for stdin streaming until upstream Windows support lands."]
-      );
+      if (platform === "win32") throw typedError("COMMAND_STDIN_UNSUPPORTED", "command_write is not supported by the accepted Codex Windows streaming implementation.", ["Run the command non-interactively on Windows.", "Use macOS for stdin streaming until upstream Windows support lands."]);
       const session = sessions.get(commandId);
       if (!session) throw typedError("COMMAND_SESSION_NOT_ACTIVE", `No active streaming session for ${commandId}`, ["Poll the command status; if interrupted, start it again."]);
       const payload = Buffer.from(String(data), "utf8");
