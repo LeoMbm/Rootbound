@@ -7,6 +7,8 @@ const state = createContinuityState({ now: (() => { let n = 1_000; return () => 
 const bound = state.bind({ threadId: "thr_123", cwd: "/project", threadPreview: "Fix matcher" });
 assert.match(bound.bindingRef, /^binding_/);
 assert.equal(bound.pendingJournalEntries, 0);
+assert.equal(state.assertCwd(bound.bindingRef, "src").targetCwd, "/project/src");
+assert.throws(() => state.assertCwd(bound.bindingRef, "/other-project"), /scoped to/i);
 
 state.record(bound.bindingRef, { kind: "command", label: "npm test", cwd: "/project", status: "ok", exitCode: 0 });
 state.record(bound.bindingRef, { kind: "edit", path: "/project/src/index.js", cwd: "/project", status: "applied", changed: true });
@@ -33,35 +35,15 @@ assert.equal(state.unbind(bound.bindingRef).status, "unbound");
 assert.throws(() => state.status(bound.bindingRef), /unknown or expired/i);
 
 const sanitized = sanitizeHistoryPayload({
-  thread: {
-    id: "thr_123",
-    cwd: "/project",
-    path: "/secret/codex/rollout.jsonl",
-  },
+  thread: { id: "thr_123", cwd: "/project", path: "/secret/codex/rollout.jsonl" },
   data: [
-    {
-      id: "reason_1",
-      type: "reasoning",
-      summary: ["Public summary"],
-      content: ["private chain of thought"],
-      rawContent: "private raw reasoning",
-      encryptedContent: "ciphertext",
-    },
-    {
-      id: "file_1",
-      type: "fileChange",
-      path: "src/index.js",
-      changes: [{ path: "src/index.js", kind: "update" }],
-    },
+    { id: "reason_1", type: "reasoning", summary: ["Public summary"], content: ["private chain of thought"], rawContent: "private raw reasoning", encryptedContent: "ciphertext" },
+    { id: "file_1", type: "fileChange", path: "src/index.js", changes: [{ path: "src/index.js", kind: "update" }] },
   ],
 });
 
 assert.equal(Object.hasOwn(sanitized.thread, "path"), false, "rollout storage path must be redacted");
-assert.deepEqual(sanitized.data[0], {
-  id: "reason_1",
-  type: "reasoning",
-  summary: ["Public summary"],
-});
+assert.deepEqual(sanitized.data[0], { id: "reason_1", type: "reasoning", summary: ["Public summary"] });
 assert.equal(sanitized.data[1].path, "src/index.js", "ordinary project file paths must remain visible");
 assert.equal(sanitized.data[1].changes[0].path, "src/index.js");
 
