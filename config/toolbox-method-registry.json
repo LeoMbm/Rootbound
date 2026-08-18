@@ -10,9 +10,7 @@
       "bridgeTools": [
         "codex.command_exec",
         "codex.command_start",
-        "codex.command_status",
-        "codex.command_output",
-        "codex.command_stop",
+        "codex.command_poll",
         "codex.repo_search",
         "codex.read_many",
         "codex.apply_patch",
@@ -22,8 +20,22 @@
       ],
       "evidence": [
         "Codex 0.148.0-alpha.15 App Server documentation describes command/exec as running one command without starting a thread/turn.",
-        "The exact alpha.15 upstream test suite covers buffered execution, permissionProfile selection, apply_patch execution, project-root permission enforcement, and command termination.",
-        "Codexless runtime rejects any model-turn/token-usage notification observed during command/exec authority/execution paths."
+        "The accepted App Server implementation supports processId plus streamed stdout/stderr deltas on the same connection.",
+        "Codexless rejects model-turn/token-usage notifications observed during model-free command execution."
+      ]
+    },
+    "command/exec/write": {
+      "classification": "model-free",
+      "bridgeTools": ["codex.command_write"],
+      "evidence": [
+        "The accepted App Server command streaming contract writes stdin to an existing processId and does not start a model turn."
+      ]
+    },
+    "command/exec/terminate": {
+      "classification": "model-free",
+      "bridgeTools": ["codex.command_terminate"],
+      "evidence": [
+        "The accepted App Server command streaming contract terminates an existing processId and does not start a model turn."
       ]
     }
   },
