@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { createEditMutationJournal } from "./edit-mutations.mjs";
+import { projectRefForRoot } from "./project-registry.mjs";
+import { typedToolResponse } from "./tool-errors.mjs";
 
 const require = createRequire(import.meta.url);
 const z = require("zod/v4");
@@ -12,6 +15,7 @@ const DEFAULT_TOTAL_CHARS = 200_000;
 const MAX_TOTAL_CHARS = 500_000;
 const MAX_PRECISE_EDIT_CHARS = 64_000;
 const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
+const mutationIdSchema = z.string().regex(/^mutation_[0-9a-f-]{36}$/i);
 const READ_FILE_SCRIPT = "const fs=require('node:fs');process.stdout.write(fs.readFileSync(process.argv[1]));";
 const PRECISE_EDIT_SCRIPT = `
 const fs=require('node:fs');
@@ -32,8 +36,9 @@ const next=text.split(oldText).join(newText);
 fs.writeFileSync(p,next,'utf8');
 `;
 
-export function registerConstructionTools(server, { authorityExecutor, continuityState = null }) {
+export function registerConstructionTools(server, { authorityExecutor, continuityState = null, stateStore = null }) {
   if (!authorityExecutor) return;
+  const mutationJournal = stateStore ? createEditMutationJournal({ store: stateStore, authorityExecutor }) : null;
 
   server.registerTool(
     "codex.read_many",
@@ -48,14 +53,14 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async (input) => structured(() => readManyAuthorized({ authorityExecutor, ...input }))
+    async (input) => typedToolResponse(() => readManyAuthorized({ authorityExecutor, ...input }), { operation: "read_many" })
   );
 
   server.registerTool(
     "codex.precise_edit",
     {
       title: "Guarded Precise Project Edit",
-      description: "Apply one guarded exact-text edit through official Codex command/exec under the resolved write permission profile. Codexless canonicalizes the path, validates SHA-256 and exact occurrence count, revalidates both inside the sandbox immediately before writing, then verifies the resulting hash. ChatGPT supplies the edit; no Codex model turn is started.",
+      description: "Apply one guarded exact-text edit through official Codex command/exec under the resolved write permission profile. Codexless canonicalizes the path, validates SHA-256 and exact occurrence count, revalidates both inside the sandbox immediately before writing, then verifies the resulting hash. Successful V5 edits return a mutationId that can be safely undone/redone while hashes still match. ChatGPT supplies the edit; no Codex model turn is started.",
       inputSchema: z.object({
         path: z.string().min(1).max(32_768),
         expectedText: z.string().min(1).max(MAX_PRECISE_EDIT_CHARS),
@@ -68,15 +73,64 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ bindingRef, ...input }) => structured(async () => {
+    async ({ bindingRef, ...input }) => typedToolResponse(async () => {
       const scoped = bindingRef && continuityState ? continuityState.assertCwd(bindingRef, input.cwd) : null;
-      const result = await preciseEditAuthorized({ authorityExecutor, ...input, cwd: scoped?.targetCwd ?? input.cwd });
-      if (bindingRef && continuityState && !result.previewOnly) {
-        continuityState.record(bindingRef, { kind: "edit", path: result.path, cwd: result.cwd, status: "applied", changed: result.changed, previewOnly: false });
+      const result = await preciseEditAuthorized({ authorityExecutor, ...input, cwd: scoped?.targetCwd ?? input.cwd, captureSnapshot: Boolean(mutationJournal && !input.previewOnly) });
+      const { mutationSnapshot, ...publicResult } = result;
+      let mutationId = null;
+      if (mutationJournal && mutationSnapshot && publicResult.changed) {
+        const root = publicResult.cwd;
+        let project = stateStore.getProjectByRoot(root);
+        if (!project) {
+          const at = Date.now();
+          project = stateStore.upsertProject({ projectRef: projectRefForRoot(root), root, gitRoot: null, name: path.basename(root), trusted: true, createdAt: at, updatedAt: at, lastConnectedAt: at });
+        }
+        const mutation = mutationJournal.record({
+          projectRef: project.projectRef,
+          bindingRef,
+          cwd: publicResult.cwd,
+          path: publicResult.path,
+          beforeSha256: publicResult.beforeSha256,
+          afterSha256: publicResult.afterSha256,
+          beforeText: mutationSnapshot.beforeText,
+          afterText: mutationSnapshot.afterText,
+        });
+        mutationId = mutation.mutationId;
+        stateStore.recordEvent({ projectRef: project.projectRef, bindingRef, kind: "edit.recorded", payload: { mutationId, path: publicResult.path }, createdAt: Date.now() });
       }
-      return bindingRef ? { ...result, continuityJournaled: !result.previewOnly } : result;
-    })
+      if (bindingRef && continuityState && !publicResult.previewOnly) {
+        continuityState.record(bindingRef, { kind: "edit", path: publicResult.path, cwd: publicResult.cwd, status: "applied", changed: publicResult.changed, previewOnly: false });
+      }
+      return {
+        ...publicResult,
+        ...(mutationId ? { mutationId, undoAvailable: true } : {}),
+        ...(bindingRef ? { continuityJournaled: !publicResult.previewOnly } : {}),
+      };
+    }, { operation: "precise_edit" })
   );
+
+  if (mutationJournal) {
+    server.registerTool(
+      "codex.edit_undo",
+      {
+        title: "Undo Guarded Precise Edit",
+        description: "Undo one recorded precise_edit by mutationId. Codexless verifies the current file SHA still equals the recorded after-hash before restoring the exact previous UTF-8 content through the authorized sandbox. Refuses on conflicts; does not use git reset or start a model turn.",
+        inputSchema: z.object({ mutationId: mutationIdSchema }).strict(),
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      },
+      async ({ mutationId }) => typedToolResponse(async () => publicMutation(await mutationJournal.undo(mutationId)), { operation: "edit_undo" })
+    );
+    server.registerTool(
+      "codex.edit_redo",
+      {
+        title: "Redo Guarded Precise Edit",
+        description: "Redo one previously undone precise_edit by mutationId. Codexless verifies the current file SHA still equals the recorded before-hash before restoring the exact after-content through the authorized sandbox.",
+        inputSchema: z.object({ mutationId: mutationIdSchema }).strict(),
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      },
+      async ({ mutationId }) => typedToolResponse(async () => publicMutation(await mutationJournal.redo(mutationId)), { operation: "edit_redo" })
+    );
+  }
 }
 
 export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCharsPerFile = DEFAULT_PER_FILE_CHARS, maxTotalChars = DEFAULT_TOTAL_CHARS }) {
@@ -97,7 +151,7 @@ export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCha
   return { status: "ok", cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: ":read-only", count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files, modelTurnStarted: false };
 }
 
-export async function preciseEditAuthorized({ authorityExecutor, path: requestedPath, expectedText, replacementText, expectedOccurrences = 1, expectedSha256, cwd, previewOnly = false }) {
+export async function preciseEditAuthorized({ authorityExecutor, path: requestedPath, expectedText, replacementText, expectedOccurrences = 1, expectedSha256, cwd, previewOnly = false, captureSnapshot = false }) {
   const authority = await authorityExecutor.resolveAuthority({ cwd, access: "inherit" });
   const root = await canonicalRoot(authority);
   const target = await canonicalExistingFile({ requestedPath, cwd: authority.effectiveCwd, root });
@@ -136,16 +190,45 @@ export async function preciseEditAuthorized({ authorityExecutor, path: requested
     if (writtenSha256 !== afterSha256) throw new Error("precise edit verification failed: written file hash does not match intended output");
   }
 
-  return { status: previewOnly ? "preview" : "applied", path: target, cwd: authority.effectiveCwd, trustedAncestor: root, permissionProfile: authority.permissionProfile, occurrenceCount, beforeSha256, afterSha256, beforeBytes: initialBuffer.length, afterBytes: afterBuffer.length, changed: beforeSha256 !== afterSha256, previewOnly, preview, modelTurnStarted: false };
+  return {
+    status: previewOnly ? "preview" : "applied",
+    path: target,
+    cwd: authority.effectiveCwd,
+    trustedAncestor: root,
+    permissionProfile: authority.permissionProfile,
+    occurrenceCount,
+    beforeSha256,
+    afterSha256,
+    beforeBytes: initialBuffer.length,
+    afterBytes: afterBuffer.length,
+    changed: beforeSha256 !== afterSha256,
+    previewOnly,
+    preview,
+    modelTurnStarted: false,
+    ...(captureSnapshot && !previewOnly ? { mutationSnapshot: { beforeText: initial.text, afterText: nextText } } : {}),
+  };
 }
 
+function publicMutation(row) {
+  return {
+    mutationId: row.mutationId,
+    projectRef: row.projectRef,
+    bindingRef: row.bindingRef,
+    path: row.path,
+    cwd: row.cwd,
+    beforeSha256: row.beforeSha256,
+    afterSha256: row.afterSha256,
+    status: row.status,
+    action: row.action,
+    modelTurnStarted: false,
+  };
+}
 async function readTextViaSandbox({ authorityExecutor, target, cwd, access }) {
   const result = await authorityExecutor.exec({ command: [process.execPath, "-e", READ_FILE_SCRIPT, target], cwd, access, timeoutMs: 10_000 });
   if (result.exitCode !== 0) throw new Error(`authorized file read failed: ${result.stderr || `exit ${result.exitCode}`}`);
   if (result.stdoutTruncated) throw new Error(`authorized file read exceeded command output cap: ${target}`);
   return { text: result.stdout };
 }
-
 async function canonicalRoot(authority) {
   const candidate = authority?.trustedAncestor ?? authority?.effectiveCwd;
   if (!candidate) throw new Error("authorized construction tool requires a trusted Codex root");
@@ -193,15 +276,4 @@ function buildPreview(before, after, needle) {
   const afterIndex = Math.max(0, Math.min(after.length, index));
   const afterEnd = Math.min(after.length, afterIndex + Math.max(needle.length, 1) + radius * 2);
   return { beforeExcerpt: before.slice(beforeStart, beforeEnd), afterExcerpt: after.slice(Math.max(0, afterIndex - radius), afterEnd) };
-}
-async function structured(task) {
-  try {
-    const payload = await task();
-    return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: false };
-  } catch (error) {
-    const payload = { error: error instanceof Error ? error.message : String(error) };
-    if (typeof error?.code === "string") payload.errorCode = error.code;
-    if (Array.isArray(error?.nextActions)) payload.nextActions = error.nextActions;
-    return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: true };
-  }
 }
