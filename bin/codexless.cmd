@@ -1,2 +1,2 @@
 @echo off
-node "%~dp0codexless.mjs" %*
+node "%~dp0codexless-entry.mjs" %*
