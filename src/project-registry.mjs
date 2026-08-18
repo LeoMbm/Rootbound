@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -19,7 +20,15 @@ export async function resolveProjectRoot(input = ".") {
 }
 
 export function projectRefForRoot(root) {
-  const normalized = process.platform === "win32" ? path.resolve(root).toLowerCase() : path.resolve(root);
+  const requested = path.resolve(root);
+  let canonical = requested;
+  try {
+    canonical = realpathSync.native(requested);
+  } catch {
+    // Callers normally provide an existing project root. Keep a deterministic
+    // fallback for validation/error paths where the directory may be absent.
+  }
+  const normalized = process.platform === "win32" ? canonical.toLowerCase() : canonical;
   return `project_${createHash("sha256").update(normalized).digest("hex").slice(0, 20)}`;
 }
 
