@@ -10,8 +10,9 @@ const DEFAULT_PER_FILE_CHARS = 50_000;
 const MAX_PER_FILE_CHARS = 200_000;
 const DEFAULT_TOTAL_CHARS = 200_000;
 const MAX_TOTAL_CHARS = 500_000;
+const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
 
-export function registerConstructionTools(server, { authorityExecutor }) {
+export function registerConstructionTools(server, { authorityExecutor, continuityState = null }) {
   if (!authorityExecutor) return;
 
   server.registerTool(
@@ -36,7 +37,7 @@ export function registerConstructionTools(server, { authorityExecutor }) {
     {
       title: "Guarded Precise Project Edit",
       description:
-        "Apply one guarded exact-text edit to an existing UTF-8 project file without shell quoting. Codexless first resolves Codex authority for cwd, requires the file's real path to stay inside that trusted root, optionally checks the current SHA-256, requires expectedText to occur exactly expectedOccurrences times, rechecks the source hash immediately before writing, and then replaces only those exact occurrences. previewOnly validates and previews without writing. Any drift or mismatch fails closed.",
+        "Apply one guarded exact-text edit to an existing UTF-8 project file without shell quoting. Codexless first resolves Codex authority for cwd, requires the file's real path to stay inside that trusted root, optionally checks the current SHA-256, requires expectedText to occur exactly expectedOccurrences times, rechecks the source hash immediately before writing, and then replaces only those exact occurrences. previewOnly validates and previews without writing. If bindingRef is supplied, successful non-preview edits are journaled for the next continuity checkpoint.",
       inputSchema: z.object({
         path: z.string().min(1).max(32_768),
         expectedText: z.string().min(1).max(200_000),
@@ -45,10 +46,24 @@ export function registerConstructionTools(server, { authorityExecutor }) {
         expectedSha256: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
         cwd: z.string().min(1).max(32_768).optional(),
         previewOnly: z.boolean().default(false),
+        bindingRef: bindingRefSchema,
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async (input) => structured(() => preciseEditAuthorized({ authorityExecutor, ...input }))
+    async ({ bindingRef, ...input }) => structured(async () => {
+      const result = await preciseEditAuthorized({ authorityExecutor, ...input });
+      if (bindingRef && continuityState && !result.previewOnly) {
+        continuityState.record(bindingRef, {
+          kind: "edit",
+          path: result.path,
+          cwd: result.cwd,
+          status: "applied",
+          changed: result.changed,
+          previewOnly: false,
+        });
+      }
+      return bindingRef ? { ...result, continuityJournaled: !result.previewOnly } : result;
+    })
   );
 }
 
