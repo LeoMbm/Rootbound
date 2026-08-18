@@ -22,31 +22,7 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm ci
       - run: npm run test:v5
-      - name: Syntax-check V5 runtime
-        shell: bash
-        run: |
-          node --check bin/codexless-entry.mjs
-          node --check bin/codexless.mjs
-          node --check scripts/self-test.mjs
-          node --check scripts/upgrade.mjs
-          node --check scripts/tunnel-config-cli.mjs
-          node --check scripts/launch.mjs
-          node --check scripts/supervisor.mjs
-          node --check scripts/command-worker.mjs
-          node --check src/state-store.mjs
-          node --check src/command-manager.mjs
-          node --check src/streaming-command-session.mjs
-          node --check src/command-tools.mjs
-          node --check src/workspace-tools.mjs
-          node --check src/tool-errors.mjs
-          node --check src/diagnostics.mjs
-          node --check src/edit-mutations.mjs
-          node --check src/pagination.mjs
-          node --check src/continuity-idempotency.mjs
-          node --check src/secret-boundaries.mjs
-          node --check src/tunnel-config.mjs
-          node --check src/repo-tools.mjs
-          node --check src/construction-tools.mjs
-          node --check src/thread-history-tools.mjs
-          node --check src/public-runtime.mjs
-          node --check src/public-server-factory.mjs
+      - name: Syntax-check V5 JavaScript
+        run: node scripts/validate-v5-syntax.mjs
+      - name: Report lock metadata drift
+        run: node scripts/check-lock-root.mjs
