@@ -1,10 +1,9 @@
-export const PUBLIC_SERVER_VERSION = "0.1.0-preview.2";
-export const PUBLIC_SURFACE_VERSION = "codexless-public-preview-v3";
+export const PUBLIC_SERVER_VERSION = "0.1.0-preview.3";
+export const PUBLIC_SURFACE_VERSION = "codexless-public-preview-v4";
 
 export const PUBLIC_TOOL_NAMES = Object.freeze([
   "codex.command_exec",
   "codex.project_context",
-  "codex.account_preflight",
   "codex.skill_list",
   "codex.skill_read",
   "codex.thread_list",
@@ -14,20 +13,13 @@ export const PUBLIC_TOOL_NAMES = Object.freeze([
   "codex.continuity_status",
   "codex.continuity_checkpoint",
   "codex.continuity_unbind",
+  "codex.repo_search",
   "codex.read_many",
+  "codex.apply_patch",
   "codex.precise_edit",
+  "codex.git_status",
+  "codex.git_diff",
   "codex.browser_status",
   "codex.browser_tabs",
   "codex.browser_read",
-  "codex.model_list",
-  "codex.agent_start",
-  "codex.agent_card_render",
-  "codex.agent_card_state",
-  "codex.agent_show",
-  "codex.agent_send",
-  "codex.agent_decline",
-  "codex.agent_commit",
-  "codex.agent_approve",
-  "codex.agent_reject",
-  "codex.agent_cancel",
 ]);
