@@ -31,7 +31,7 @@ export async function saveTunnelConfig({ argv, paths = resolveCodexlessPaths() }
   const temp = `${paths.tunnelConfigPath}.${process.pid}.tmp`;
   await writeFile(temp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
   await rename(temp, paths.tunnelConfigPath);
-  return { configured: true, path: paths.tunnelConfigPath, argv: redactArgv(argv), envPlaceholders: envNames(argv) };
+  return { configured: true, path: paths.tunnelConfigPath, argv: redactTemplateArgv(argv), envPlaceholders: envNames(argv) };
 }
 
 export async function clearTunnelConfig({ paths = resolveCodexlessPaths() } = {}) {
@@ -47,11 +47,11 @@ export async function clearTunnelConfig({ paths = resolveCodexlessPaths() } = {}
 export function tunnelConfigStatus({ paths = resolveCodexlessPaths(), env = process.env } = {}) {
   if (typeof env.CODEXLESS_TUNNEL_ARGV_JSON === "string" && env.CODEXLESS_TUNNEL_ARGV_JSON.trim()) {
     const argv = parseArgvJson(env.CODEXLESS_TUNNEL_ARGV_JSON, "CODEXLESS_TUNNEL_ARGV_JSON");
-    return { configured: true, source: "environment", path: null, argv: redactArgv(argv), envPlaceholders: envNames(argv) };
+    return { configured: true, source: "environment", path: null, argv: redactTemplateArgv(argv), envPlaceholders: envNames(argv) };
   }
   try {
     const payload = readPersistent(paths.tunnelConfigPath);
-    return { configured: true, source: "persistent", path: paths.tunnelConfigPath, argv: redactArgv(payload.argv), envPlaceholders: envNames(payload.argv) };
+    return { configured: true, source: "persistent", path: paths.tunnelConfigPath, argv: redactTemplateArgv(payload.argv), envPlaceholders: envNames(payload.argv) };
   } catch (error) {
     if (error?.code === "ENOENT") return { configured: false, source: null, path: paths.tunnelConfigPath, argv: null, envPlaceholders: [] };
     throw error;
@@ -76,7 +76,7 @@ export function validateTunnelArgvTemplate(argv) {
       "TUNNEL_SECRET_PERSISTENCE_BLOCKED",
       "Tunnel configuration appears to contain a literal credential. Persistent tunnel config stores only non-secret argv; use {env:VARIABLE} for secret arguments.",
       ["Replace the credential argument with a placeholder such as {env:TUNNEL_TOKEN} and export that variable locally."],
-      { redactedArgv: redactArgv(argv), sensitiveArgumentCount: unsafe.length }
+      { redactedArgv: redactTemplateArgv(argv), sensitiveArgumentCount: unsafe.length }
     );
   }
   return argv;
@@ -84,9 +84,7 @@ export function validateTunnelArgvTemplate(argv) {
 
 function loadTunnelTemplate({ env, paths }) {
   const raw = env.CODEXLESS_TUNNEL_ARGV_JSON;
-  if (typeof raw === "string" && raw.trim()) {
-    return { source: "environment", argv: parseArgvJson(raw, "CODEXLESS_TUNNEL_ARGV_JSON") };
-  }
+  if (typeof raw === "string" && raw.trim()) return { source: "environment", argv: parseArgvJson(raw, "CODEXLESS_TUNNEL_ARGV_JSON") };
   try {
     const payload = readPersistent(paths.tunnelConfigPath);
     validateTunnelArgvTemplate(payload.argv);
@@ -110,9 +108,7 @@ function readPersistent(configPath) {
     if (error?.code === "ENOENT") throw error;
     throw tunnelError("TUNNEL_CONFIG_INVALID", `Invalid persistent tunnel config: ${configPath}`);
   }
-  if (payload?.schemaVersion !== SCHEMA_VERSION || !Array.isArray(payload?.argv)) {
-    throw tunnelError("TUNNEL_CONFIG_INVALID", `Unsupported persistent tunnel config schema: ${configPath}`);
-  }
+  if (payload?.schemaVersion !== SCHEMA_VERSION || !Array.isArray(payload?.argv)) throw tunnelError("TUNNEL_CONFIG_INVALID", `Unsupported persistent tunnel config schema: ${configPath}`);
   return payload;
 }
 
@@ -122,9 +118,7 @@ function expandValue(value, { env, replacements }) {
   if (envMatch) {
     const name = envMatch[1];
     const resolved = env[name];
-    if (typeof resolved !== "string" || !resolved.length) {
-      throw tunnelError("TUNNEL_ENV_MISSING", `Tunnel configuration requires environment variable ${name}, but it is not set.`, [`Export ${name} in the environment that starts Codexless.`]);
-    }
+    if (typeof resolved !== "string" || !resolved.length) throw tunnelError("TUNNEL_ENV_MISSING", `Tunnel configuration requires environment variable ${name}, but it is not set.`, [`Export ${name} in the environment that starts Codexless.`]);
     return resolved;
   }
   return value;
@@ -134,9 +128,7 @@ function parseArgvJson(raw, label) {
   let argv;
   try { argv = JSON.parse(raw); }
   catch { throw tunnelError("TUNNEL_CONFIG_INVALID", `${label} must be valid JSON.`); }
-  if (!Array.isArray(argv) || argv.length < 1 || !argv.every((value) => typeof value === "string" && value.length > 0)) {
-    throw tunnelError("TUNNEL_CONFIG_INVALID", `${label} must be a non-empty JSON array of non-empty strings.`);
-  }
+  if (!Array.isArray(argv) || argv.length < 1 || !argv.every((value) => typeof value === "string" && value.length > 0)) throw tunnelError("TUNNEL_CONFIG_INVALID", `${label} must be a non-empty JSON array of non-empty strings.`);
   return argv;
 }
 
@@ -145,6 +137,11 @@ function envNames(argv) {
     const match = String(value).match(ENV_PLACEHOLDER);
     return match ? [match[1]] : [];
   }))];
+}
+
+function redactTemplateArgv(argv) {
+  const redacted = redactArgv(argv);
+  return redacted.map((value, index) => ENV_PLACEHOLDER.test(argv[index] ?? "") ? argv[index] : value);
 }
 
 function tunnelError(code, message, nextActions = [], details = null) {
