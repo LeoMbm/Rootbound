@@ -1,0 +1,31 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createPersistentContinuityState } from "../src/persistent-continuity-state.mjs";
+import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { openStateStore } from "../src/state-store.mjs";
+
+const root = await mkdtemp(path.join(os.tmpdir(), "codexless-persistent-continuity-"));
+const projectRoot = path.join(root, "project");
+await mkdir(projectRoot);
+const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(root, "home") } });
+let store = await openStateStore({ paths });
+let continuity = createPersistentContinuityState({ store, now: () => 1_000, ttlMs: 60_000 });
+const bound = continuity.bind({ threadId: "thread-1", cwd: projectRoot, threadPreview: { title: "persist me" } });
+continuity.record(bound.bindingRef, { kind: "command", label: "npm test", exitCode: 0 });
+assert.equal(continuity.status(bound.bindingRef).pendingJournalEntries, 1);
+store.close();
+
+store = await openStateStore({ paths });
+continuity = createPersistentContinuityState({ store, now: () => 2_000, ttlMs: 60_000 });
+assert.equal(continuity.status(bound.bindingRef).threadId, "thread-1");
+const checkpoint = continuity.prepareCheckpoint(bound.bindingRef);
+assert.equal(checkpoint.journal.length, 1);
+assert.equal(checkpoint.journal[0].label, "npm test");
+const acknowledged = continuity.acknowledgeCheckpoint(bound.bindingRef, checkpoint.throughSeq);
+assert.equal(acknowledged.pendingJournalEntries, 0);
+assert.equal(acknowledged.checkpointCount, 1);
+assert.equal(continuity.unbind(bound.bindingRef).status, "unbound");
+store.close();
+console.log("persistent-continuity-v5: ok");

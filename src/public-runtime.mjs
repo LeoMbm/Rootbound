@@ -1,10 +1,12 @@
 import { ACCEPTED_CODEX_VERSIONS, CodexAuthorityExecutor } from "./codex-authority-executor.mjs";
 import { CodexBrowserReaderExecutor } from "./browser-reader-executor.mjs";
 import { resolveCodexExecutable } from "./codex-bin.mjs";
-import { createContinuityState } from "./continuity-state.mjs";
 import { readJsonFile } from "./json-file.mjs";
+import { createPersistentContinuityState } from "./persistent-continuity-state.mjs";
 import { CodexPublicContextExecutor } from "./public-context-executor.mjs";
 import { createPublicServerFactory } from "./public-server-factory.mjs";
+import { resolveCodexlessPaths } from "./state-paths.mjs";
+import { openStateStore } from "./state-store.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "./surface-contracts.mjs";
 
 function envString(env, name, fallback = null) {
@@ -38,6 +40,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
   }
 
   let publicContext = null;
+  let stateStore = null;
   let closed = false;
 
   try {
@@ -55,8 +58,9 @@ export async function createPublicRuntime({ env = process.env } = {}) {
 
     publicContext = new CodexPublicContextExecutor({ codexBin, defaultCwd, configOverrides });
     await publicContext.start();
+    stateStore = await openStateStore({ paths: resolveCodexlessPaths({ env }) });
 
-    const continuityState = createContinuityState();
+    const continuityState = createPersistentContinuityState({ store: stateStore });
     const browserReader = new CodexBrowserReaderExecutor({ context: publicContext, defaultCwd });
     const createServer = createPublicServerFactory({
       executor: authorityExecutor,
@@ -70,7 +74,8 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     async function close() {
       if (closed) return;
       closed = true;
-      await publicContext?.close();
+      try { await publicContext?.close(); }
+      finally { stateStore?.close(); }
     }
 
     return {
@@ -85,6 +90,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     };
   } catch (error) {
     await publicContext?.close().catch(() => {});
+    try { stateStore?.close(); } catch {}
     throw error;
   }
 }
