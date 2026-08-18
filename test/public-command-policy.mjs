@@ -24,7 +24,7 @@ for (const [command, reason] of blocked) {
   assert.equal(nestedCodexInvocationReason(command, { codexBin: configuredWindowsCodex }), reason, JSON.stringify(command));
   assert.throws(
     () => assertNoNestedCodexInvocation(command, { codexBin: configuredWindowsCodex }),
-    (error) => error?.code === "METERED_CODEX_REQUIRES_AGENT_CARD" && /codex\.agent_start/.test(error?.message ?? ""),
+    (error) => error?.code === "CODEX_MODEL_LANE_DISABLED" && /ChatGPT-only|no Codex model/i.test(error?.message ?? ""),
     JSON.stringify(command)
   );
 }
