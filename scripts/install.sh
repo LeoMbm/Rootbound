@@ -63,17 +63,9 @@ emit_failure() {
 }
 
 rollback() {
-  if [ -n "$STAGE_DIR" ] && [ -d "$STAGE_DIR" ]; then
-    rm -rf "$STAGE_DIR"
-  fi
-  if [ "$INSTALLED" -eq 1 ] && [ -d "$INSTALL_DIR" ]; then
-    rm -rf "$INSTALL_DIR"
-    INSTALLED=0
-  fi
-  if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ] && [ ! -e "$INSTALL_DIR" ]; then
-    mv "$BACKUP_DIR" "$INSTALL_DIR"
-    BACKUP_DIR=""
-  fi
+  if [ -n "$STAGE_DIR" ] && [ -d "$STAGE_DIR" ]; then rm -rf "$STAGE_DIR"; fi
+  if [ "$INSTALLED" -eq 1 ] && [ -d "$INSTALL_DIR" ]; then rm -rf "$INSTALL_DIR"; INSTALLED=0; fi
+  if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ] && [ ! -e "$INSTALL_DIR" ]; then mv "$BACKUP_DIR" "$INSTALL_DIR"; BACKUP_DIR=""; fi
 }
 
 fail() {
@@ -93,7 +85,10 @@ NPM=$(command -v npm 2>/dev/null || true)
 NODE_VERSION=$($NODE -p 'process.versions.node' 2>/dev/null || true)
 [ -n "$NODE_VERSION" ] || fail "Unable to read Node.js version."
 NODE_MAJOR=$(printf '%s' "$NODE_VERSION" | cut -d. -f1)
-[ "$NODE_MAJOR" -ge 22 ] 2>/dev/null || fail "Codexless requires Node.js 22+. Current: v$NODE_VERSION"
+NODE_MINOR=$(printf '%s' "$NODE_VERSION" | cut -d. -f2)
+if [ "$NODE_MAJOR" -lt 22 ] 2>/dev/null || { [ "$NODE_MAJOR" -eq 22 ] 2>/dev/null && [ "$NODE_MINOR" -lt 13 ] 2>/dev/null; }; then
+  fail "Codexless V5 requires Node.js 22.13+. Current: v$NODE_VERSION"
+fi
 
 CODEX_JSON=$($NODE "$SOURCE_ROOT/scripts/resolve-codex.mjs" 2>/dev/null || true)
 [ -n "$CODEX_JSON" ] || fail "Codex prerequisite check returned no result."
@@ -124,6 +119,8 @@ fi
 chmod +x \
   "$STAGE_DIR/scripts/install.sh" \
   "$STAGE_DIR/scripts/uninstall.sh" \
+  "$STAGE_DIR/bin/codexless.sh" \
+  "$STAGE_DIR/bin/codexless.mjs" \
   "$STAGE_DIR/bin/codexless-install.sh" \
   "$STAGE_DIR/bin/codexless-doctor.sh" \
   "$STAGE_DIR/bin/codexless-http.sh" \
@@ -135,9 +132,7 @@ if ! (cd "$STAGE_DIR" && "$NPM" ci --omit=dev --ignore-scripts --no-audit --no-f
   fail "npm production dependency install failed in staging."
 fi
 
-if ! STAGE_DOCTOR=$(cd "$STAGE_DIR" && CODEX_BIN="$CODEX_BIN_RESOLVED" "$NODE" scripts/doctor.mjs --json); then
-  fail "Staging doctor failed."
-fi
+if ! STAGE_DOCTOR=$(cd "$STAGE_DIR" && CODEX_BIN="$CODEX_BIN_RESOLVED" "$NODE" scripts/doctor.mjs --json); then fail "Staging doctor failed."; fi
 STAGE_STATUS=$(printf '%s' "$STAGE_DOCTOR" | json_field status "$NODE" 2>/dev/null || true)
 [ "$STAGE_STATUS" != "error" ] || fail "Staging doctor returned error."
 
@@ -150,9 +145,7 @@ if [ -e "$INSTALL_DIR" ]; then
   mv "$INSTALL_DIR" "$BACKUP_DIR" || fail "Unable to move current install to backup."
 fi
 
-if ! mv "$STAGE_DIR" "$INSTALL_DIR"; then
-  fail "Unable to activate staged install."
-fi
+if ! mv "$STAGE_DIR" "$INSTALL_DIR"; then fail "Unable to activate staged install."; fi
 STAGE_DIR=""
 INSTALLED=1
 
@@ -162,20 +155,18 @@ fi
 INSTALLED_STATUS=$(printf '%s' "$INSTALLED_DOCTOR" | json_field status "$NODE" 2>/dev/null || true)
 [ "$INSTALLED_STATUS" != "error" ] || fail "Installed doctor returned error; previous install was restored when available."
 
-if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
-  rm -rf "$BACKUP_DIR"
-  BACKUP_DIR=""
-fi
+if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then rm -rf "$BACKUP_DIR"; BACKUP_DIR=""; fi
 INSTALLED=0
 
 PACKAGE_VERSION=$($NODE -e 'const p=require(process.argv[1]); process.stdout.write(String(p.version || ""));' "$INSTALL_DIR/package.json")
+CLI_CMD="$INSTALL_DIR/bin/codexless.sh"
 DOCTOR_CMD="$INSTALL_DIR/bin/codexless-doctor.sh"
 HTTP_CMD="$INSTALL_DIR/bin/codexless-http.sh"
 STDIO_CMD="$INSTALL_DIR/bin/codexless-stdio.sh"
 UNINSTALL_CMD="$INSTALL_DIR/bin/codexless-uninstall.sh"
 
 if [ "$JSON" -eq 1 ]; then
-  INSTALL_DIR_ENV=$INSTALL_DIR PACKAGE_VERSION_ENV=$PACKAGE_VERSION NODE_VERSION_ENV=$NODE_VERSION CODEX_VERSION_ENV=$CODEX_VERSION CODEX_SOURCE_ENV=$CODEX_SOURCE DOCTOR_STATUS_ENV=$INSTALLED_STATUS DOCTOR_CMD_ENV=$DOCTOR_CMD HTTP_CMD_ENV=$HTTP_CMD STDIO_CMD_ENV=$STDIO_CMD UNINSTALL_CMD_ENV=$UNINSTALL_CMD \
+  INSTALL_DIR_ENV=$INSTALL_DIR PACKAGE_VERSION_ENV=$PACKAGE_VERSION NODE_VERSION_ENV=$NODE_VERSION CODEX_VERSION_ENV=$CODEX_VERSION CODEX_SOURCE_ENV=$CODEX_SOURCE DOCTOR_STATUS_ENV=$INSTALLED_STATUS CLI_CMD_ENV=$CLI_CMD DOCTOR_CMD_ENV=$DOCTOR_CMD HTTP_CMD_ENV=$HTTP_CMD STDIO_CMD_ENV=$STDIO_CMD UNINSTALL_CMD_ENV=$UNINSTALL_CMD \
     "$NODE" -e '
       const e = process.env;
       process.stdout.write(JSON.stringify({
@@ -187,7 +178,7 @@ if [ "$JSON" -eq 1 ]; then
         codex: e.CODEX_VERSION_ENV,
         codexResolutionSource: e.CODEX_SOURCE_ENV,
         doctorStatus: e.DOCTOR_STATUS_ENV,
-        commands: { doctor: e.DOCTOR_CMD_ENV, http: e.HTTP_CMD_ENV, stdio: e.STDIO_CMD_ENV, uninstall: e.UNINSTALL_CMD_ENV },
+        commands: { codexless: e.CLI_CMD_ENV, doctor: e.DOCTOR_CMD_ENV, http: e.HTTP_CMD_ENV, stdio: e.STDIO_CMD_ENV, uninstall: e.UNINSTALL_CMD_ENV },
         notes: [
           "No PATH entry, LaunchAgent, Browser configuration, Tunnel configuration, or Codex trust was changed.",
           "Re-running a newer Mac Technical Preview installer against the same install directory performs a staged upgrade."
@@ -197,7 +188,8 @@ if [ "$JSON" -eq 1 ]; then
 else
   printf 'Codexless Mac Technical Preview installed: %s\n' "$PACKAGE_VERSION"
   printf 'Location: %s\n' "$INSTALL_DIR"
-  printf 'Doctor: %s\n' "$DOCTOR_CMD"
-  printf 'HTTP:   %s\n' "$HTTP_CMD"
+  printf 'CLI:      %s\n' "$CLI_CMD"
+  printf 'Doctor:   %s\n' "$DOCTOR_CMD"
+  printf 'HTTP:     %s\n' "$HTTP_CMD"
   printf '%s\n' "No PATH, LaunchAgent, Browser, Tunnel, or Codex trust settings were changed."
 fi
