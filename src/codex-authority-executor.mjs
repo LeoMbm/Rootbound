@@ -17,7 +17,7 @@ export function acceptedCodexVersionsFor({ platform = process.platform, arch = p
   return Object.freeze([]);
 }
 export const ACCEPTED_CODEX_VERSIONS = acceptedCodexVersionsFor();
-const MAC_NULL_PROFILE_COMPAT_VERSION = "0.148.0-alpha.9";
+const MAC_NULL_PROFILE_COMPAT_VERSIONS = new Set(["0.148.0-alpha.15", "0.148.0-alpha.9"]);
 const KNOWN_SANDBOX_FIELDS = Object.freeze({
   readOnly: new Set(["type", "networkAccess"]),
   workspaceWrite: new Set(["type", "networkAccess", "writableRoots", "excludeTmpdirEnvVar", "excludeSlashTmp"]),
@@ -82,7 +82,7 @@ function hasCustomPermissionConfiguration(config) {
 }
 
 function inferBuiltinProfileFromProjection({ started, authorityRoot, allowedProfiles, codexVersion, effectiveConfig }) {
-  if (codexVersion !== MAC_NULL_PROFILE_COMPAT_VERSION) return null;
+  if (!MAC_NULL_PROFILE_COMPAT_VERSIONS.has(codexVersion)) return null;
   if (process.platform !== "darwin" || process.arch !== "arm64") return null;
   if (hasCustomPermissionConfiguration(effectiveConfig)) {
     throw new Error("authority resolver failed closed: custom permission configuration cannot be inferred from a null activePermissionProfile");
