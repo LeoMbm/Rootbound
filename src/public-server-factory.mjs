@@ -72,6 +72,7 @@ export function createPublicServerFactory({
         if (inFlight >= maxConcurrent) return toolError(`bridge concurrency limit reached (${maxConcurrent})`);
         inFlight += 1;
         try {
+          if (bindingRef) continuityState.resolve(bindingRef);
           const result = await executor.exec({ command, cwd, access, timeoutMs });
           if (bindingRef) {
             continuityState.record(bindingRef, {
