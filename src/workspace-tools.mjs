@@ -15,43 +15,46 @@ export function registerWorkspaceTools(server, { store, authorityExecutor, publi
       inputSchema: z.object({ cwd: z.string().min(1).max(32_768).optional() }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ cwd }) => structured(async () => {
-      const requested = cwd ?? authorityExecutor.defaultCwd ?? process.cwd();
-      const resolved = await resolveProjectRoot(requested);
-      let project = store.getProjectByRoot(resolved.root);
-      if (!project) project = await registerProject(store, resolved.root, { trusted: false });
-
-      let authority = null;
-      try {
-        authority = await authorityExecutor.resolveAuthority({ cwd: resolved.root, access: "readOnly", timeoutMs: 10_000 });
-      } catch (error) {
-        if (error?.code !== "PERMISSION_APPROVAL_REQUIRED") throw error;
-        return {
-          status: "needs_trust",
-          project: { ...project, root: resolved.root, gitRoot: resolved.gitRoot },
-          authority: null,
-          modelTurnStarted: false,
-          errorCode: error.code,
-          nextActions: Array.isArray(error.nextActions) ? error.nextActions : ["Authorize the exact workspace root, then retry workspace_open."],
-        };
-      }
-
-      project = await registerProject(store, resolved.root, { trusted: true });
-      const context = await publicContext.projectContext({ cwd: resolved.root });
-      return {
-        status: "ready",
-        project: { ...project, root: resolved.root, gitRoot: resolved.gitRoot },
-        authority: {
-          permissionProfile: authority.permissionProfile,
-          permissionCeiling: authority.permissionCeiling,
-          authoritySource: authority.authoritySource,
-          trustedAncestor: authority.trustedAncestor,
-        },
-        context,
-        modelTurnStarted: false,
-      };
-    })
+    async ({ cwd }) => structured(() => openWorkspace({ cwd, store, authorityExecutor, publicContext }))
   );
+}
+
+export async function openWorkspace({ cwd = null, store, authorityExecutor, publicContext }) {
+  if (!store || !authorityExecutor || !publicContext) throw new Error("workspace_open requires store, authorityExecutor, and publicContext");
+  const requested = cwd ?? authorityExecutor.defaultCwd ?? process.cwd();
+  const resolved = await resolveProjectRoot(requested);
+  let project = store.getProjectByRoot(resolved.root);
+  if (!project) project = await registerProject(store, resolved.root, { trusted: false });
+
+  let authority = null;
+  try {
+    authority = await authorityExecutor.resolveAuthority({ cwd: resolved.root, access: "readOnly", timeoutMs: 10_000 });
+  } catch (error) {
+    if (error?.code !== "PERMISSION_APPROVAL_REQUIRED") throw error;
+    return {
+      status: "needs_trust",
+      project: { ...project, root: resolved.root, gitRoot: resolved.gitRoot },
+      authority: null,
+      modelTurnStarted: false,
+      errorCode: error.code,
+      nextActions: Array.isArray(error.nextActions) ? error.nextActions : ["Authorize the exact workspace root, then retry workspace_open."],
+    };
+  }
+
+  project = await registerProject(store, resolved.root, { trusted: true });
+  const context = await publicContext.projectContext({ cwd: resolved.root });
+  return {
+    status: "ready",
+    project: { ...project, root: resolved.root, gitRoot: resolved.gitRoot },
+    authority: {
+      permissionProfile: authority.permissionProfile,
+      permissionCeiling: authority.permissionCeiling,
+      authoritySource: authority.authoritySource,
+      trustedAncestor: authority.trustedAncestor,
+    },
+    context,
+    modelTurnStarted: false,
+  };
 }
 
 async function structured(task) {
