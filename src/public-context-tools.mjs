@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { typedToolResponse } from "./tool-errors.mjs";
 
 const require = createRequire(import.meta.url);
 const z = require("zod/v4");
@@ -15,7 +16,7 @@ export function registerPublicContextTools(server, context) {
       inputSchema: z.object({ cwd: z.string().min(1).max(32_768).optional() }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async (input) => structured(() => context.projectContext(input))
+    async (input) => typedToolResponse(() => context.projectContext(input), { operation: "project_context" })
   );
 
   server.registerTool(
@@ -30,7 +31,7 @@ export function registerPublicContextTools(server, context) {
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async (input) => structured(() => context.skillList(input))
+    async (input) => typedToolResponse(() => context.skillList(input), { operation: "skill_list" })
   );
 
   server.registerTool(
@@ -45,18 +46,6 @@ export function registerPublicContextTools(server, context) {
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async (input) => structured(() => context.skillRead(input))
+    async (input) => typedToolResponse(() => context.skillRead(input), { operation: "skill_read" })
   );
-}
-
-async function structured(task) {
-  try {
-    const payload = await task();
-    return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: false };
-  } catch (error) {
-    const payload = { error: error instanceof Error ? error.message : String(error) };
-    if (typeof error?.code === "string") payload.errorCode = error.code;
-    if (Array.isArray(error?.nextActions)) payload.nextActions = error.nextActions;
-    return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: true };
-  }
 }
