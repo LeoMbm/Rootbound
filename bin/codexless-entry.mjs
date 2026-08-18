@@ -19,6 +19,8 @@ if (command === "self-test") {
   process.exitCode = await runScript("upgrade.mjs", args.slice(1));
 } else if (command === "diagnostic" || command === "diagnostics") {
   process.exitCode = await runScript("diagnostic.mjs", args.slice(1));
+} else if (command === "tunnel") {
+  process.exitCode = await runScript("tunnel-config-cli.mjs", args.slice(1));
 } else {
   await import("./codexless.mjs");
 }
