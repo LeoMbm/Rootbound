@@ -18,6 +18,19 @@ assert.throws(
   (error) => error?.code === "SECRET_PERSISTENCE_BLOCKED" && error?.category === "safety" && JSON.stringify(error?.details ?? {}).includes("super-secret-token-value") === false
 );
 
+for (const sensitiveArgv of [
+  ["env", "API_KEY=assignment-secret", "node", "build.mjs"],
+  ["curl", "https://user:password-secret@example.test/private"],
+  ["curl", "https://example.test/?token=query-secret"],
+  ["curl", "-H", "Authorization: Bearer bearer-secret"],
+]) {
+  const sensitiveFindings = inspectSensitiveArgv(sensitiveArgv);
+  assert.ok(sensitiveFindings.length > 0, `expected secret detection for ${JSON.stringify(sensitiveArgv)}`);
+  const safe = redactArgv(sensitiveArgv).join(" ");
+  for (const secret of ["assignment-secret", "password-secret", "query-secret", "bearer-secret"]) assert.equal(safe.includes(secret), false);
+  assert.throws(() => assertDurableCommandHasNoSecrets(sensitiveArgv), (error) => error?.code === "SECRET_PERSISTENCE_BLOCKED");
+}
+
 assert.equal(isSensitivePath(".env"), true);
 assert.equal(isSensitivePath(".env.production"), true);
 assert.equal(isSensitivePath("config/credentials.json"), true);
