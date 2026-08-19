@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { decodeCursor, encodeCursor } from "../src/pagination.mjs";
 import { readManyAuthorized } from "../src/construction-tools.mjs";
 import { searchPageAuthorized } from "../src/repo-tools.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const signature = { query: "hello", cwd: "/tmp/project" };
 const cursor = encodeCursor("unit", signature, { offset: 4 });
@@ -71,6 +75,64 @@ assert.equal(secondSearch.hasMore, false);
 await assert.rejects(
   () => searchPageAuthorized({ authorityExecutor: searchExecutor, query: "different", cwd: root, maxResults: 2, cursor: firstSearch.nextCursor }),
   (error) => error?.code === "PAGINATION_CURSOR_INVALID"
+);
+
+const runtimeSearchRoot = path.join(root, "runtime-search");
+await mkdir(path.join(runtimeSearchRoot, "nested"), { recursive: true });
+await writeFile(path.join(runtimeSearchRoot, "one.txt"), "alpha needle\nsecond line\n", "utf8");
+await writeFile(path.join(runtimeSearchRoot, "two.txt"), "needle two\n", "utf8");
+await writeFile(path.join(runtimeSearchRoot, "nested", "three.js"), "const value = 'needle';\n", "utf8");
+await writeFile(path.join(runtimeSearchRoot, ".env"), "TOKEN=needle\n", "utf8");
+await writeFile(path.join(runtimeSearchRoot, "secret.pem"), "needle secret\n", "utf8");
+
+const runtimeSearchExecutor = {
+  async resolveAuthority({ cwd }) { return { effectiveCwd: cwd, trustedAncestor: cwd, permissionProfile: ":read-only" }; },
+  async exec({ command, cwd }) {
+    try {
+      const { stdout, stderr } = await execFileAsync(command[0], command.slice(1), {
+        cwd,
+        env: { ...process.env, PATH: "" },
+        encoding: "utf8",
+        maxBuffer: 64 * 1024,
+        windowsHide: true,
+      });
+      return { exitCode: 0, stdout, stderr, stdoutTruncated: false, stderrTruncated: false };
+    } catch (error) {
+      return {
+        exitCode: Number.isInteger(error?.code) ? error.code : 1,
+        stdout: String(error?.stdout ?? ""),
+        stderr: String(error?.stderr ?? error?.message ?? ""),
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+    }
+  },
+};
+
+const runtimeFirst = await searchPageAuthorized({ authorityExecutor: runtimeSearchExecutor, query: "needle", cwd: runtimeSearchRoot, maxResults: 2 });
+assert.equal(runtimeFirst.count, 2);
+assert.equal(runtimeFirst.hasMore, true);
+assert.equal(runtimeFirst.results.some((row) => row.includes(".env")), false);
+assert.equal(runtimeFirst.results.some((row) => row.includes("secret.pem")), false);
+const runtimeSecond = await searchPageAuthorized({ authorityExecutor: runtimeSearchExecutor, query: "needle", cwd: runtimeSearchRoot, maxResults: 2, cursor: runtimeFirst.nextCursor });
+const runtimeCombined = [...runtimeFirst.results, ...runtimeSecond.results];
+assert.equal(runtimeCombined.length, 3);
+assert.equal(runtimeCombined.some((row) => row.startsWith("one.txt:")), true);
+assert.equal(runtimeCombined.some((row) => row.startsWith("two.txt:")), true);
+assert.equal(runtimeCombined.some((row) => row.startsWith("nested/three.js:")), true);
+
+const runtimeGlob = await searchPageAuthorized({ authorityExecutor: runtimeSearchExecutor, query: "needle", cwd: runtimeSearchRoot, glob: "*.js", maxResults: 10 });
+assert.equal(runtimeGlob.count, 1);
+assert.equal(runtimeGlob.results[0].startsWith("nested/three.js:"), true);
+
+const runtimeSensitive = await searchPageAuthorized({ authorityExecutor: runtimeSearchExecutor, query: "needle", cwd: runtimeSearchRoot, maxResults: 10, includeSensitive: true });
+assert.equal(runtimeSensitive.count, 5);
+assert.equal(runtimeSensitive.results.some((row) => row.startsWith(".env:")), true);
+assert.equal(runtimeSensitive.results.some((row) => row.startsWith("secret.pem:")), true);
+
+await assert.rejects(
+  () => searchPageAuthorized({ authorityExecutor: runtimeSearchExecutor, query: "[", cwd: runtimeSearchRoot, maxResults: 10 }),
+  (error) => error?.code === "REPO_SEARCH_FAILED" && /invalid search pattern/i.test(error.message)
 );
 
 console.log("pagination-v5: ok");

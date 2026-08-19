@@ -92,6 +92,14 @@ export function registerThreadHistoryTools(server, { context, authorityExecutor,
     },
     async ({ threadId, idempotencyKey }) => typedToolResponse(async () => {
       const metadata = await context.threadMetadata({ threadId });
+      if (metadata.thread?.ephemeral === true) {
+        throw new CodexlessToolError("Continuity can bind only to a persisted Codex thread; ephemeral project-context threads cannot accept checkpoints.", {
+          code: "CONTINUITY_THREAD_EPHEMERAL",
+          category: "input",
+          retryable: false,
+          nextActions: ["Choose a persisted thread returned by codex.thread_list, then bind that threadId."],
+        });
+      }
       const authority = await authorizeThread(authorityExecutor, metadata.thread);
       const request = { threadId, cwd: authority.effectiveCwd };
       const idem = beginIdempotency(idempotency, { operation: "bind", key: idempotencyKey, request });

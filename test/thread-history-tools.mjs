@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createContinuityState } from "../src/continuity-state.mjs";
-import { buildContinuityCheckpoint } from "../src/thread-history-tools.mjs";
+import { buildContinuityCheckpoint, registerThreadHistoryTools } from "../src/thread-history-tools.mjs";
 import { sanitizeHistoryPayload } from "../src/public-context-executor.mjs";
 
 const state = createContinuityState({ now: (() => { let n = 1_000; return () => ++n; })() });
@@ -46,5 +46,33 @@ assert.equal(Object.hasOwn(sanitized.thread, "path"), false, "rollout storage pa
 assert.deepEqual(sanitized.data[0], { id: "reason_1", type: "reasoning", summary: ["Public summary"] });
 assert.equal(sanitized.data[1].path, "src/index.js", "ordinary project file paths must remain visible");
 assert.equal(sanitized.data[1].changes[0].path, "src/index.js");
+
+const registered = new Map();
+registerThreadHistoryTools({
+  registerTool(name, definition, handler) { registered.set(name, { definition, handler }); },
+}, {
+  context: {
+    async threadMetadata({ threadId }) {
+      return { thread: { id: threadId, cwd: "/project", ephemeral: threadId === "ephemeral-thread", preview: "test" } };
+    },
+  },
+  authorityExecutor: {
+    async resolveAuthority({ cwd }) {
+      return { effectiveCwd: cwd, trustedAncestor: cwd, permissionProfile: ":read-only", permissionCeiling: ":workspace", authoritySource: "test" };
+    },
+  },
+  continuityState: createContinuityState({ now: (() => { let n = 2_000; return () => ++n; })() }),
+});
+
+const bindHandler = registered.get("codex.continuity_bind").handler;
+const ephemeralBind = await bindHandler({ threadId: "ephemeral-thread" });
+assert.equal(ephemeralBind.isError, true);
+assert.equal(ephemeralBind.structuredContent?.errorCode, "CONTINUITY_THREAD_EPHEMERAL");
+assert.match(ephemeralBind.structuredContent?.error ?? "", /persisted Codex thread/i);
+
+const persistedBind = await bindHandler({ threadId: "persisted-thread" });
+assert.equal(persistedBind.isError, false);
+assert.equal(persistedBind.structuredContent?.status, "bound");
+assert.equal(persistedBind.structuredContent?.threadId, "persisted-thread");
 
 console.log("thread history continuity tests passed");
