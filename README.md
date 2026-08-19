@@ -2,25 +2,25 @@
 
 # Rootbound
 
-### Keep coding in ChatGPT. Use Codex as the local trust and execution layer.
+### Give ChatGPT safe local coding access through Codex.
 
 **Windows + Apple Silicon macOS Technical Preview**
 
 </div>
 
-Rootbound lets ChatGPT work on your local project through Codex without secretly starting a Codex model turn.
+Rootbound lets ChatGPT inspect, edit, test, and continue work on a project that lives on your computer, while Codex remains the local permission and sandbox authority.
 
-In practice, that means ChatGPT can inspect files, search your repo, edit code, run commands, read Git state, and continue interrupted Codex work while Codex remains the local sandbox and permission authority.
+It is especially useful when you already work with both ChatGPT and Codex and want them to share the same local project safely.
 
-> ChatGPT reasons. Rootbound executes approved local actions. Codex stays in control of local trust.
+> **ChatGPT reasons. Rootbound performs model-free local actions. Codex keeps control of local trust and permissions.**
 
 ---
 
-## The simple version
+## What does Rootbound actually do?
 
-If you use ChatGPT and Codex to build software, Rootbound connects the two.
+Without Rootbound, ChatGPT cannot directly work inside a project on your laptop.
 
-You can think of it like this:
+With Rootbound:
 
 ```text
 ChatGPT
@@ -29,203 +29,622 @@ Rootbound
    ↓
 Codex local permissions / sandbox
    ↓
-Your project
+Your files, Git repo and local commands
 ```
 
-ChatGPT gets local coding hands, but it does not bypass the permissions you already gave Codex.
-
-### What can I do with it?
-
-Once Rootbound is connected to a project, you can ask ChatGPT things like:
-
-```text
-@Rootbound check why my tests are failing
-```
+This means you can ask ChatGPT things like:
 
 ```text
 @Rootbound find where authentication is handled
 ```
 
 ```text
-@Rootbound fix this bug and run the tests
+@Rootbound fix the failing tests and run them again
 ```
 
 ```text
 @Rootbound show me what changed in Git
 ```
 
-And if Codex gets interrupted or runs out of quota:
+```text
+@Rootbound inspect this project and explain the architecture
+```
+
+Rootbound does **not** secretly ask a Codex model to do the reasoning. ChatGPT remains the reasoning model.
+
+### The other big use case: continue interrupted Codex work
+
+If a Codex conversation is interrupted, unavailable, or hits quota, open ChatGPT and say:
 
 ```text
 @Rootbound continue
 ```
 
-Rootbound can recover the matching Codex conversation, inspect the current worktree, continue safely in ChatGPT, and later hand the updated state back to the original Codex thread.
-
-That continuity loop is one of the main reasons Rootbound exists.
+Rootbound can find the matching persisted Codex conversation, verify that it belongs to the current project, inspect the real worktree, let ChatGPT continue the work, and later hand the verified state back to that same Codex thread.
 
 ---
 
-## For vibecoders and non-technical users
+# Beginner setup — from zero
 
-You do not need to understand MCP internals, App Server RPCs, tunnel profiles, SQLite state, or permission plumbing to use Rootbound.
+This section assumes you have **never installed Rootbound before**.
 
-The normal workflow is intentionally small.
+You do not need to understand MCP, JSON-RPC, SQLite, tunnel profiles, or Codex App Server internals.
 
-### 1. Install Rootbound
+The setup has five parts:
 
-#### Apple Silicon macOS
+```text
+1. Install the prerequisites
+2. Install Rootbound
+3. Connect one local project
+4. Add the Rootbound tunnel in ChatGPT
+5. Test it
+```
+
+Once this first setup is done, normal daily use is much shorter.
+
+---
+
+## Step 1 — Install the prerequisites
+
+Rootbound currently requires:
+
+- **Node.js 22.13 or newer**
+- **Codex installed locally**
+- OpenAI **`tunnel-client`**
+- a ChatGPT account/workspace that can use custom MCP apps/connectors with the actions you need
+
+### 1.1 Check Node.js
+
+Open Terminal on macOS, or PowerShell / Command Prompt on Windows:
+
+```sh
+node --version
+```
+
+You need at least:
+
+```text
+v22.13.0
+```
+
+If `node` is not found, install a current Node.js release first.
+
+### 1.2 Make sure Codex is installed
+
+Rootbound uses your local Codex installation as the trust and sandbox layer.
+
+You do **not** need to configure Rootbound inside Codex manually. The Rootbound installer detects the supported local Codex installation automatically.
+
+If Codex is missing, the installer will stop instead of installing or replacing it for you.
+
+### 1.3 Install OpenAI `tunnel-client`
+
+ChatGPT cannot call a localhost MCP server directly. Rootbound therefore uses OpenAI Secure MCP Tunnel so the connection stays outbound-only from your machine.
+
+Open the OpenAI Tunnels page:
+
+```text
+https://platform.openai.com/settings/organization/tunnels
+```
+
+Install the supported `tunnel-client` for your platform from there.
+
+Then verify that it is available:
+
+```sh
+tunnel-client --help
+```
+
+If that command works, continue.
+
+> You do not need to manually write a tunnel YAML profile for Rootbound. `rootbound connect .` creates and manages the Rootbound profile for you.
+
+---
+
+## Step 2 — Download and install Rootbound
+
+### 2.1 Clone the repository
+
+```sh
+git clone https://github.com/LeoMbm/Rootbound.git
+cd Rootbound
+```
+
+### 2.2 Install on Apple Silicon macOS
 
 ```sh
 sh ./bin/rootbound-install.sh
 ```
 
-#### Windows
+The installer:
+
+- checks Node.js;
+- locates Codex;
+- installs Rootbound into your user Library;
+- installs production dependencies;
+- creates a `rootbound` CLI link under `~/.local/bin`;
+- adds that directory to your shell profile only if necessary.
+
+If the installer says it updated your `PATH`, **close Terminal and open a new Terminal window** before continuing.
+
+Verify the install:
+
+```sh
+rootbound version
+```
+
+### 2.3 Install on Windows
+
+From the cloned Rootbound directory:
 
 ```bat
 bin\rootbound-install.cmd
 ```
 
-Rootbound requires:
+The Windows Technical Preview installs Rootbound under:
 
-- Node.js 22.13 or newer;
-- Codex installed locally;
-- OpenAI `tunnel-client` available on your machine.
+```text
+%LOCALAPPDATA%\Rootbound\app\
+```
 
-Rootbound does not install Codex for you and does not silently trust folders on your behalf.
+The Windows installer currently does not add Rootbound to your global `PATH` automatically. You can call it directly with:
 
-### 2. Connect a project
+```bat
+%LOCALAPPDATA%\Rootbound\app\bin\rootbound.cmd version
+```
 
-Open a terminal inside your project and run:
+In the rest of this README, commands are written as `rootbound ...`. On Windows, use the full command above if you have not added Rootbound to your own `PATH`.
+
+---
+
+## Step 3 — Connect the project you actually want ChatGPT to work on
+
+Do **not** run the next command from the Rootbound repository unless Rootbound itself is the project you want ChatGPT to edit.
+
+Move into your own project first.
+
+Example:
+
+```sh
+cd ~/Documents/Dev/my-app
+```
+
+Then run:
 
 ```sh
 rootbound connect .
 ```
 
-This is the **normal setup: one command**. Rootbound's guided one-command setup handles the normal connection flow for you:
+This is the **Normal setup: one command**. The guided one-command flow handles the tunnel, Codex trust, project registration, validation, and runtime startup.
 
-- detects your real project root;
-- detects or asks for the tunnel it needs;
-- securely stores the runtime key locally;
-- validates the tunnel before changing project trust;
-- asks before adding exact project trust to Codex;
-- registers the project;
-- starts Rootbound.
+### What happens the first time?
 
-For returning projects, most of this is reused automatically.
+Rootbound first checks that `tunnel-client` exists.
 
-### 3. Connect Rootbound to ChatGPT
+You should see something similar to:
 
-When Rootbound starts successfully, it prints the connector information you need for ChatGPT.
+```text
+Rootbound setup
+Checking ChatGPT tunnel prerequisites...
+✓ tunnel-client detected
+```
 
-Once the connector is available in ChatGPT, you can simply mention Rootbound and work against the current project.
+### If you already have an OpenAI tunnel
 
-### 4. Check that everything works
+Rootbound tries to discover it automatically.
+
+If exactly one compatible tunnel is found, it can offer to reuse it:
+
+```text
+Existing OpenAI tunnel found: tunnel_...
+Use this tunnel? [Y/n]
+```
+
+Press **Enter** or type `y` to reuse it.
+
+### If you do not have a tunnel yet
+
+Rootbound prints the OpenAI Tunnels page:
+
+```text
+No existing OpenAI tunnel was detected.
+Create or inspect one here:
+  https://platform.openai.com/settings/organization/tunnels
+
+Paste tunnel ID:
+```
+
+Open that page, create a tunnel, then copy its ID.
+
+It looks like:
+
+```text
+tunnel_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Paste that ID back into Terminal.
+
+### Rootbound will then ask for a runtime API key
+
+This key is used by `tunnel-client` to use the tunnel. It is **not** your tunnel ID.
+
+Rootbound prints the correct page:
+
+```text
+A Tunnel runtime API key is required once.
+Create or inspect it here:
+  https://platform.openai.com/settings/organization/api-keys
+
+Paste runtime API key (input hidden):
+```
+
+Create or select a runtime API key that has access to the tunnel, then paste it.
+
+Your input is hidden while you paste it.
+
+Rootbound stores this runtime key in dedicated private local state instead of putting it in the tunnel profile, SQLite database, command arguments, or normal logs.
+
+### Rootbound validates the tunnel before touching Codex trust
+
+You should then see:
+
+```text
+Validating tunnel configuration...
+✓ Tunnel ready (tunnel_...)
+```
+
+If validation fails, Rootbound rolls back the generated tunnel setup instead of continuing with a half-configured project.
+
+### Rootbound then asks for exact project trust
+
+Example:
+
+```text
+Project access
+Rootbound needs explicit Codex trust for exactly:
+  /Users/you/Documents/Dev/my-app
+
+Allow this exact project root? [Y/n]
+```
+
+Press **Enter** or type `y` if this is the project you intended to connect.
+
+Rootbound creates a backup of the Codex config before changing trust.
+
+It then validates the project, registers it locally, and starts the supervised Rootbound runtime.
+
+### Successful output
+
+At the end you should see something similar to:
+
+```text
+Rootbound is ready.
+Project: /Users/you/Documents/Dev/my-app
+Trust: added exact-root trust
+Tunnel: configured
+Runtime: running
+ChatGPT connector settings: https://chatgpt.com/#settings/Connectors
+```
+
+At this point the local side is ready.
+
+---
+
+## Step 4 — Add Rootbound to ChatGPT
+
+Keep the Rootbound runtime running on your computer.
+
+Open the URL printed by Rootbound:
+
+```text
+https://chatgpt.com/#settings/Connectors
+```
+
+Depending on the current ChatGPT UI, this area may be named **Apps**, **Connectors**, or **Custom apps**.
+
+### 4.1 Enable developer/custom MCP access if ChatGPT asks for it
+
+If your account or workspace requires Developer Mode for custom MCP apps, enable it in ChatGPT settings first.
+
+Availability of custom MCP apps and write/modify actions depends on your current ChatGPT plan and workspace settings.
+
+### 4.2 Create the custom app / connector
+
+Create a new custom MCP app or connector and name it something recognizable, for example:
+
+```text
+Rootbound
+```
+
+### 4.3 Choose the tunnel connection
+
+For the connection type, choose:
+
+```text
+Connection: Tunnel
+```
+
+Then either:
+
+- select the tunnel from the list; or
+- paste the **same `tunnel_...` ID** that Rootbound used in Step 3.
+
+Save/enable the connector.
+
+> The tunnel in ChatGPT and the tunnel used by Rootbound must be the same tunnel ID.
+
+### If your tunnel does not appear in ChatGPT
+
+Check these points:
+
+- the tunnel was created for the correct OpenAI / ChatGPT workspace;
+- your account has permission to **Read + Use** that tunnel;
+- Rootbound is still running locally;
+- the tunnel was created long enough ago to finish provisioning;
+- `rootbound status` reports the runtime as running.
+
+New OpenAI tunnels can take a short time to appear in the connector picker.
+
+---
+
+## Step 5 — Test Rootbound from ChatGPT
+
+Open a normal ChatGPT conversation with the Rootbound connector available.
+
+Try a read-only request first:
+
+```text
+@Rootbound open my workspace and show me the current Git status
+```
+
+Then try:
+
+```text
+@Rootbound find the main entry point of this project and explain it to me
+```
+
+If those work, your setup is complete.
+
+For a local health check you can also run:
 
 ```sh
 rootbound status
 ```
 
-For a deeper local check:
+and:
 
 ```sh
 rootbound self-test .
 ```
 
-The self-test checks the Codex App Server path, read access, command execution, and temporary write/read/delete behavior when the current project permissions allow it.
+`self-test` checks the accepted Codex/App Server path, read access, model-free command execution, and temporary write/read/delete behavior when your local Codex permission profile allows it.
 
 It does not start a Codex model turn.
 
 ---
 
-## The interrupted-Codex flow
+# Daily use
 
-Rootbound is designed so a Codex interruption does not have to kill your momentum.
+After the first setup, you normally do **not** repeat all of the steps above.
 
-```text
-Codex is interrupted or unavailable
-        ↓
-You open ChatGPT
-        ↓
-@Rootbound continue
-        ↓
-Rootbound finds the matching Codex thread
-        ↓
-ChatGPT continues against the current local worktree
-        ↓
-Rootbound can hand the verified result back to that same Codex thread
+## Reopen a project you already connected
+
+Go to the project:
+
+```sh
+cd ~/Documents/Dev/my-app
 ```
 
-During this flow Rootbound can:
-
-- match the correct project and persisted Codex conversation;
-- inspect the current branch, repository and worktree state;
-- surface recent visible Codex history;
-- search older visible thread history on demand as cold memory;
-- detect external drift before writing or handing work back;
-- track supported Rootbound-made changes during rescue;
-- roll back those tracked rescue changes without deleting work that already existed before the rescue;
-- inject a bounded handoff checkpoint into the original Codex thread without starting a model turn.
-
-Quota information is advisory only. Rootbound continuity does not depend on Codex quota being exhausted.
-
----
-
-## Everyday commands
-
-### Start or connect a project
+Then run:
 
 ```sh
 rootbound connect .
 ```
 
-### Check runtime status
+If the tunnel and exact project trust are already configured, Rootbound reuses them and starts/switches the runtime for that project.
+
+You do not need to create a new ChatGPT connector every time.
+
+## Connect a second project
+
+Go to the other project and run the same command once:
+
+```sh
+cd ~/Documents/Dev/another-app
+rootbound connect .
+```
+
+Rootbound has one supervised active project runtime at a time. Connecting or starting another registered project switches the runtime to that project.
+
+Your ChatGPT Rootbound connector can stay the same because it points to the same secure tunnel.
+
+## Start an already registered project explicitly
+
+```sh
+rootbound start /path/to/project
+```
+
+## Check which project is active
 
 ```sh
 rootbound status
 ```
 
-### Run local validation
-
-```sh
-rootbound self-test .
-```
-
-### Inspect logs
-
-```sh
-rootbound logs
-```
-
-Follow logs live:
-
-```sh
-rootbound logs --follow
-```
-
-### Export redacted diagnostics
-
-```sh
-rootbound diagnostic
-```
-
-### Stop Rootbound
+## Stop Rootbound
 
 ```sh
 rootbound stop
 ```
 
-### Upgrade from a downloaded release directory
+---
 
-```sh
-rootbound upgrade --from /path/to/rootbound-release
+# Continue after Codex is interrupted
+
+This is the main continuity flow Rootbound was built around.
+
+Imagine you were working in Codex and the conversation stopped halfway through a task.
+
+You can open ChatGPT and simply say:
+
+```text
+@Rootbound continue
 ```
 
-Rootbound uses staged activation and keeps project/state data outside the installed app tree so an app upgrade does not replace your local Rootbound state.
+The intended flow is:
+
+```text
+Codex work is interrupted
+        ↓
+@Rootbound continue
+        ↓
+Rootbound finds the matching persisted Codex thread
+        ↓
+Rootbound verifies project / repository / branch / worktree continuity
+        ↓
+ChatGPT receives bounded recent context + current local state
+        ↓
+ChatGPT continues the work locally
+        ↓
+Rootbound can hand the result back to the original Codex thread
+```
+
+Rootbound can also search older visible messages from that original Codex conversation on demand when ChatGPT needs more context.
+
+### Why the verification matters
+
+Rootbound does not resume a conversation just because the names look similar.
+
+It checks continuity signals including the canonical project root, repository identity when available, branch, compatible Git SHA, thread working directory, and recency.
+
+If multiple sessions are genuinely ambiguous, Rootbound fails closed and asks instead of silently choosing the wrong one.
+
+### What if the repository already had uncommitted work?
+
+That work is treated as part of the rescue baseline.
+
+For supported Rootbound mutations, rescue rollback can remove only what Rootbound changed after the rescue started while preserving files that were already dirty before the rescue.
+
+If Rootbound cannot prove that rollback is safe, it refuses the rollback instead of using `git reset` or pretending it can restore the state safely.
 
 ---
 
-## Managing projects
+# Common problems
+
+## `rootbound: command not found` on macOS
+
+If the installer updated your shell profile, close Terminal and open a new Terminal window.
+
+Then try:
+
+```sh
+rootbound version
+```
+
+The CLI link normally lives at:
+
+```text
+~/.local/bin/rootbound
+```
+
+## Rootbound is not on PATH on Windows
+
+Use:
+
+```bat
+%LOCALAPPDATA%\Rootbound\app\bin\rootbound.cmd status
+```
+
+## `tunnel-client was not found on PATH`
+
+Install the supported Secure MCP Tunnel client from:
+
+```text
+https://platform.openai.com/settings/organization/tunnels
+```
+
+Then verify:
+
+```sh
+tunnel-client --help
+```
+
+## Rootbound asks me for a tunnel ID
+
+Create or inspect one here:
+
+```text
+https://platform.openai.com/settings/organization/tunnels
+```
+
+Copy the value beginning with `tunnel_` and paste it into the Rootbound prompt.
+
+## Rootbound asks me for a runtime API key
+
+Create or inspect runtime API keys here:
+
+```text
+https://platform.openai.com/settings/organization/api-keys
+```
+
+The key principal must be able to Read + Use the target tunnel.
+
+## The connector exists in ChatGPT but calls fail
+
+Check:
+
+```sh
+rootbound status
+```
+
+The runtime should be running. The local `tunnel-client` process must stay alive for ChatGPT discovery and tool calls.
+
+Also make sure ChatGPT is connected to the same tunnel ID used by Rootbound.
+
+## I renamed or moved my project
+
+Do not assume the old Rootbound registration should continue matching.
+
+Run `rootbound connect .` from the new canonical project root. Rootbound intentionally fails closed around stale workspace continuity instead of pretending an old path is still the same active workspace.
+
+---
+
+# Everyday CLI reference
+
+Connect/register the current project and start/switch the runtime:
+
+```sh
+rootbound connect .
+```
+
+Check status:
+
+```sh
+rootbound status
+```
+
+Run local validation:
+
+```sh
+rootbound self-test .
+```
+
+View logs:
+
+```sh
+rootbound logs
+```
+
+Follow logs:
+
+```sh
+rootbound logs --follow
+```
+
+Export redacted diagnostics:
+
+```sh
+rootbound diagnostic
+```
 
 List registered projects:
 
@@ -233,70 +652,76 @@ List registered projects:
 rootbound project list
 ```
 
-Remove an old Rootbound project entry:
+Remove a stale Rootbound project entry without deleting project files:
 
 ```sh
 rootbound project remove /path/to/project
 ```
 
-or:
-
-```sh
-rootbound project remove project_...
-```
-
-To also remove the matching exact-root Codex trust entry:
+Remove the Rootbound project entry and its matching exact-root Codex trust block:
 
 ```sh
 rootbound project remove /path/to/project --remove-trust
 ```
 
-Removing a Rootbound project never deletes the project files themselves.
-
-For an old Codex trust entry that no longer has a Rootbound project record:
+Remove an old exact-root Codex trust block that no longer has a Rootbound registry entry:
 
 ```sh
 rootbound trust remove /path/to/project
 ```
 
+Stop Rootbound:
+
+```sh
+rootbound stop
+```
+
+Upgrade from a downloaded/new release directory:
+
+```sh
+rootbound upgrade --from /path/to/rootbound-release
+```
+
+Rootbound uses staged activation and keeps persistent state outside the app tree so a normal app upgrade does not replace your Rootbound project/continuity state.
+
 ---
 
 # Advanced
 
-The rest of this README is for users who want to understand how Rootbound works internally or operate it more deliberately.
+Everything below is optional reading for people who want to understand Rootbound's architecture, security model, public tools, or automation surface.
 
-## Design principles
+## Design rules
 
-Rootbound follows a few strict rules:
+Rootbound follows a deliberately narrow model:
 
 1. **ChatGPT is the reasoning model.**
-2. **Rootbound performs model-free local primitives.**
-3. **Codex remains the local trust, sandbox and approval authority.**
-4. **Rootbound never silently starts a Codex model turn.**
-5. **A remote caller cannot widen the locally configured permission ceiling.**
-6. **Ambiguous continuity and unsafe rollback situations fail closed instead of guessing.**
+2. **Rootbound exposes model-free local primitives.**
+3. **Codex remains the local trust / sandbox / approval authority.**
+4. **No Rootbound public tool silently starts a Codex model turn.**
+5. **A remote caller cannot widen the local permission ceiling.**
+6. **Unsafe ambiguity, drift, rollback, or trust situations fail closed.**
 7. **Project and continuity state survives Rootbound runtime restarts.**
 
-Rootbound is deliberately not a general multi-agent framework, project manager, cloud memory system, or replacement IDE.
+Rootbound is not intended to become a general IDE, multi-agent framework, cloud memory product, or task manager.
 
-Its focus is the local ChatGPT ↔ Codex continuity and execution loop.
+Its focus is the ChatGPT ↔ local project ↔ Codex continuity loop.
 
 ---
 
 ## Public tool surface
 
-The current public surface exposes **32 public tools** grouped around a few jobs.
+The current surface exposes **32 public tools**.
 
 Current surface identifier: `rootbound-public-preview-v5`.
 
-### Workspace and project context
+### Workspace and context
 
 - `codex.workspace_open`
 - `codex.project_context`
 - `codex.skill_list`
 - `codex.skill_read`
 
-`workspace_open` resolves the canonical project/Git root and returns the effective local authority. It never creates trust as a side effect.
+`workspace_open` resolves the canonical project/Git root and returns the effective local authority. It never creates or widens trust as a side effect.
 
 ### Repository inspection
 
@@ -305,7 +730,7 @@ Current surface identifier: `rootbound-public-preview-v5`.
 - `codex.git_status`
 - `codex.git_diff`
 
-Reads and searches are paginated. Common secret-bearing files are excluded by default unless explicitly requested.
+Reads/searches are bounded and paginated. Common secret-bearing files are excluded by default unless explicitly requested.
 
 ### Editing
 
@@ -314,9 +739,9 @@ Reads and searches are paginated. Common secret-bearing files are excluded by de
 - `codex.edit_undo`
 - `codex.edit_redo`
 
-`precise_edit` supports occurrence and SHA guards. Undo/redo restores exact recorded content only while the expected hashes still match.
+`precise_edit` can guard expected text, occurrence count and SHA before writing. Non-sensitive successful edits can be undone/redone only while the recorded file hashes still match.
 
-Rootbound does not use `git reset` as fake undo.
+There is no `git reset` based pseudo-undo.
 
 ### Commands
 
@@ -326,11 +751,11 @@ Rootbound does not use `git reset` as fake undo.
 - `codex.command_write`
 - `codex.command_terminate`
 
-Short commands can run buffered. Long-running commands can be started, polled incrementally, written to through stdin where supported, and terminated.
+Short commands can run buffered. Long commands can be started and polled incrementally, with stdin/terminate where the local App Server implementation supports them.
 
-Nested Codex CLI launches are refused on this model-free command lane.
+Nested Codex CLI/model launches are refused on the model-free command lane.
 
-### Codex history and continuity
+### Codex history and durable continuity
 
 - `codex.thread_list`
 - `codex.thread_read`
@@ -340,9 +765,9 @@ Nested Codex CLI launches are refused on this model-free command lane.
 - `codex.continuity_checkpoint`
 - `codex.continuity_unbind`
 
-Bindings and checkpoints are durable. Optional idempotency keys let callers safely retry operations without blindly duplicating checkpoints.
+Bindings and checkpoints survive Rootbound runtime restarts. Optional idempotency keys make retrying a bind/checkpoint safe without blindly injecting duplicates.
 
-### Rescue and handoff
+### Rescue / continuation
 
 - `codex.continuity_resume`
 - `codex.continuity_search`
@@ -350,11 +775,13 @@ Bindings and checkpoints are durable. Optional idempotency keys let callers safe
 - `codex.continuity_handoff`
 - `codex.quota_status`
 
-`continuity_resume` is the preferred entry point for `continue`, interruption, and quota-rescue flows.
+`codex.continuity_resume` is the preferred entry point for `continue`, interruption and quota-rescue intent.
 
-Rootbound ranks candidate Codex sessions using the canonical project root, repository identity when available, branch, compatible Git SHA and recency. Exact or compatible matches can continue automatically; genuinely ambiguous matches are surfaced instead of guessed.
+`codex.continuity_handoff` injects a bounded verified checkpoint back into the original persisted Codex thread without starting a model turn.
 
-Cold-memory search uses the best persisted-history API available on the installed Codex runtime and falls back to bounded visible thread history where needed.
+`codex.continuity_rollback` restores only safely snapshotted Rootbound-owned rescue mutations and refuses unsafe or partial rollback coverage.
+
+Cold-memory search uses the best visible-history API available on the installed Codex runtime and falls back to bounded persisted thread history where necessary.
 
 ### Browser Reader
 
@@ -362,59 +789,55 @@ Cold-memory search uses the best persisted-history API available on the installe
 - `codex.browser_tabs`
 - `codex.browser_read`
 
-Browser access is intentionally read-only on the public surface. Rootbound can inspect existing connected tabs and DOM snapshots, but it does not expose arbitrary click, fill, submit or navigation primitives here.
+The public Browser Reader is intentionally read-only. It can inspect already-open connected tabs and DOM snapshots; arbitrary click/fill/navigation actions are not exposed by this surface.
 
 ---
 
 ## Continuation integrity
 
-Rootbound does not treat “a thread exists” as enough proof that it is safe to resume.
+Rootbound ranks persisted Codex sessions using available continuity evidence instead of only matching a thread name.
 
-It compares continuity signals such as:
+Signals include:
 
 - canonical project root;
 - repository identity when available;
 - branch;
 - compatible Git SHA;
-- thread working directory;
+- persisted thread cwd;
 - recency.
 
-This matters when projects are moved, renamed, duplicated, checked out on another branch, or when multiple Codex conversations exist for similar paths.
+Threads started from a subdirectory of the same Git repository can still match safely.
 
-If Rootbound cannot establish a safe enough match, it returns structured ambiguity instead of pretending it found the right session.
+Moved/renamed stale workspaces do not silently become false-positive resumptions. Genuine ambiguity is returned as structured candidates instead of guessed.
 
 ---
 
-## Rescue rollback
+## Drift detection and rescue rollback
 
-When ChatGPT continues work through a Rootbound rescue session, Rootbound records supported mutations it makes after the rescue baseline.
+During an active rescue, Rootbound tracks the known worktree state.
 
-That allows it to restore those changes later without rewinding unrelated work that was already in the repository.
+Unexpected branch, HEAD, or tracked-file drift causes write/handoff operations to stop and require reinspection.
 
-Important behavior:
+For supported Rootbound mutations:
 
-- pre-existing dirty files are preserved;
-- external changes after Rootbound's recorded SHA cause rollback refusal;
-- arbitrary write-capable commands can reduce rollback coverage to partial;
-- sensitive or unsupported snapshots are not treated as safely reversible;
-- partial coverage causes a global rescue rollback to fail closed;
-- `git reset` is never used for rescue rollback.
+- the rescue baseline is recorded first;
+- pre-existing dirty work is preserved;
+- file existence/hash guards are checked before restore;
+- external edits after Rootbound's last known state cause rollback refusal;
+- sensitive/unsupported snapshots are not treated as safely reversible;
+- arbitrary write-capable commands can reduce global rollback coverage to `partial`;
+- partial coverage causes rescue rollback to fail closed;
+- `git reset` is never used.
 
 ---
 
 ## Persistence
 
-Rootbound stores durable local state in SQLite, including:
+Rootbound stores durable local state in SQLite, including registered projects, continuity bindings/events/checkpoints, durable command metadata, and bounded incremental command output.
 
-- registered projects;
-- continuity bindings;
-- continuity events and checkpoints;
-- durable command metadata;
-- bounded incremental command output.
+The application tree is separate from persistent state so staged upgrades can replace the installed app without replacing user state.
 
-The installed application tree is kept separate from the persistent state tree so staged upgrades can replace the app without replacing user state.
-
-### macOS layout
+### macOS
 
 ```text
 ~/Library/Application Support/Rootbound/
@@ -425,7 +848,7 @@ The installed application tree is kept separate from the persistent state tree s
 └── backups/
 ```
 
-### Windows layout
+### Windows
 
 ```text
 %LOCALAPPDATA%\Rootbound\
@@ -440,33 +863,33 @@ The installed application tree is kept separate from the persistent state tree s
 
 ## Security model
 
-Rootbound is designed to fail closed around local authority.
+Rootbound is designed to fail closed around local Codex authority.
 
 - project trust is exact-root and explicit;
 - Rootbound does not silently widen Codex permissions;
-- trust mutations are backed up first;
-- guided tunnel setup validates before changing Codex trust;
-- the runtime API key is kept out of `tunnel.json`, SQLite, process argv and normal Rootbound logs;
-- durable command argv containing detectable credentials is refused;
-- common sensitive files are excluded from normal search/read flows unless explicitly requested;
-- sensitive edits do not create local undo snapshots;
-- diagnostics redact credentials, home paths and sensitive thread data;
-- command stdout/stderr and thread previews are excluded from diagnostic exports;
-- nested Codex model/CLI launches are blocked from the model-free execution lane.
+- trust mutation is backed up before modification;
+- tunnel validation happens before Codex trust mutation;
+- the guided tunnel runtime key is kept out of `tunnel.json`, SQLite, process argv and normal Rootbound logs;
+- durable argv containing detectable credentials is refused;
+- common sensitive files are excluded from ordinary read/search flows unless explicitly requested;
+- sensitive precise edits do not create undo snapshots;
+- diagnostics redact credentials, home paths and sensitive thread information;
+- diagnostic export excludes command stdout/stderr and thread previews;
+- the public execution lane blocks nested Codex model/CLI launches.
 
-See [`SECURITY.md`](SECURITY.md) for the full security boundary.
+See [`SECURITY.md`](SECURITY.md) for the complete security boundary.
 
 ---
 
 ## Advanced / manual tunnel configuration
 
-Most users should use:
+Most users should **not** use this section. The normal setup is:
 
 ```sh
 rootbound connect .
 ```
 
-Manual tunnel configuration exists only as an operator/debug escape hatch.
+Manual tunnel configuration remains available as an operator/debug escape hatch.
 
 Example:
 
@@ -474,19 +897,19 @@ Example:
 rootbound tunnel configure --argv-json '["tunnel-client","run","--profile","my-profile"]'
 ```
 
-Inspect it with:
+Inspect it:
 
 ```sh
 rootbound tunnel show
 ```
 
-Remove the manual override with:
+Remove it:
 
 ```sh
 rootbound tunnel clear
 ```
 
-`ROOTBOUND_TUNNEL_ARGV_JSON` can also be used as a temporary environment override for advanced/debug use.
+`ROOTBOUND_TUNNEL_ARGV_JSON` can also be used as a temporary advanced/debug override.
 
 Persistent manual tunnel configuration rejects detectable literal credentials.
 
@@ -494,7 +917,7 @@ Persistent manual tunnel configuration rejects detectable literal credentials.
 
 ## Non-interactive setup
 
-For automation where trust approval and tunnel credentials are already supplied locally:
+For automation where the tunnel ID, runtime key, and trust decision are already supplied intentionally:
 
 ```sh
 CONTROL_PLANE_TUNNEL_ID=tunnel_... \
@@ -502,9 +925,9 @@ CONTROL_PLANE_API_KEY=... \
 rootbound connect . --yes
 ```
 
-`--yes` does not invent missing values. If setup cannot be completed safely without prompting, Rootbound fails closed.
+`--yes` does not invent missing tunnel credentials. If setup cannot be resolved safely without prompting, Rootbound fails closed.
 
-To configure trust and register a project without starting the tunnel runtime:
+To register/trust a project without starting the tunnel runtime:
 
 ```sh
 rootbound connect . --yes --no-start
@@ -520,39 +943,39 @@ Install dependencies:
 npm ci
 ```
 
-Run the focused Rootbound test suite:
+Run the focused implementation suite:
 
 ```sh
 npm run test:v5
 ```
 
-Run the full repository suite:
+Run the complete repository suite:
 
 ```sh
 npm test
 ```
 
-Run the full release validation:
+Run release validation:
 
 ```sh
 npm run validate:release
 ```
 
-Start the stdio server directly:
+Start stdio directly:
 
 ```sh
 npm run start:stdio
 ```
 
-Start the HTTP server directly:
+Start HTTP directly:
 
 ```sh
 npm run start:http
 ```
 
-The public tool contract is defined in [`src/surface-contracts.mjs`](src/surface-contracts.mjs).
+The canonical public tool list lives in [`src/surface-contracts.mjs`](src/surface-contracts.mjs).
 
-The internal implementation and acceptance plan lives in [`docs/plans/rootbound-v5.md`](docs/plans/rootbound-v5.md). Version-specific implementation notes belong there rather than in the public product story above.
+Version-specific implementation plans and acceptance checklists live in [`docs/plans/rootbound-v5.md`](docs/plans/rootbound-v5.md) rather than in the public product story above.
 
 ---
 
