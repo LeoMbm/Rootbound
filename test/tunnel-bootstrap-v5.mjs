@@ -72,6 +72,7 @@ assert.equal(profile.includes(secret), false, "managed tunnel profile must not c
 
 const persistedStatus = tunnelConfigStatus({ paths, env: {} });
 assert.equal(persistedStatus.configured, true);
+assert.equal(persistedStatus.tunnelId, tunnelA);
 assert.deepEqual(persistedStatus.argv, ["tunnel-client", "run", "--profile-file", paths.tunnelManagedProfilePath]);
 assert.equal(JSON.stringify(persistedStatus).includes(secret), false);
 

@@ -427,7 +427,7 @@ async function hasExistingExactTrust(configPath, root) {
 
 async function confirmRootboundPermissionProfile() {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new CliUsageError("connect requires explicit approval in non-interactive mode; retry with --yes to install the Rootbound Codex permission profile");
+    throw new CliUsageError("connect requires explicit approval in non-interactive mode; retry with --yes to approve the Rootbound runtime-only permission contract");
   }
   process.stdout.write(`\nRootbound local permissions\nRootbound uses a dedicated runtime-only Codex permission profile so it can stage/commit Git changes and run outbound commands such as git push.\nThe profile extends :workspace, grants write access to .git inside the active workspace, enables outbound network access, and is injected only into Codex App Server processes launched by Rootbound.\nIt does not modify ~/.codex/config.toml or Codex's global/default permission profile.\n`);
   if (!await askYesNo("Allow Rootbound to use these local permissions? [Y/n] ", true)) throw new CliUsageError("connect cancelled; Rootbound permission consent was not recorded");

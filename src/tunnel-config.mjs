@@ -51,10 +51,31 @@ export function tunnelConfigStatus({ paths = resolveRootboundPaths(), env = proc
   }
   try {
     const payload = readPersistent(paths.tunnelConfigPath);
-    return { configured: true, source: "persistent", path: paths.tunnelConfigPath, argv: redactTemplateArgv(payload.argv), envPlaceholders: envNames(payload.argv) };
+    return {
+      configured: true,
+      source: "persistent",
+      path: paths.tunnelConfigPath,
+      argv: redactTemplateArgv(payload.argv),
+      envPlaceholders: envNames(payload.argv),
+      tunnelId: managedTunnelId(payload.argv, paths),
+    };
   } catch (error) {
     if (error?.code === "ENOENT") return { configured: false, source: null, path: paths.tunnelConfigPath, argv: null, envPlaceholders: [] };
     throw error;
+  }
+}
+
+function managedTunnelId(argv, paths) {
+  const profileFlag = argv.findIndex((value) => value === "--profile-file");
+  if (profileFlag < 0 || !argv[profileFlag + 1]) return null;
+  const requestedProfile = path.resolve(argv[profileFlag + 1]);
+  const managedProfile = path.resolve(paths.tunnelManagedProfilePath);
+  if (requestedProfile !== managedProfile) return null;
+  try {
+    const profile = readFileSync(managedProfile, "utf8");
+    return profile.match(/\btunnel_id\s*:\s*["']?(tunnel_[a-z0-9]{32})["']?/)?.[1] ?? null;
+  } catch {
+    return null;
   }
 }
 

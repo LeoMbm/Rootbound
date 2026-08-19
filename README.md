@@ -82,18 +82,47 @@ The setup has five parts:
 
 Once this first setup is done, normal daily use is much shorter.
 
+### The whole flow at a glance
+
+If you only want the map before reading the details, it is this:
+
+```text
+Install Git + Node + Codex + tunnel-client
+                ↓
+Clone and install Rootbound
+                ↓
+cd into YOUR project
+                ↓
+rootbound connect .
+                ↓
+Approve the exact project + Rootbound local permissions
+                ↓
+Add a ChatGPT custom connector using the same tunnel_... ID
+                ↓
+Ask ChatGPT: @Rootbound show me the Git status
+```
+
 ---
 
 ## Step 1 — Install the prerequisites
 
 Rootbound currently requires:
 
+- **Git**
 - **Node.js 22.13 or newer**
 - **Codex installed locally**
 - OpenAI **`tunnel-client`**
 - a ChatGPT account/workspace that can use custom MCP apps/connectors with the actions you need
 
 ### 1.1 Check Node.js
+
+First make sure Git is available:
+
+```sh
+git --version
+```
+
+Then check Node.js.
 
 Open Terminal on macOS, or PowerShell / Command Prompt on Windows:
 
@@ -137,7 +166,7 @@ tunnel-client --help
 
 If that command works, continue.
 
-> You do not need to manually write a tunnel YAML profile for Rootbound. `rootbound connect .` creates and manages the Rootbound profile for you.
+> You do not need to manually write a tunnel YAML profile for Rootbound. `rootbound connect .` creates and manages the Rootbound **tunnel-client profile** for you. This is separate from the Codex permission profile explained later.
 
 ---
 
@@ -214,6 +243,8 @@ Then run:
 ```sh
 rootbound connect .
 ```
+
+You may see a Node warning saying that SQLite is experimental. That warning comes from the Node.js SQLite API used by Rootbound and does **not** mean setup failed. Continue unless Rootbound itself prints an error.
 
 This is the **Normal setup: one command**. The guided one-command flow handles the tunnel, Codex trust, project registration, validation, and runtime startup.
 
@@ -309,8 +340,12 @@ The first time, Rootbound asks before enabling it for Rootbound:
 
 ```text
 Rootbound local permissions
-Rootbound uses a dedicated Codex permission profile so it can stage/commit Git changes
-and run outbound commands such as git push.
+Rootbound uses a dedicated runtime-only Codex permission profile so it can stage/commit
+Git changes and run outbound commands such as git push.
+The profile extends :workspace, grants write access to .git inside the active workspace,
+enables outbound network access, and is injected only into Codex App Server processes
+launched by Rootbound.
+It does not modify ~/.codex/config.toml or Codex's global/default permission profile.
 
 Allow Rootbound to use these local permissions? [Y/n]
 ```
@@ -357,6 +392,8 @@ ChatGPT connector settings: https://chatgpt.com/#settings/Connectors
 
 At this point the local side is ready.
 
+Rootbound can now perform ordinary Git write operations through the approved runtime profile, including `git add`, `git commit`, and outbound operations such as `git push` when you explicitly ask ChatGPT to do them.
+
 ---
 
 ## Step 4 — Add Rootbound to ChatGPT
@@ -398,6 +435,19 @@ Then either:
 - select the tunnel from the list; or
 - paste the **same `tunnel_...` ID** that Rootbound used in Step 3.
 
+If you do not remember the tunnel ID, run:
+
+```sh
+rootbound tunnel show
+```
+
+For a Rootbound-managed tunnel, the output includes:
+
+```text
+Tunnel: configured
+Tunnel ID: tunnel_...
+```
+
 Save/enable the connector.
 
 > The tunnel in ChatGPT and the tunnel used by Rootbound must be the same tunnel ID.
@@ -433,6 +483,14 @@ Then try:
 ```
 
 If those work, your setup is complete.
+
+You can then test a write workflow explicitly, for example:
+
+```text
+@Rootbound update the README, show me the diff, commit it, and push it
+```
+
+Rootbound will execute those local Git commands through the approved runtime-only Codex profile; ChatGPT still performs the reasoning.
 
 For a local health check you can also run:
 
@@ -492,6 +550,8 @@ Your ChatGPT Rootbound connector can stay the same because it points to the same
 ```sh
 rootbound start /path/to/project
 ```
+
+If Rootbound was upgraded to a version whose local permission contract changed, `start` may tell you to run `rootbound connect .` once first. That is intentional: Rootbound requires fresh local consent before using a changed `.git` / network permission contract.
 
 ## Check which project is active
 
@@ -959,6 +1019,8 @@ CONTROL_PLANE_TUNNEL_ID=tunnel_... \
 CONTROL_PLANE_API_KEY=... \
 rootbound connect . --yes
 ```
+
+`--yes` also records consent for the **current Rootbound runtime permission contract** (`.git` write access inside the workspace + outbound network access). Use it only in automation where that authority has already been approved intentionally.
 
 `--yes` does not invent missing tunnel credentials. If setup cannot be resolved safely without prompting, Rootbound fails closed.
 

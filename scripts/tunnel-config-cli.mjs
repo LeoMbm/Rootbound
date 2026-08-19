@@ -86,6 +86,7 @@ function emit(value, json) {
   } else if (value.action === "status") {
     process.stdout.write(`Tunnel: ${value.configured ? "configured" : "not configured"}\n`);
     if (value.source) process.stdout.write(`Source: ${value.source}\n`);
+    if (value.tunnelId) process.stdout.write(`Tunnel ID: ${value.tunnelId}\n`);
     if (value.path) process.stdout.write(`Config: ${value.path}\n`);
     if (value.argv) process.stdout.write(`Argv: ${value.argv.join(" ")}\n`);
     if (value.envPlaceholders?.length) process.stdout.write(`Required environment: ${value.envPlaceholders.join(", ")}\n`);
