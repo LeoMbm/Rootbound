@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
 DEFAULT_INSTALL_DIR="$HOME/Library/Application Support/Rootbound/app"
 DEFAULT_STATE_DIR="$HOME/Library/Application Support/Rootbound"
 INSTALL_DIR=$DEFAULT_INSTALL_DIR
@@ -87,6 +88,17 @@ fail() {
   exit 1
 }
 
+stop_runtime_before_uninstall() {
+  [ -f "$INSTALL_DIR/bin/rootbound-entry.mjs" ] || return 0
+  if ROOTBOUND_HOME="$STATE_DIR" "$NODE" "$INSTALL_DIR/bin/rootbound-entry.mjs" stop --json >/dev/null 2>&1; then
+    return 0
+  fi
+  if ROOTBOUND_HOME="$STATE_DIR" "$NODE" "$INSTALL_DIR/bin/rootbound-entry.mjs" stop --force --json >/dev/null 2>&1; then
+    return 0
+  fi
+  fail "Unable to stop the Rootbound runtime before uninstall; refusing to remove the installed app while it may still be running."
+}
+
 if [ ! -e "$INSTALL_DIR" ]; then
   remove_cli_link
   if [ "$PURGE_STATE" -eq 1 ] && [ -e "$STATE_DIR" ]; then rm -rf "$STATE_DIR"; fi
@@ -99,6 +111,8 @@ fi
 PACKAGE_NAME=$($NODE -e 'const p=require(process.argv[1]); process.stdout.write(String(p.name || ""));' "$INSTALL_DIR/package.json" 2>/dev/null || true)
 [ "$PACKAGE_NAME" = "rootbound" ] || fail "Refusing to remove directory whose package name is not rootbound: $INSTALL_DIR"
 PACKAGE_VERSION=$($NODE -e 'const p=require(process.argv[1]); process.stdout.write(String(p.version || ""));' "$INSTALL_DIR/package.json" 2>/dev/null || true)
+
+stop_runtime_before_uninstall
 
 cd /private/tmp
 remove_cli_link

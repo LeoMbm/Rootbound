@@ -12,6 +12,9 @@ const readmeZh = await readFile(path.join(root, "README.zh-CN.md"), "utf8");
 const security = await readFile(path.join(root, "SECURITY.md"), "utf8");
 const installSh = await readFile(path.join(root, "scripts", "install.sh"), "utf8");
 const installPs1 = await readFile(path.join(root, "scripts", "install.ps1"), "utf8");
+const uninstallSh = await readFile(path.join(root, "scripts", "uninstall.sh"), "utf8");
+const uninstallPs1 = await readFile(path.join(root, "scripts", "uninstall.ps1"), "utf8");
+const rootboundEntry = await readFile(path.join(root, "bin", "rootbound-entry.mjs"), "utf8");
 const upgradeScript = await readFile(path.join(root, "scripts", "upgrade.mjs"), "utf8");
 const tunnelBootstrap = await readFile(path.join(root, "src", "tunnel-bootstrap.mjs"), "utf8");
 const tunnelCli = await readFile(path.join(root, "scripts", "tunnel-config-cli.mjs"), "utf8");
@@ -66,6 +69,11 @@ assert.match(installPs1, /"docs"/);
 assert.match(installPs1, /Join-Path \(Join-Path \$env:LOCALAPPDATA "Rootbound"\) "app"/);
 assert.match(installPs1, /Refusing to replace a Git checkout/);
 assert.match(upgradeScript, /Refusing in-place self-upgrade/);
+assert.match(uninstallSh, /stop_runtime_before_uninstall/);
+assert.match(uninstallSh, /stop --force --json/);
+assert.match(uninstallPs1, /stop --force --json/);
+assert.match(rootboundEntry, /rootbound project remove/);
+assert.match(rootboundEntry, /rootbound trust remove/);
 
 const selfUpgrade = spawnSync(process.execPath, [path.join(root, "scripts", "upgrade.mjs"), "--from", root, "--json"], {
   cwd: root,

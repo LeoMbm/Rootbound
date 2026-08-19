@@ -21,6 +21,23 @@ try {
     if ($package.name -ne "rootbound") {
       throw "Refusing to remove directory whose package name is not rootbound: $InstallDir"
     }
+    $node = (Get-Command node.exe, node -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    if (-not $node) { throw "Node.js was not found on PATH; cannot stop the Rootbound runtime safely before uninstall." }
+    $entry = Join-Path $InstallDir "bin\rootbound-entry.mjs"
+    if (Test-Path -LiteralPath $entry) {
+      $previousHome = $env:ROOTBOUND_HOME
+      try {
+        $env:ROOTBOUND_HOME = $RootboundRoot
+        & $node $entry stop --json | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+          & $node $entry stop --force --json | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Unable to stop the Rootbound runtime before uninstall." }
+        }
+      } finally {
+        if ($null -eq $previousHome) { Remove-Item Env:ROOTBOUND_HOME -ErrorAction SilentlyContinue }
+        else { $env:ROOTBOUND_HOME = $previousHome }
+      }
+    }
     Set-Location $env:TEMP
     Remove-Item -LiteralPath $InstallDir -Recurse -Force
   }
