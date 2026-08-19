@@ -24,7 +24,7 @@ if (command === "help" || command === "--help" || command === "-h") {
 } else if (command === "tunnel") {
   process.exitCode = await runScript("tunnel-config-cli.mjs", args.slice(1));
 } else {
-  await import("./codexless.mjs");
+  await import("./rootbound.mjs");
 }
 
 async function runScript(scriptName, forwarded) {
@@ -41,5 +41,5 @@ async function runScript(scriptName, forwarded) {
 }
 
 function printHelp() {
-  process.stdout.write(`Codexless V5\n\nUsage:\n  codexless connect [path] [--yes] [--no-start] [--json]\n  codexless start [path] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless self-test [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless diagnostic [--output file] [--json]\n  codexless tunnel configure --argv-json '<json argv>'\n  codexless tunnel configure -- <argv...>\n  codexless tunnel show [--json]\n  codexless tunnel clear [--json]\n  codexless stop [--force] [--json]\n  codexless upgrade --from <release-directory> [--json]\n  codexless version\n\nTrust is exact-root and explicit. Persistent tunnel config refuses literal credentials; use {env:VARIABLE} placeholders for secrets. No Codex model is started by self-test or the public model-free tool surface.\n`);
+  process.stdout.write(`Rootbound V5\n\nUsage:\n  rootbound connect [path] [--yes] [--no-start] [--json]\n  rootbound start [path] [--json]\n  rootbound status [path] [--json]\n  rootbound doctor [path] [--json]\n  rootbound self-test [path] [--json]\n  rootbound logs [--bytes N] [--follow] [--json]\n  rootbound diagnostic [--output file] [--json]\n  rootbound tunnel configure --argv-json '<json argv>'\n  rootbound tunnel configure -- <argv...>\n  rootbound tunnel show [--json]\n  rootbound tunnel clear [--json]\n  rootbound stop [--force] [--json]\n  rootbound upgrade --from <release-directory> [--json]\n  rootbound version\n\nTrust is exact-root and explicit. Persistent tunnel config refuses literal credentials; use {env:VARIABLE} placeholders for secrets. No Codex model is started by self-test or the public model-free tool surface.\n`);
 }

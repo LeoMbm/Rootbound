@@ -5,7 +5,7 @@ export async function readRuntimeState(paths) {
     return JSON.parse(await readFile(paths.runtimeStatePath, "utf8"));
   } catch (error) {
     if (error?.code === "ENOENT") return null;
-    if (error instanceof SyntaxError) throw new Error(`Invalid Codexless runtime state: ${paths.runtimeStatePath}`);
+    if (error instanceof SyntaxError) throw new Error(`Invalid Rootbound runtime state: ${paths.runtimeStatePath}`);
     throw error;
   }
 }

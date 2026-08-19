@@ -58,7 +58,7 @@ if (authority && executor) {
   });
 
   await runCheck("command-exec", async () => {
-    const marker = `codexless-self-test-command-${process.pid}`;
+    const marker = `rootbound-self-test-command-${process.pid}`;
     const result = await executor.exec({
       command: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(marker)})`],
       cwd,
@@ -70,8 +70,8 @@ if (authority && executor) {
   });
 
   await runCheck("write-cleanup", async () => {
-    const marker = `codexless-self-test-write-${process.pid}-${Date.now()}`;
-    const filename = `.codexless-self-test-${process.pid}-${Date.now()}.tmp`;
+    const marker = `rootbound-self-test-write-${process.pid}-${Date.now()}`;
+    const filename = `.rootbound-self-test-${process.pid}-${Date.now()}.tmp`;
     const script = `const fs=require('node:fs');const p=${JSON.stringify(filename)};const marker=${JSON.stringify(marker)};let ok=false;try{fs.writeFileSync(p,marker,'utf8');ok=fs.readFileSync(p,'utf8')===marker;process.stdout.write(ok?marker:'mismatch');}finally{try{fs.unlinkSync(p);}catch{}}`;
     const result = await executor.exec({
       command: [process.execPath, "-e", script],
@@ -98,7 +98,7 @@ const result = {
 
 if (args.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 else {
-  process.stdout.write(`Codexless self-test: ${ok ? "PASS" : "FAIL"}\n`);
+  process.stdout.write(`Rootbound self-test: ${ok ? "PASS" : "FAIL"}\n`);
   process.stdout.write(`${PUBLIC_SURFACE_VERSION} | ${PUBLIC_TOOL_NAMES.length} tools | model-free\n`);
   for (const check of checks) {
     process.stdout.write(`[${check.ok ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}\n`);

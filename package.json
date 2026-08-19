@@ -1,20 +1,20 @@
 {
-  "name": "codexless",
+  "name": "rootbound",
   "version": "0.1.0-preview.0",
   "private": true,
   "license": "Apache-2.0",
   "description": "Windows and Apple Silicon macOS Technical Preview: let ChatGPT do local coding work through verified model-free Codex App Server primitives.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/LeoMbm/Codexless.git"
+    "url": "git+https://github.com/LeoMbm/Rootbound.git"
   },
-  "homepage": "https://github.com/LeoMbm/Codexless#readme",
+  "homepage": "https://github.com/LeoMbm/Rootbound#readme",
   "bugs": {
-    "url": "https://github.com/LeoMbm/Codexless/issues"
+    "url": "https://github.com/LeoMbm/Rootbound/issues"
   },
   "type": "module",
   "bin": {
-    "codexless": "bin/codexless-entry.mjs"
+    "rootbound": "bin/rootbound-entry.mjs"
   },
   "engines": {
     "node": ">=22.13.0"
@@ -49,20 +49,20 @@
     "src",
     "config",
     "scripts",
-    "bin/codexless-entry.mjs",
-    "bin/codexless.mjs",
-    "bin/codexless.cmd",
-    "bin/codexless.sh",
-    "bin/codexless-doctor.cmd",
-    "bin/codexless-http.cmd",
-    "bin/codexless-install.cmd",
-    "bin/codexless-stdio.cmd",
-    "bin/codexless-doctor.sh",
-    "bin/codexless-http.sh",
-    "bin/codexless-install.sh",
-    "bin/codexless-stdio.sh",
-    "bin/codexless-uninstall.sh",
-    "docs/plans/codexless-v5.md",
+    "bin/rootbound-entry.mjs",
+    "bin/rootbound.mjs",
+    "bin/rootbound.cmd",
+    "bin/rootbound.sh",
+    "bin/rootbound-doctor.cmd",
+    "bin/rootbound-http.cmd",
+    "bin/rootbound-install.cmd",
+    "bin/rootbound-stdio.cmd",
+    "bin/rootbound-doctor.sh",
+    "bin/rootbound-http.sh",
+    "bin/rootbound-install.sh",
+    "bin/rootbound-stdio.sh",
+    "bin/rootbound-uninstall.sh",
+    "docs/plans/rootbound-v5.md",
     "npm-shrinkwrap.json",
     "README.md",
     "README.zh-CN.md",

@@ -4,15 +4,15 @@ import process from "node:process";
 const require = createRequire(import.meta.url);
 const { Client, StreamableHTTPClientTransport } = require("@modelcontextprotocol/client");
 
-const endpoint = process.env.CODEXLESS_SOAK_URL ?? "http://127.0.0.1:7690/mcp";
-const cwd = process.env.CODEXLESS_SOAK_CWD ?? process.cwd();
-const iterations = Number.parseInt(process.env.CODEXLESS_SOAK_ITERATIONS ?? "20", 10);
+const endpoint = process.env.ROOTBOUND_SOAK_URL ?? "http://127.0.0.1:7690/mcp";
+const cwd = process.env.ROOTBOUND_SOAK_CWD ?? process.cwd();
+const iterations = Number.parseInt(process.env.ROOTBOUND_SOAK_ITERATIONS ?? "20", 10);
 
 if (!Number.isInteger(iterations) || iterations < 1 || iterations > 200) {
-  throw new Error("CODEXLESS_SOAK_ITERATIONS must be an integer between 1 and 200");
+  throw new Error("ROOTBOUND_SOAK_ITERATIONS must be an integer between 1 and 200");
 }
 
-const client = new Client({ name: "codexless-http-soak", version: "0.1.0" });
+const client = new Client({ name: "rootbound-http-soak", version: "0.1.0" });
 const transport = new StreamableHTTPClientTransport(new URL(endpoint));
 
 await client.connect(transport);

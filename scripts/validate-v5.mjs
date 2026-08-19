@@ -17,7 +17,7 @@ for (const check of checks) {
 }
 
 const ok = results.every((result) => result.ok);
-process.stdout.write(`\nCodexless V5 validation: ${ok ? "PASS" : "FAIL"}\n`);
+process.stdout.write(`\nRootbound V5 validation: ${ok ? "PASS" : "FAIL"}\n`);
 for (const result of results) process.stdout.write(`[${result.ok ? "PASS" : "FAIL"}] ${result.label}\n`);
 if (!ok) {
   process.stdout.write("GitHub Actions was not triggered. Fix the local/trusted-machine validation first, then run one controlled manual Actions matrix.\n");

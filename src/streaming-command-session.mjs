@@ -39,7 +39,7 @@ export async function openStreamingCommandSession({
     requestTimeoutMs: Math.max(timeoutMs + 15_000, 30_000),
     initializeCapabilities: { experimentalApi: true },
     stderrHandler: () => {},
-    clientInfo: { name: "codexless_streaming_command", title: "Codexless Streaming Command", version: "0.1.0" },
+    clientInfo: { name: "rootbound_streaming_command", title: "Rootbound Streaming Command", version: "0.1.0" },
   });
   await client.start();
 

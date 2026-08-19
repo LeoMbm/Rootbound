@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$InstallDir = (Join-Path (Join-Path $env:LOCALAPPDATA "Codexless") "app"),
+  [string]$InstallDir = (Join-Path (Join-Path $env:LOCALAPPDATA "Rootbound") "app"),
   [switch]$Json
 )
 
@@ -9,7 +9,7 @@ $ProgressPreference = "SilentlyContinue"
 $SourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 $ParentDir = Split-Path -Parent $InstallDir
-$StageDir = Join-Path $ParentDir ("Codexless-stage-" + [guid]::NewGuid().ToString("N"))
+$StageDir = Join-Path $ParentDir ("Rootbound-stage-" + [guid]::NewGuid().ToString("N"))
 $BackupDir = $null
 $Installed = $false
 
@@ -51,7 +51,7 @@ function Assert-NodeV5 {
   $major = [int]$parts[0]
   $minor = [int]$parts[1]
   if ($major -lt 22 -or ($major -eq 22 -and $minor -lt 13)) {
-    throw "Codexless V5 requires Node.js 22.13+. Current: v$version"
+    throw "Rootbound V5 requires Node.js 22.13+. Current: v$version"
   }
   return $version
 }
@@ -72,7 +72,7 @@ function Copy-ReleaseTree {
 
   $shrinkwrap = Join-Path $From "npm-shrinkwrap.json"
   $packageLock = Join-Path $From "package-lock.json"
-  $selfDeletingBatchWrapper = Join-Path $To "bin\codexless-uninstall.cmd"
+  $selfDeletingBatchWrapper = Join-Path $To "bin\rootbound-uninstall.cmd"
   if (Test-Path -LiteralPath $selfDeletingBatchWrapper) { Remove-Item -LiteralPath $selfDeletingBatchWrapper -Force }
 
   if (Test-Path -LiteralPath $shrinkwrap) {
@@ -89,14 +89,14 @@ function Run-DoctorJson {
   $doctor = Join-Path $Root "scripts\doctor.mjs"
   $text = (& $Node $doctor --json | Out-String).Trim()
   $exit = $LASTEXITCODE
-  if (-not $text) { throw "Codexless doctor returned no output." }
+  if (-not $text) { throw "Rootbound doctor returned no output." }
   $parsed = $text | ConvertFrom-Json
-  if ($exit -ne 0 -or $parsed.status -eq "error") { throw "Codexless doctor failed in $Root.`n$text" }
+  if ($exit -ne 0 -or $parsed.status -eq "error") { throw "Rootbound doctor failed in $Root.`n$text" }
   return $parsed
 }
 
 try {
-  if ($env:OS -ne "Windows_NT") { throw "Codexless Technical Preview installer currently supports Windows only." }
+  if ($env:OS -ne "Windows_NT") { throw "Rootbound Technical Preview installer currently supports Windows only." }
 
   $node = Get-RequiredCommand -Names @("node.exe", "node") -Label "Node.js"
   $npm = Get-RequiredCommand -Names @("npm.cmd", "npm") -Label "npm"
@@ -116,11 +116,12 @@ try {
   } finally { Pop-Location }
 
   if (Test-Path -LiteralPath $InstallDir) {
+    if (Test-Path -LiteralPath (Join-Path $InstallDir ".git")) { throw "Refusing to replace a Git checkout: $InstallDir" }
     $installedPackage = Join-Path $InstallDir "package.json"
-    if (-not (Test-Path -LiteralPath $installedPackage)) { throw "Refusing to replace a non-Codexless-looking directory: $InstallDir" }
+    if (-not (Test-Path -LiteralPath $installedPackage)) { throw "Refusing to replace a non-Rootbound-looking directory: $InstallDir" }
     $existingName = (Get-Content -LiteralPath $installedPackage -Raw | ConvertFrom-Json).name
-    if ($existingName -ne "codexless") { throw "Refusing to replace directory whose package name is not codexless: $InstallDir" }
-    $BackupDir = Join-Path $ParentDir ("Codexless-backup-" + [guid]::NewGuid().ToString("N"))
+    if ($existingName -ne "rootbound") { throw "Refusing to replace directory whose package name is not rootbound: $InstallDir" }
+    $BackupDir = Join-Path $ParentDir ("Rootbound-backup-" + [guid]::NewGuid().ToString("N"))
     Move-Item -LiteralPath $InstallDir -Destination $BackupDir
   }
 
@@ -156,23 +157,23 @@ try {
     codexResolutionSource = $codexResolution.source
     doctorStatus = $installedDoctor.status
     commands = [ordered]@{
-      codexless = (Join-Path $InstallDir "bin\codexless.cmd")
-      doctor = (Join-Path $InstallDir "bin\codexless-doctor.cmd")
-      http = (Join-Path $InstallDir "bin\codexless-http.cmd")
-      stdio = (Join-Path $InstallDir "bin\codexless-stdio.cmd")
+      rootbound = (Join-Path $InstallDir "bin\rootbound.cmd")
+      doctor = (Join-Path $InstallDir "bin\rootbound-doctor.cmd")
+      http = (Join-Path $InstallDir "bin\rootbound-http.cmd")
+      stdio = (Join-Path $InstallDir "bin\rootbound-stdio.cmd")
       uninstall = ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" -InstallDir "{1}"' -f (Join-Path $InstallDir "scripts\uninstall.ps1"), $InstallDir)
     }
     notes = @(
       "No PATH entry, Windows service, Browser configuration, or Tunnel configuration was changed.",
-      "Re-running a newer Codexless release installer against the same InstallDir performs an upgrade and preserves state outside the install tree."
+      "Re-running a newer Rootbound release installer against the same InstallDir performs an upgrade and preserves state outside the install tree."
     )
   }
 
   if ($Json) { $result | ConvertTo-Json -Depth 6 }
   else {
-    Write-Host "Codexless installed: $($package.version)"
+    Write-Host "Rootbound installed: $($package.version)"
     Write-Host "Location: $InstallDir"
-    Write-Host "CLI:      $($result.commands.codexless)"
+    Write-Host "CLI:      $($result.commands.rootbound)"
     Write-Host "Doctor:   $($result.commands.doctor)"
     Write-Host "HTTP:     $($result.commands.http)"
     Write-Host "No PATH, service, Browser, or Tunnel settings were changed."

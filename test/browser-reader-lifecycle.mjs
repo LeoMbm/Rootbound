@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { CodexBrowserReaderExecutor } from "../src/browser-reader-executor.mjs";
 
-const cwd = path.resolve("C:\\codexless-reader-lifecycle-fixture");
+const cwd = path.resolve("C:\\rootbound-reader-lifecycle-fixture");
 
 class FakeBrowserContext {
   constructor(name) {
@@ -77,7 +77,7 @@ assert.notEqual(tabsA.tabs[0].tabRef, tabsB.tabs[0].tabRef, "each executor keeps
 
 const firstListA = browserCalls(contextA, "List current Chrome tabs")[0];
 const firstListB = browserCalls(contextB, "List current Chrome tabs")[0];
-assert.match(sessionId(firstListA) ?? "", /^codexless-browser-[0-9a-f]{20}$/);
+assert.match(sessionId(firstListA) ?? "", /^rootbound-browser-[0-9a-f]{20}$/);
 assert.equal(sessionId(firstListA), sessionId(firstListB), "same cwd must derive the same stable Browser session across executors");
 assert.notEqual(turnId(firstListA), turnId(firstListB), "separate Browser calls still require unique turn ids");
 

@@ -55,12 +55,12 @@ export function assertNoNestedCodexInvocation(command, { codexBin = null } = {})
   const reason = nestedCodexInvocationReason(command, { codexBin });
   if (!reason) return;
   const error = new Error(
-    "Codexless Local refuses to launch Codex CLI from the ChatGPT-only model-free command lane. " +
+    "Rootbound Local refuses to launch Codex CLI from the ChatGPT-only model-free command lane. " +
     "This public surface intentionally exposes no Codex model or agent delegation path."
   );
   error.code = "CODEX_MODEL_LANE_DISABLED";
   error.nextActions = [
-    "Continue the task with ChatGPT using Codexless model-free tools.",
+    "Continue the task with ChatGPT using Rootbound model-free tools.",
     "Use repo_search/read_many/apply_patch/precise_edit/command_exec as needed.",
     "Open Codex separately only if the user explicitly wants Codex model work.",
   ];

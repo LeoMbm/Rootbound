@@ -1,4 +1,4 @@
-# Codexless V5 — Durable Daily Driver Plan
+# Rootbound V5 — Durable Daily Driver Plan
 
 Status: P0/P1 implementation is substantially complete on `feat/thread-history-continuity`. The core local release suite passed on an Apple Silicon Mac before the guided-connect changes; the new one-command onboarding must now be revalidated before merge.
 
@@ -7,29 +7,29 @@ This document is the durable source of truth for V5. Features existing in source
 ## Product rule
 
 - ChatGPT does the reasoning.
-- Codexless exposes accepted model-free local primitives.
+- Rootbound exposes accepted model-free local primitives.
 - Codex remains the local sandbox / trust authority.
 - No hidden model fallback.
 - No remote caller may widen the local permission ceiling.
 - Daily-driver state survives MCP / runtime restarts.
-- **Normal onboarding is one command: `codexless connect .`. Tunnel plumbing is an implementation detail, not user workflow.**
+- **Normal onboarding is one command: `rootbound connect .`. Tunnel plumbing is an implementation detail, not user workflow.**
 
 ## P0 — implementation
 
 ### Control plane
 
-- [x] `codexless connect .`
+- [x] `rootbound connect .`
 - [x] guided one-command first-run wizard
 - [x] returning exact-trusted project skips repeat trust prompt
-- [x] `codexless start`
-- [x] `codexless status`
-- [x] `codexless stop`
-- [x] `codexless logs`
-- [x] `codexless doctor`
-- [x] `codexless self-test`
-- [x] `codexless upgrade --from <release-dir>`
-- [x] `codexless diagnostic`
-- [x] advanced/manual `codexless tunnel configure/show/clear`
+- [x] `rootbound start`
+- [x] `rootbound status`
+- [x] `rootbound stop`
+- [x] `rootbound logs`
+- [x] `rootbound doctor`
+- [x] `rootbound self-test`
+- [x] `rootbound upgrade --from <release-dir>`
+- [x] `rootbound diagnostic`
+- [x] advanced/manual `rootbound tunnel configure/show/clear`
 
 ### Guided tunnel onboarding
 
@@ -39,14 +39,14 @@ This document is the durable source of truth for V5. Features existing in source
 - [x] prompt for tunnel ID only when discovery is insufficient
 - [x] reuse runtime key from `CONTROL_PLANE_API_KEY` / `OPENAI_API_KEY`
 - [x] hidden interactive runtime-key entry when no key is already available
-- [x] generate Codexless-managed tunnel-client profile
-- [x] launch Codexless directly over stdio; no manual HTTP + tunnel split
-- [x] keep runtime key out of `tunnel.json`, process argv, SQLite and Codexless logs
+- [x] generate Rootbound-managed tunnel-client profile
+- [x] launch Rootbound directly over stdio; no manual HTTP + tunnel split
+- [x] keep runtime key out of `tunnel.json`, process argv, SQLite and Rootbound logs
 - [x] macOS/POSIX secret file mode `0600`
 - [x] Windows current-account ACL hardening with fail-closed setup
 - [x] run `tunnel-client doctor` before Codex trust mutation
 - [x] rollback generated tunnel profile/secret/config on tunnel validation failure
-- [x] `codexless tunnel clear` removes guided tunnel profile + secret
+- [x] `rootbound tunnel clear` removes guided tunnel profile + secret
 - [x] manual argv/profile flow retained only as an advanced/debug escape hatch
 
 ### Runtime
@@ -95,7 +95,7 @@ This document is the durable source of truth for V5. Features existing in source
 
 ### Surface compatibility
 
-- [x] public surface = `codexless-public-preview-v5`
+- [x] public surface = `rootbound-public-preview-v5`
 - [x] canonical tool list in `src/surface-contracts.mjs`
 - [x] current public tool count = 27
 - [x] dynamic doctor validation (no fixed tool-count dependency)
@@ -141,7 +141,7 @@ This document is the durable source of truth for V5. Features existing in source
 
 ### Diagnostics / observability
 
-- [x] `codexless diagnostic`
+- [x] `rootbound diagnostic`
 - [x] runtime / project / binding / event information
 - [x] durable-ID correlation
 - [x] runtime log correlation by `runtimeId`
@@ -215,7 +215,7 @@ This document is the durable source of truth for V5. Features existing in source
 - [x] SECURITY rewritten around guided tunnel secret boundary
 - [x] stale Chinese V4 README replaced with explicit V5-sync notice
 - [x] EXPORT_SYNC rewritten around V5 source-of-truth contracts
-- [x] package metadata points at `LeoMbm/Codexless`
+- [x] package metadata points at `LeoMbm/Rootbound`
 - [x] durable plan included in package file list
 
 ## Validation evidence already obtained
@@ -296,8 +296,8 @@ Already proven before the guided wizard:
 Must now be repeated/extended with the new normal flow:
 
 - [ ] stop current runtime
-- [ ] clear Codexless tunnel config/state
-- [ ] run plain `codexless connect .` and verify tunnel discovery/reuse
+- [ ] clear Rootbound tunnel config/state
+- [ ] run plain `rootbound connect .` and verify tunnel discovery/reuse
 - [ ] verify runtime key never echoes and managed secret file is `0600`
 - [ ] verify `tunnel-client doctor` is automatic
 - [ ] verify already trusted project does not prompt again
@@ -317,7 +317,7 @@ Must now be repeated/extended with the new normal flow:
 
 - [ ] fresh install into `app/`
 - [ ] state preservation outside `app/`
-- [ ] plain `codexless connect .` guided tunnel flow
+- [ ] plain `rootbound connect .` guided tunnel flow
 - [ ] current-account ACL applied to guided tunnel key
 - [ ] exact-root trust without repeat prompt
 - [ ] workspace/read/edit/short-command path
@@ -340,7 +340,7 @@ V5 is ready to merge only when:
 1. P0 implementation is complete, including one-command normal onboarding.
 2. P1 implementation is complete or an item is explicitly deferred to P2.
 3. no public tool can silently start a Codex model turn.
-4. normal upgrade cannot delete Codexless state.
+4. normal upgrade cannot delete Rootbound state.
 5. credentials do not enter SQLite, command/tunnel argv, normal metadata, logs or diagnostics; the guided tunnel runtime key is isolated in dedicated private local secret state.
 6. post-wizard `npm run test:v5`, `npm test` and release validation are green on trusted execution.
 7. supported-OS validation is completed before release.

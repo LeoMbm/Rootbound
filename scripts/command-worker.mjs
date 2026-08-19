@@ -1,14 +1,14 @@
 import process from "node:process";
 import { ACCEPTED_CODEX_VERSIONS, CodexAuthorityExecutor } from "../src/codex-authority-executor.mjs";
 import { resolveCodexExecutable } from "../src/codex-bin.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
-const commandId = process.env.CODEXLESS_COMMAND_ID;
-if (!commandId) throw new Error("CODEXLESS_COMMAND_ID is required");
-const store = await openStateStore({ paths: resolveCodexlessPaths() });
+const commandId = process.env.ROOTBOUND_COMMAND_ID;
+if (!commandId) throw new Error("ROOTBOUND_COMMAND_ID is required");
+const store = await openStateStore({ paths: resolveRootboundPaths() });
 const command = store.getCommand(commandId);
-if (!command) { store.close(); throw new Error(`Unknown Codexless command: ${commandId}`); }
+if (!command) { store.close(); throw new Error(`Unknown Rootbound command: ${commandId}`); }
 let terminal = false;
 
 for (const signal of ["SIGINT", "SIGTERM"]) {

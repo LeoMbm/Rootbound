@@ -9,9 +9,9 @@ export function decodeCursor(cursor, kind, signatureInput) {
   if (!cursor) return null;
   let payload;
   try { payload = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")); }
-  catch { throw cursorError("Cursor is not valid Codexless pagination state."); }
+  catch { throw cursorError("Cursor is not valid Rootbound pagination state."); }
   if (payload?.v !== 1 || payload?.kind !== kind || payload?.sig !== signature(signatureInput) || !payload?.state || typeof payload.state !== "object") {
-    throw cursorError("Cursor does not match this request or is from an incompatible Codexless pagination version.");
+    throw cursorError("Cursor does not match this request or is from an incompatible Rootbound pagination version.");
   }
   return payload.state;
 }

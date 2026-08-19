@@ -72,7 +72,7 @@ const consentRef = prepared.structuredContent.meteredConsent.consentRef;
 
 const card = await render({ consentRef });
 assert.equal(card.isError, false);
-const commitToken = card._meta?.codexlessCommitToken;
+const commitToken = card._meta?.rootboundCommitToken;
 assert.match(commitToken ?? "", /^commit_/);
 assert.equal(JSON.stringify(card.structuredContent).includes(commitToken), false);
 assert.equal(card.content[0].text.includes(commitToken), false);
@@ -97,7 +97,7 @@ assert.equal(declinePrepared.isError, false);
 assert.equal(declinePrepared.structuredContent.status, "consent_required");
 const declineConsentRef = declinePrepared.structuredContent.meteredConsent.consentRef;
 const declineCard = await render({ consentRef: declineConsentRef });
-const declineCommitToken = declineCard._meta?.codexlessCommitToken;
+const declineCommitToken = declineCard._meta?.rootboundCommitToken;
 assert.match(declineCommitToken ?? "", /^commit_/);
 
 const declined = await decline({ consentRef: declineConsentRef });

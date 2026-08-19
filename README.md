@@ -1,6 +1,6 @@
 <div align="center">
 
-# Codexless
+# Rootbound
 
 ### ChatGPT gets local coding hands without starting a Codex model turn.
 
@@ -8,11 +8,11 @@
 
 </div>
 
-Codexless exposes a deliberately small, tested, model-free local coding surface to ChatGPT while keeping Codex as the local trust / sandbox authority.
+Rootbound exposes a deliberately small, tested, model-free local coding surface to ChatGPT while keeping Codex as the local trust / sandbox authority.
 
 The V5 goal is simple: **one durable local control plane, one project registry, one persistent state store, one safe public tool contract, and no hidden Codex model fallback.**
 
-> ChatGPT reasons. Codexless executes accepted local primitives. Codex model work remains a separate explicit choice.
+> ChatGPT reasons. Rootbound executes accepted local primitives. Codex model work remains a separate explicit choice.
 
 ---
 
@@ -20,7 +20,7 @@ The V5 goal is simple: **one durable local control plane, one project registry, 
 
 Current public surface:
 
-- `codexless-public-preview-v5`
+- `rootbound-public-preview-v5`
 - 27 public tools
 - no public model catalog
 - no public Codex agent / turn-start surface
@@ -32,7 +32,7 @@ Current public surface:
 - continuity bindings and idempotent checkpoints
 - guarded precise-edit undo / redo
 - paginated project reads and searches
-- **guided one-command tunnel + project setup via `codexless connect .`**
+- **guided one-command tunnel + project setup via `rootbound connect .`**
 - redacted diagnostic export
 
 The exact public tool list is defined in [`src/surface-contracts.mjs`](src/surface-contracts.mjs).
@@ -46,9 +46,9 @@ The exact public tool list is defined in [`src/surface-contracts.mjs`](src/surfa
 - the supported OpenAI `tunnel-client` available on `PATH`
 - Windows or Apple Silicon macOS for the Technical Preview
 
-For the first ChatGPT connection, OpenAI Tunnel still requires a tunnel ID and a runtime API key. **Codexless handles that through its setup wizard; users should not need to configure tunnel profiles, `argv-json`, MCP command flags, or environment placeholders manually.**
+For the first ChatGPT connection, OpenAI Tunnel still requires a tunnel ID and a runtime API key. **Rootbound handles that through its setup wizard; users should not need to configure tunnel profiles, `argv-json`, MCP command flags, or environment placeholders manually.**
 
-Codexless does not install Codex for you and does not silently widen project trust.
+Rootbound does not install Codex for you and does not silently widen project trust.
 
 ---
 
@@ -57,13 +57,13 @@ Codexless does not install Codex for you and does not silently widen project tru
 ### Apple Silicon macOS
 
 ```sh
-sh ./bin/codexless-install.sh
+sh ./bin/rootbound-install.sh
 ```
 
 Default layout:
 
 ```text
-~/Library/Application Support/Codexless/
+~/Library/Application Support/Rootbound/
 ├── app/       # installed release
 ├── state/     # SQLite + private local tunnel setup state
 ├── runtime/   # runtime state
@@ -74,19 +74,21 @@ Default layout:
 CLI:
 
 ```sh
-"$HOME/Library/Application Support/Codexless/app/bin/codexless.sh" help
+rootbound help
 ```
+
+The macOS installer creates `~/.local/bin/rootbound`. If `~/.local/bin` is not already on `PATH`, it adds a small marked block to the current user's login shell profile. Open a new terminal after first install if that PATH entry was newly added.
 
 ### Windows
 
 ```bat
-bin\codexless-install.cmd
+bin\rootbound-install.cmd
 ```
 
 Default layout:
 
 ```text
-%LOCALAPPDATA%\Codexless\
+%LOCALAPPDATA%\Rootbound\
 ├── app\
 ├── state\
 ├── runtime\
@@ -97,7 +99,7 @@ Default layout:
 CLI:
 
 ```bat
-%LOCALAPPDATA%\Codexless\app\bin\codexless.cmd help
+%LOCALAPPDATA%\Rootbound\app\bin\rootbound.cmd help
 ```
 
 The app tree and state tree are intentionally separate so staged upgrades do not replace project state.
@@ -111,7 +113,7 @@ The app tree and state tree are intentionally separate so staged upgrades do not
 From the project you want ChatGPT to work on:
 
 ```sh
-codexless connect .
+rootbound connect .
 ```
 
 That is the normal setup path. The interactive wizard:
@@ -121,12 +123,12 @@ That is the normal setup path. The interactive wizard:
 3. reuses `CONTROL_PLANE_TUNNEL_ID` or an existing local tunnel-client profile when one tunnel can be identified safely;
 4. asks for a tunnel ID only when none can be detected;
 5. reuses an existing runtime API key when present, otherwise asks for it once with hidden terminal input;
-6. writes a Codexless-managed tunnel profile that launches the local **stdio** server directly;
-7. keeps the runtime API key out of `tunnel.json`, SQLite, argv and Codexless logs; on macOS the private local key file is written mode `0600`;
+6. writes a Rootbound-managed tunnel profile that launches the local **stdio** server directly;
+7. keeps the runtime API key out of `tunnel.json`, SQLite, argv and Rootbound logs; on macOS the private local key file is written mode `0600`;
 8. runs `tunnel-client doctor` automatically before changing Codex trust;
 9. asks before adding exact-root Codex trust;
 10. backs up the Codex config before trust mutation;
-11. runs the Codexless doctor against the project and rolls trust back if validation fails;
+11. runs the Rootbound doctor against the project and rolls trust back if validation fails;
 12. registers the project in SQLite;
 13. starts the supervised tunnel runtime.
 
@@ -134,12 +136,12 @@ A typical returning-user flow should therefore be only:
 
 ```sh
 cd my-project
-codexless connect .
+rootbound connect .
 ```
 
 If the tunnel and key were already discovered/configured, the wizard skips those setup questions.
 
-When the runtime is running, Codexless prints the ChatGPT connector settings location so the connector can be created/refreshed while the tunnel is healthy.
+When the runtime is running, Rootbound prints the ChatGPT connector settings location so the connector can be created/refreshed while the tunnel is healthy.
 
 ### Non-interactive setup
 
@@ -148,7 +150,7 @@ For automation where trust approval and tunnel credentials are already supplied 
 ```sh
 CONTROL_PLANE_TUNNEL_ID=tunnel_... \
 CONTROL_PLANE_API_KEY=... \
-codexless connect . --yes
+rootbound connect . --yes
 ```
 
 `--yes` does not invent missing credentials or tunnel IDs; it fails closed if the required setup cannot be resolved without prompting.
@@ -158,21 +160,21 @@ codexless connect . --yes
 To prepare exact-root trust and the project registry without requiring or starting a tunnel:
 
 ```sh
-codexless connect . --yes --no-start
+rootbound connect . --yes --no-start
 ```
 
-This is an advanced/offline path; normal users should use plain `codexless connect .`.
+This is an advanced/offline path; normal users should use plain `rootbound connect .`.
 
 ### Check status
 
 ```sh
-codexless status
+rootbound status
 ```
 
 ### Validate the local lane
 
 ```sh
-codexless self-test .
+rootbound self-test .
 ```
 
 The self-test verifies the accepted Codex App Server path and performs model-free:
@@ -186,9 +188,9 @@ It does **not** start a Codex model turn.
 ### Inspect logs / diagnostics
 
 ```sh
-codexless logs
-codexless logs --follow
-codexless diagnostic
+rootbound logs
+rootbound logs --follow
+rootbound diagnostic
 ```
 
 Diagnostic exports are intentionally redacted and do not include command stdout/stderr or stored thread previews.
@@ -196,27 +198,27 @@ Diagnostic exports are intentionally redacted and do not include command stdout/
 ### Stop
 
 ```sh
-codexless stop
+rootbound stop
 ```
 
 ### Advanced / manual tunnel configuration
 
-The `codexless tunnel ...` commands remain available for operators who intentionally want to override the guided setup. They are **not required for normal onboarding**.
+The `rootbound tunnel ...` commands remain available for operators who intentionally want to override the guided setup. They are **not required for normal onboarding**.
 
 For example, to use an existing tunnel-client profile manually:
 
 ```sh
-codexless tunnel configure --argv-json '["tunnel-client","run","--profile","my-profile"]'
-codexless tunnel show
+rootbound tunnel configure --argv-json '["tunnel-client","run","--profile","my-profile"]'
+rootbound tunnel show
 ```
 
 Remove the manual override/configuration with:
 
 ```sh
-codexless tunnel clear
+rootbound tunnel clear
 ```
 
-`CODEXLESS_TUNNEL_ARGV_JSON` also remains available as a temporary environment override for advanced/debug use. Persistent manual argv config still rejects detectable literal credentials.
+`ROOTBOUND_TUNNEL_ARGV_JSON` also remains available as a temporary environment override for advanced/debug use. Persistent manual argv config still rejects detectable literal credentials.
 
 ---
 
@@ -225,7 +227,7 @@ codexless tunnel clear
 Upgrade from an explicit release directory:
 
 ```sh
-codexless upgrade --from /path/to/new/codexless-release
+rootbound upgrade --from /path/to/new/rootbound-release
 ```
 
 The upgrade path:
@@ -236,7 +238,7 @@ The upgrade path:
 - preserves the external state tree;
 - rolls back the app install when activation fails.
 
-Codexless intentionally does not invent an implicit network updater in V5.
+Rootbound intentionally does not invent an implicit network updater in V5.
 
 ---
 
@@ -318,14 +320,14 @@ The public Browser Reader remains read-first. Arbitrary clicking / typing / navi
 
 ## Security model
 
-Codexless is designed to fail closed around the local Codex authority.
+Rootbound is designed to fail closed around the local Codex authority.
 
 - remote callers cannot select a stronger permission profile than the local ceiling;
 - nested Codex CLI launches from the model-free command lane are rejected;
 - project trust is exact-root and explicit;
 - trust mutation is backed up and rollback-capable;
 - guided tunnel setup validates before trust mutation;
-- the guided tunnel runtime key is kept out of `tunnel.json`, SQLite, process argv and Codexless logs;
+- the guided tunnel runtime key is kept out of `tunnel.json`, SQLite, process argv and Rootbound logs;
 - durable argv containing detectable credentials is refused;
 - manual tunnel templates cannot persist detectable literal credentials;
 - sensitive files are excluded from ordinary search / read flows unless explicitly requested;
@@ -349,7 +351,7 @@ V5 tools progressively use a common machine-readable error shape:
   "retryable": false,
   "nextActions": ["..."],
   "operation": "workspace_open",
-  "surfaceVersion": "codexless-public-preview-v5"
+  "surfaceVersion": "rootbound-public-preview-v5"
 }
 ```
 
@@ -397,7 +399,7 @@ The V5 GitHub Actions workflow is currently **manual-only** while the branch is 
 
 The V5 implementation is still on the feature branch and has not been merged into `main`.
 
-The durable implementation plan / acceptance checklist lives in [`docs/plans/codexless-v5.md`](docs/plans/codexless-v5.md).
+The durable implementation plan / acceptance checklist lives in [`docs/plans/rootbound-v5.md`](docs/plans/rootbound-v5.md).
 
 The core V5 release suite has passed locally on an Apple Silicon Mac during stabilization. The guided one-command setup added afterward must be revalidated before merge.
 
@@ -413,6 +415,6 @@ Known release-validation work still includes:
 
 ## Project status
 
-Codexless is an independent project. It is not an OpenAI product and does not imply OpenAI endorsement.
+Rootbound is an independent project. It is not an OpenAI product and does not imply OpenAI endorsement.
 
 > **Keep working in ChatGPT. Use Codex when you explicitly need Codex.**

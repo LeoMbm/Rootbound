@@ -109,7 +109,7 @@ export function createCommandManager({
       if (platform === "win32") {
         const child = spawnFn(process.execPath, [path.join(packageRoot, "scripts", "command-worker.mjs")], {
           cwd: packageRoot,
-          env: { ...env, CODEXLESS_HOME: store.paths.root, CODEXLESS_COMMAND_ID: commandId },
+          env: { ...env, ROOTBOUND_HOME: store.paths.root, ROOTBOUND_COMMAND_ID: commandId },
           detached: true,
           windowsHide: true,
           stdio: "ignore",
@@ -202,7 +202,7 @@ export function createCommandManager({
       await Promise.allSettled(pending.map(async ([commandId, session]) => {
         await session.close({ terminate: true });
         const row = store.getCommand(commandId);
-        if (row && ACTIVE.has(row.status)) store.updateCommand(commandId, { status: "interrupted", finishedAt: now(), error: row.error ?? "Codexless runtime stopped while command was active", updatedAt: now() });
+        if (row && ACTIVE.has(row.status)) store.updateCommand(commandId, { status: "interrupted", finishedAt: now(), error: row.error ?? "Rootbound runtime stopped while command was active", updatedAt: now() });
       }));
     },
   };

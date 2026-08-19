@@ -33,7 +33,7 @@ export async function ensureExactProjectTrust(root, { configPath = resolveCodexC
 
   const escaped = root.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
   const addition = `${original.endsWith("\n") || original.length === 0 ? "" : "\n"}\n[projects."${escaped}"]\ntrust_level = "trusted"\n`;
-  const temp = `${configPath}.codexless-${process.pid}.tmp`;
+  const temp = `${configPath}.rootbound-${process.pid}.tmp`;
   await writeFile(temp, original + addition, { mode: 0o600 });
   await rename(temp, configPath);
   return { changed: true, configPath, backupPath };

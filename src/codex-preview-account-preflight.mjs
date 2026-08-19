@@ -94,8 +94,8 @@ export function createPreviewTelemetryClient({ codexBin, defaultCwd, configOverr
     initializeCapabilities: { experimentalApi: true },
     stderrHandler,
     clientInfo: {
-      name: "codexless_preview_account_preflight",
-      title: "Codexless Preview Account Preflight",
+      name: "rootbound_preview_account_preflight",
+      title: "Rootbound Preview Account Preflight",
       version: "0.1.0",
     },
   });

@@ -35,7 +35,7 @@ const forbiddenModelTools = PUBLIC_TOOL_NAMES.filter((name) =>
   name.startsWith("codex.agent_")
 );
 const uniqueToolNames = new Set(PUBLIC_TOOL_NAMES).size === PUBLIC_TOOL_NAMES.length;
-const expectedSurface = PUBLIC_SURFACE_VERSION === "codexless-public-preview-v5" && uniqueToolNames && PUBLIC_TOOL_NAMES.length > 0;
+const expectedSurface = PUBLIC_SURFACE_VERSION === "rootbound-public-preview-v5" && uniqueToolNames && PUBLIC_TOOL_NAMES.length > 0;
 record(
   "public-surface",
   expectedSurface && forbiddenModelTools.length === 0,
@@ -50,14 +50,14 @@ record(
   "surface-compatibility",
   expectedSurface,
   expectedSurface ? `V5 surface contract is internally consistent (${PUBLIC_TOOL_NAMES.length} tools)` : "Surface contract is stale or incomplete",
-  expectedSurface ? null : "Restart/reconnect the Codexless MCP connection after upgrading so ChatGPT refreshes its cached tool snapshot"
+  expectedSurface ? null : "Restart/reconnect the Rootbound MCP connection after upgrading so ChatGPT refreshes its cached tool snapshot"
 );
 
 for (const spec of ["@modelcontextprotocol/node", "@modelcontextprotocol/server", "zod"]) {
   try {
     const resolved = require.resolve(spec);
     const local = isWithin(projectRoot, resolved) && resolved.toLowerCase().includes(`${path.sep}node_modules${path.sep}`.toLowerCase());
-    record(`dependency:${spec}`, local, local ? "resolved from Codexless node_modules" : "resolved outside Codexless", local ? null : "Run npm ci in the Codexless install directory");
+    record(`dependency:${spec}`, local, local ? "resolved from Rootbound node_modules" : "resolved outside Rootbound", local ? null : "Run npm ci in the Rootbound install directory");
   } catch (error) {
     record(`dependency:${spec}`, false, "not resolvable", error instanceof Error ? error.message : String(error));
   }
@@ -86,7 +86,7 @@ if (codexResolution?.path && codexProbe?.ok) {
     requestTimeoutMs: 20_000,
     initializeCapabilities: { experimentalApi: true },
     stderrHandler: () => {},
-    clientInfo: { name: "codexless_doctor", title: "Codexless Doctor", version: packageJson.version },
+    clientInfo: { name: "rootbound_doctor", title: "Rootbound Doctor", version: packageJson.version },
   });
   try {
     const initialized = await client.start();
@@ -124,7 +124,7 @@ const failedCoreChecks = checks.filter((check) => check.required && !check.ok);
 const status = failedCoreChecks.length ? "error" : warnings.length || (requestedCwd && !projectContext?.ok) ? "partial" : "ok";
 const result = {
   status,
-  codexless: {
+  rootbound: {
     packageVersion: packageJson.version,
     serverVersion: PUBLIC_SERVER_VERSION,
     surfaceVersion: PUBLIC_SURFACE_VERSION,
@@ -210,8 +210,8 @@ function dedupeWarnings(rows) {
 }
 function printHuman(value) {
   const mark = (ok) => ok ? "PASS" : "FAIL";
-  process.stdout.write(`Codexless doctor: ${value.status.toUpperCase()}\n`);
-  process.stdout.write(`Version ${value.codexless.packageVersion} | ${value.codexless.surfaceVersion} | ${value.codexless.publicToolCount} public tools | ChatGPT-only\n\n`);
+  process.stdout.write(`Rootbound doctor: ${value.status.toUpperCase()}\n`);
+  process.stdout.write(`Version ${value.rootbound.packageVersion} | ${value.rootbound.surfaceVersion} | ${value.rootbound.publicToolCount} public tools | ChatGPT-only\n\n`);
   for (const check of value.checks) {
     process.stdout.write(`[${mark(check.ok)}] ${check.name}: ${check.detail}\n`);
     if (!check.ok && check.action) process.stdout.write(`       -> ${check.action}\n`);

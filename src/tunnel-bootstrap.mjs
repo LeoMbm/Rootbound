@@ -3,7 +3,7 @@ import { chmod, readFile, readdir, rename, unlink, writeFile } from "node:fs/pro
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { ensureCodexlessStateDirs } from "./state-paths.mjs";
+import { ensureRootboundStateDirs } from "./state-paths.mjs";
 import { clearTunnelConfig, saveTunnelConfig } from "./tunnel-config.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -83,9 +83,9 @@ export async function writeManagedTunnelSetup({
   if (!validateTunnelId(tunnelId)) throw new Error("Invalid OpenAI tunnel id; expected tunnel_ followed by 32 lowercase letters/digits.");
   if (!validateRuntimeKey(apiKey)) throw new Error("Invalid runtime API key format.");
   if (!packageRoot) throw new Error("writeManagedTunnelSetup requires packageRoot");
-  if (!paths?.tunnelManagedProfilePath || !paths?.tunnelSecretPath) throw new Error("writeManagedTunnelSetup requires Codexless state paths");
+  if (!paths?.tunnelManagedProfilePath || !paths?.tunnelSecretPath) throw new Error("writeManagedTunnelSetup requires Rootbound state paths");
 
-  await ensureCodexlessStateDirs(paths);
+  await ensureRootboundStateDirs(paths);
   await writePrivateFile(paths.tunnelSecretPath, apiKey, { platform });
 
   const mcpCommand = buildStdioCommand({ nodePath, packageRoot });

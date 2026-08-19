@@ -28,9 +28,9 @@ export class CodexBrowserReaderExecutor {
     if (!defaultCwd) throw new Error("CodexBrowserReaderExecutor requires defaultCwd");
     this.#context = context;
     this.#defaultCwd = path.resolve(defaultCwd);
-    const sessionSeed = process.env.CODEXLESS_BROWSER_SESSION_KEY?.trim() || this.#defaultCwd;
+    const sessionSeed = process.env.ROOTBOUND_BROWSER_SESSION_KEY?.trim() || this.#defaultCwd;
     const sessionSuffix = createHash("sha256").update(sessionSeed).digest("hex").slice(0, 20);
-    this.#sessionId = `codexless-browser-${sessionSuffix}`;
+    this.#sessionId = `rootbound-browser-${sessionSuffix}`;
     this.#contextGeneration = this.#currentGeneration();
   }
 
@@ -61,7 +61,7 @@ export class CodexBrowserReaderExecutor {
         chrome: sanitizeBackend(chrome),
         connectedBrowsers: backends.map(sanitizeBackend),
         authState: "site_specific_unknown",
-        note: "Browser connectivity is healthy. Website login state is site-specific and is verified by reading the actual tab URL/page; Codexless does not infer authentication from extension connectivity alone.",
+        note: "Browser connectivity is healthy. Website login state is site-specific and is verified by reading the actual tab URL/page; Rootbound does not infer authentication from extension connectivity alone.",
       };
     } catch (error) {
       return browserUnavailable(error);
@@ -72,7 +72,7 @@ export class CodexBrowserReaderExecutor {
     const effectiveCwd = path.resolve(cwd);
     await this.#requireReady(effectiveCwd);
     const rawTabs = await this.#runJson(effectiveCwd, `
-const __cxBrowser = await globalThis.__codexlessBrowserAgent.browsers.get("chrome");
+const __cxBrowser = await globalThis.__rootboundBrowserAgent.browsers.get("chrome");
 const __cxTabs = await __cxBrowser.user.openTabs();
 nodeRepl.write(JSON.stringify(__cxTabs.map((tab) => ({
   providerTabId: tab.providerTabId,
@@ -146,10 +146,10 @@ nodeRepl.write(JSON.stringify(__cxTabs.map((tab) => ({
 
     const providerLiteral = JSON.stringify(state.providerTabId);
     const result = await this.#runJson(effectiveCwd, `
-const __cxBrowser = await globalThis.__codexlessBrowserAgent.browsers.get("chrome");
+const __cxBrowser = await globalThis.__rootboundBrowserAgent.browsers.get("chrome");
 const __cxOpenTabs = await __cxBrowser.user.openTabs();
 const __cxInfo = __cxOpenTabs.find((tab) => tab.providerTabId === ${providerLiteral});
-if (!__cxInfo) throw new Error("CODEXLESS_BROWSER_TAB_STALE");
+if (!__cxInfo) throw new Error("ROOTBOUND_BROWSER_TAB_STALE");
 let __cxTab = null;
 let __cxPayload = null;
 try {
@@ -198,7 +198,7 @@ nodeRepl.write(JSON.stringify(__cxPayload));
       lifecycleMode: stringOrNull(result?.lifecycleMode) ?? "unknown",
       loadedContentOnly: true,
       authState: "site_specific_unknown",
-      note: "Read-only snapshot of the currently loaded DOM. On Browser runtimes with tabs.finalize(), Codexless releases the claim after the read; on newer session-owned runtimes it reuses the same stable Browser session across App Server restarts. Codexless did not navigate, click, type, submit, or change page state. Lazy-loaded or virtualized content that is not currently present in the DOM may be absent.",
+      note: "Read-only snapshot of the currently loaded DOM. On Browser runtimes with tabs.finalize(), Rootbound releases the claim after the read; on newer session-owned runtimes it reuses the same stable Browser session across App Server restarts. Rootbound did not navigate, click, type, submit, or change page state. Lazy-loaded or virtualized content that is not currently present in the DOM may be absent.",
     };
   }
 
@@ -280,7 +280,7 @@ nodeRepl.write(JSON.stringify(__cxPayload));
 
   async #listBackends(cwd) {
     const result = await this.#runJson(cwd, `
-const __cxBackends = await globalThis.__codexlessBrowserAgent.browsers.list();
+const __cxBackends = await globalThis.__rootboundBrowserAgent.browsers.list();
 nodeRepl.write(JSON.stringify(__cxBackends.map((backend) => ({
   name: backend.name ?? null,
   family: backend.family ?? null,
@@ -293,9 +293,9 @@ nodeRepl.write(JSON.stringify(__cxBackends.map((backend) => ({
   async #runJson(cwd, body, title, { expectedGeneration = null } = {}) {
     const clientUrl = await this.#resolveBrowserClientUrl(cwd);
     const bootstrap = `
-if (globalThis.__codexlessBrowserAgent?.browsers == null) {
+if (globalThis.__rootboundBrowserAgent?.browsers == null) {
   const { setupBrowserRuntime } = await import(${JSON.stringify(clientUrl)});
-  globalThis.__codexlessBrowserAgent = await setupBrowserRuntime();
+  globalThis.__rootboundBrowserAgent = await setupBrowserRuntime();
 }
 `;
     let response;
@@ -405,7 +405,7 @@ function browserUnavailable(error) {
 function classifyBrowserError(error) {
   if (error instanceof BrowserReaderError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  if (/CODEXLESS_BROWSER_TAB_STALE/i.test(message)) {
+  if (/ROOTBOUND_BROWSER_TAB_STALE/i.test(message)) {
     return new BrowserReaderError(
       "BROWSER_TAB_REF_STALE",
       "The selected Chrome tab is no longer present in the connected browser session",
@@ -416,7 +416,7 @@ function classifyBrowserError(error) {
     return new BrowserReaderError(
       "BROWSER_TURN_METADATA_REJECTED",
       "The Codex Browser runtime rejected the Browser Reader turn metadata",
-      ["Refresh Codexless/Browser runtime and retry from codex.browser_status."]
+      ["Refresh Rootbound/Browser runtime and retry from codex.browser_status."]
     );
   }
   return new BrowserReaderError(

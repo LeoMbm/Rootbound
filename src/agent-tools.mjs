@@ -419,10 +419,10 @@ export function registerAgentPreviewTools(server, {
       resourceReceipt: null,
       timing: { startedAt: null, endedAt: now, durationMs: null },
       execution: { requestedModel: persisted.taskCard?.requestedModel ?? null, resolvedModel: null, modelProvider: null, serviceTier: null, reasoningEffort: null },
-      latestError: "Task control state was lost across Codexless restart. The original task will not be replayed.",
+      latestError: "Task control state was lost across Rootbound restart. The original task will not be replayed.",
       terminal: true,
       terminalAt: now,
-      resultSummary: "Task control state was lost across Codexless restart. The original task will not be replayed.",
+      resultSummary: "Task control state was lost across Rootbound restart. The original task will not be replayed.",
       events: [],
       nextSeq: 0,
     };
@@ -661,7 +661,7 @@ export function registerAgentPreviewTools(server, {
     {
       title: "List Codex Models",
       description:
-        "Model-free read of the current Codex App Server model catalog. Use it when a user explicitly cares which model to run. The catalog reports current model ids/capabilities/defaults but does not provide price data, so Codexless must not infer cheapest from names alone.",
+        "Model-free read of the current Codex App Server model catalog. Use it when a user explicitly cares which model to run. The catalog reports current model ids/capabilities/defaults but does not provide price data, so Rootbound must not infer cheapest from names alone.",
       inputSchema: z.object({
         cursor: z.string().min(1).max(2048).optional(),
         limit: z.number().int().min(1).max(200).optional(),
@@ -681,13 +681,13 @@ export function registerAgentPreviewTools(server, {
     {
       title: "Start Codex Agent",
       description:
-        `Experimental Preview. Prepare one formal Codex agent thread/turn under Codexless's locally resolved Codex authority. Local metered consent mode is ${meteredConsent.mode}; when set to always, every unapproved logical start returns consent_required and quota context without starting a turn. requestId is a caller-stable idempotency key and MUST be reused if the same start is retried after an uncertain response. A returned consentRef identifies the prepared task but is never proof of approval: replaying it through this public tool cannot start Codex work. Only the server-side Task Card commit path may approve and dispatch the prepared task. model is optional; omit it to preserve Codex's current default routing. The caller cannot choose permission profile, sandbox, approval policy, roots, or network authority.`,
+        `Experimental Preview. Prepare one formal Codex agent thread/turn under Rootbound's locally resolved Codex authority. Local metered consent mode is ${meteredConsent.mode}; when set to always, every unapproved logical start returns consent_required and quota context without starting a turn. requestId is a caller-stable idempotency key and MUST be reused if the same start is retried after an uncertain response. A returned consentRef identifies the prepared task but is never proof of approval: replaying it through this public tool cannot start Codex work. Only the server-side Task Card commit path may approve and dispatch the prepared task. model is optional; omit it to preserve Codex's current default routing. The caller cannot choose permission profile, sandbox, approval policy, roots, or network authority.`,
       inputSchema: z.object({
         prompt: z.string().min(1).max(200_000),
         requestId: z.string().min(1).max(512)
           .describe("Stable caller-generated idempotency key. Reuse this exact value for retries of the same logical start."),
         cwd: z.string().min(1).max(32_768).optional()
-          .describe("Optional execution-directory context. Codexless resolves authority locally for this cwd; cwd is not a permission selector."),
+          .describe("Optional execution-directory context. Rootbound resolves authority locally for this cwd; cwd is not a permission selector."),
         model: z.string().min(1).max(512).optional()
           .describe("Optional exact model id from codex.model_list. Omit to use Codex's current default model routing."),
         consentRef: z.string().min(1).max(512).optional()
@@ -762,7 +762,7 @@ export function registerAgentPreviewTools(server, {
       },
       () => {
         const record = preparedMetered.get(consentRef);
-        return record?.commitToken ? { codexlessCommitToken: record.commitToken } : {};
+        return record?.commitToken ? { rootboundCommitToken: record.commitToken } : {};
       }
     )
   );
@@ -772,7 +772,7 @@ export function registerAgentPreviewTools(server, {
     {
       title: "Read Codex Task Card State",
       description:
-        "App-only read-only state endpoint for one already mounted Codex Task Card. New cards use opaque taskRef so state remains task-specific even without a metered consentRef; consentRef remains a legacy in-runtime fallback. Persisted terminal snapshots survive Codexless restarts. Persisted non-terminal tasks recover as LOST/uncertain and are never replayed.",
+        "App-only read-only state endpoint for one already mounted Codex Task Card. New cards use opaque taskRef so state remains task-specific even without a metered consentRef; consentRef remains a legacy in-runtime fallback. Persisted terminal snapshots survive Rootbound restarts. Persisted non-terminal tasks recover as LOST/uncertain and are never replayed.",
       inputSchema: z.object({
         taskRef: z.string().min(1).max(512).optional(),
         consentRef: z.string().min(1).max(512).optional(),
@@ -797,7 +797,7 @@ export function registerAgentPreviewTools(server, {
       },
       () => {
         const live = taskRef ? taskRecords.get(taskRef) : consentRef ? preparedMetered.get(consentRef) : null;
-        return live?.commitToken ? { codexlessCommitToken: live.commitToken } : {};
+        return live?.commitToken ? { rootboundCommitToken: live.commitToken } : {};
       }
     )
   );
@@ -807,7 +807,7 @@ export function registerAgentPreviewTools(server, {
     {
       title: "Show Codex Agent",
       description:
-        "Experimental Preview. Read the bounded operational state of one Codexless-owned Codex agent by opaque agentRef. Returns status, sendability, minimal pending-approval summary, final result, and a bounded event tail; it does not duplicate the Codex transcript.",
+        "Experimental Preview. Read the bounded operational state of one Rootbound-owned Codex agent by opaque agentRef. Returns status, sendability, minimal pending-approval summary, final result, and a bounded event tail; it does not duplicate the Codex transcript.",
       inputSchema: z.object({
         agentRef: z.string().min(1).max(512),
         afterSeq: z.number().int().min(0).optional(),
@@ -825,7 +825,7 @@ export function registerAgentPreviewTools(server, {
     {
       title: "Continue Codex Agent",
       description:
-        `Experimental Preview. Prepare one exact Codexless-owned Codex agent follow-up by opaque agentRef. The caller must deliberately choose the target agentRef; Codexless has no implicit "most recent agent" routing. Local metered consent mode is ${meteredConsent.mode}; when set to always, every unapproved logical send returns consent_required and quota context without starting a turn. requestId is a caller-stable idempotency key and MUST be reused if the same send is retried after an uncertain response. A returned consentRef identifies the prepared follow-up but is never proof of approval: replaying it through this public tool cannot start Codex work. Only the server-side Task Card commit path may approve and dispatch the prepared follow-up. model is optional and may override the model for this turn and subsequent turns. Active turns, stale parent turns, and pending approvals fail visibly; Codexless never auto-replays an accepted or uncertain send.`,
+        `Experimental Preview. Prepare one exact Rootbound-owned Codex agent follow-up by opaque agentRef. The caller must deliberately choose the target agentRef; Rootbound has no implicit "most recent agent" routing. Local metered consent mode is ${meteredConsent.mode}; when set to always, every unapproved logical send returns consent_required and quota context without starting a turn. requestId is a caller-stable idempotency key and MUST be reused if the same send is retried after an uncertain response. A returned consentRef identifies the prepared follow-up but is never proof of approval: replaying it through this public tool cannot start Codex work. Only the server-side Task Card commit path may approve and dispatch the prepared follow-up. model is optional and may override the model for this turn and subsequent turns. Active turns, stale parent turns, and pending approvals fail visibly; Rootbound never auto-replays an accepted or uncertain send.`,
       inputSchema: z.object({
         agentRef: z.string().min(1).max(512),
         message: z.string().min(1).max(200_000),
@@ -942,7 +942,7 @@ export function registerAgentPreviewTools(server, {
     {
       title: "Commit Prepared Metered Codex Task",
       description:
-        "App-only exact commit for a previously prepared metered Codex start/send. The Task Card must supply both the opaque consentRef and its separate card-only commit capability; Codexless retrieves the bound action, requestId, prompt/message, cwd and subject from server memory and cannot accept replacements at commit time. Repeated exact commits reuse the same idempotency key and never create a second logical turn.",
+        "App-only exact commit for a previously prepared metered Codex start/send. The Task Card must supply both the opaque consentRef and its separate card-only commit capability; Rootbound retrieves the bound action, requestId, prompt/message, cwd and subject from server memory and cannot accept replacements at commit time. Repeated exact commits reuse the same idempotency key and never create a second logical turn.",
       inputSchema: z.object({
         consentRef: z.string().min(1).max(512),
         commitToken: z.string().min(1).max(512)
@@ -977,7 +977,7 @@ export function registerAgentPreviewTools(server, {
     {
       title: "Approve Pending Codex Agent Action",
       description:
-        "Experimental Preview. Resolve exactly the currently pending Codex approval identified by approvalRequestId using the narrow one-turn approval response defined by Codex. Call only after the user explicitly approves that exact pending request. requestId is a caller-stable idempotency key and must be reused for retries of the same logical approval. Codexless never grants permissions beyond the permission subset requested by Codex.",
+        "Experimental Preview. Resolve exactly the currently pending Codex approval identified by approvalRequestId using the narrow one-turn approval response defined by Codex. Call only after the user explicitly approves that exact pending request. requestId is a caller-stable idempotency key and must be reused for retries of the same logical approval. Rootbound never grants permissions beyond the permission subset requested by Codex.",
       inputSchema: z.object({
         agentRef: z.string().min(1).max(512),
         approvalRequestId: z.string().min(1).max(512)

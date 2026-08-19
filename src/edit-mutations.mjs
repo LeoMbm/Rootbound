@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import { CodexlessToolError } from "./tool-errors.mjs";
+import { RootboundToolError } from "./tool-errors.mjs";
 
 const READ_SCRIPT = "const fs=require('node:fs');process.stdout.write(fs.readFileSync(process.argv[1]));";
 const WRITE_SCRIPT = `
@@ -108,11 +108,11 @@ function normalize(row) {
 }
 
 function requireMutation(row) {
-  if (!row) throw new CodexlessToolError("Unknown edit mutation.", { code: "MUTATION_NOT_FOUND", category: "state", nextActions: ["Use the mutationId returned by a successful precise_edit."] });
+  if (!row) throw new RootboundToolError("Unknown edit mutation.", { code: "MUTATION_NOT_FOUND", category: "state", nextActions: ["Use the mutationId returned by a successful precise_edit."] });
   return row;
 }
 function conflict(message, details = null) {
-  return new CodexlessToolError(message, { code: "UNDO_CONFLICT", category: "state", retryable: false, nextActions: ["Inspect the current file/diff before deciding whether to apply a new edit."], details });
+  return new RootboundToolError(message, { code: "UNDO_CONFLICT", category: "state", retryable: false, nextActions: ["Inspect the current file/diff before deciding whether to apply a new edit."], details });
 }
 function assertWithin(root, target) {
   const canonicalRoot = canonicalPath(root);

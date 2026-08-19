@@ -3,7 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { runtimeStatus, stopRuntime } from "../src/runtime-state.mjs";
 
 const args = parseArgs(process.argv.slice(2));
@@ -12,21 +12,24 @@ try {
   const output = await upgrade(args);
   if (args.json) process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
   else {
-    process.stdout.write(`Codexless upgraded: ${output.fromVersion} -> ${output.toVersion}\n`);
+    process.stdout.write(`Rootbound upgraded: ${output.fromVersion} -> ${output.toVersion}\n`);
     process.stdout.write(`App: ${output.installRoot}\nState preserved: ${output.stateRoot}\n`);
     if (output.legacyRootLayout) process.stdout.write("Legacy layout migrated to app/ without deleting root-level preview files.\n");
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   if (args.json) process.stdout.write(`${JSON.stringify({ ok: false, action: "upgrade-failed", error: message }, null, 2)}\n`);
-  else process.stderr.write(`Codexless upgrade failed: ${message}\n`);
+  else process.stderr.write(`Rootbound upgrade failed: ${message}\n`);
   process.exitCode = 1;
 }
 
 async function upgrade(options) {
   const currentRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const paths = resolveCodexlessPaths();
+  const paths = resolveRootboundPaths();
   const sourceRoot = await validateReleaseSource(options.from);
+  if (samePath(currentRoot, sourceRoot)) {
+    throw new Error("Refusing in-place self-upgrade: --from must point to a different Rootbound release directory than the currently running installation.");
+  }
   const sourcePackage = JSON.parse(await readFile(path.join(sourceRoot, "package.json"), "utf8"));
   const currentPackage = JSON.parse(await readFile(path.join(currentRoot, "package.json"), "utf8"));
   const legacyRootLayout = samePath(currentRoot, paths.root);
@@ -36,7 +39,7 @@ async function upgrade(options) {
   if (runtime.running || runtime.stale) {
     const stopped = await stopRuntime(paths);
     if (!new Set(["stopped", "not_running"]).has(stopped.status)) {
-      throw new Error(`Unable to stop Codexless runtime before upgrade: ${stopped.status}`);
+      throw new Error(`Unable to stop Rootbound runtime before upgrade: ${stopped.status}`);
     }
   }
 
@@ -45,7 +48,7 @@ async function upgrade(options) {
   const installerResult = parseLastJsonObject(result.stdout);
   if (result.exitCode !== 0 || !installerResult?.ok) {
     const detail = installerResult?.error ?? result.stderr.trim() ?? result.stdout.trim() ?? `exit ${result.exitCode}`;
-    throw new Error(`Codexless staged upgrade failed: ${detail}`);
+    throw new Error(`Rootbound staged upgrade failed: ${detail}`);
   }
 
   return {
@@ -62,10 +65,10 @@ async function upgrade(options) {
     installer: installerResult,
     notes: legacyRootLayout
       ? [
-          "A legacy install rooted at the Codexless state directory was detected. The new app was installed under the dedicated app/ child so state is not replaced.",
-          "The old root-level preview files are intentionally left untouched by this migration; use the new app/bin/codexless entry after upgrade.",
+          "A legacy install rooted at the Rootbound state directory was detected. The new app was installed under the dedicated app/ child so state is not replaced.",
+          "The old root-level preview files are intentionally left untouched by this migration; use the new app/bin/rootbound entry after upgrade.",
         ]
-      : ["The installer used staged activation with backup/rollback semantics.", "Codexless state lives outside the app install tree and was preserved."],
+      : ["The installer used staged activation with backup/rollback semantics.", "Rootbound state lives outside the app install tree and was preserved."],
   };
 }
 
@@ -76,7 +79,7 @@ async function validateReleaseSource(value) {
   if (!info.isDirectory()) throw new Error(`upgrade source is not a directory: ${root}`);
   const packagePath = path.join(root, "package.json");
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
-  if (packageJson?.name !== "codexless") throw new Error(`upgrade source package is not codexless: ${packagePath}`);
+  if (packageJson?.name !== "rootbound") throw new Error(`upgrade source package is not rootbound: ${packagePath}`);
   const installerPath = process.platform === "win32" ? path.join(root, "scripts", "install.ps1") : path.join(root, "scripts", "install.sh");
   const installerInfo = await stat(installerPath);
   if (!installerInfo.isFile()) throw new Error(`upgrade source is missing installer: ${installerPath}`);
@@ -93,7 +96,7 @@ function installerCommand({ sourceRoot, installTarget, json }) {
   if (process.platform === "darwin" && process.arch === "arm64") {
     return { command: "sh", args: [path.join(sourceRoot, "scripts", "install.sh"), "--install-dir", installTarget, ...(json ? ["--json"] : [])] };
   }
-  throw new Error(`Codexless upgrade is unsupported on ${process.platform}/${process.arch}`);
+  throw new Error(`Rootbound upgrade is unsupported on ${process.platform}/${process.arch}`);
 }
 
 async function run(command, argv, { cwd }) {

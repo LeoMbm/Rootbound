@@ -108,7 +108,7 @@ export async function resolveCodexExecutable({ env = process.env, acceptedVersio
     ? ` No discovered executable matched the currently accepted Codex CLI builds: ${acceptedVersions.join(", ")}.`
     : "";
   throw new CodexExecutableResolutionError(
-    `A directly launchable accepted Codex executable could not be resolved.${acceptedHint} Codexless supports accepted Codex Desktop/runtime executables, native codex.exe on PATH, or npm-installed Codex with its native Windows package present. Set CODEX_BIN to a native codex.exe when auto-detection cannot resolve it.`,
+    `A directly launchable accepted Codex executable could not be resolved.${acceptedHint} Rootbound supports accepted Codex Desktop/runtime executables, native codex.exe on PATH, or npm-installed Codex with its native Windows package present. Set CODEX_BIN to a native codex.exe when auto-detection cannot resolve it.`,
     { checked }
   );
 }

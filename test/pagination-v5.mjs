@@ -15,7 +15,7 @@ const cursor = encodeCursor("unit", signature, { offset: 4 });
 assert.deepEqual(decodeCursor(cursor, "unit", signature), { offset: 4 });
 assert.throws(() => decodeCursor(cursor, "unit", { query: "other", cwd: "/tmp/project" }), (error) => error?.code === "PAGINATION_CURSOR_INVALID");
 
-const root = await mkdtemp(path.join(os.tmpdir(), "codexless-pagination-"));
+const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-pagination-"));
 const a = path.join(root, "a.txt");
 const b = path.join(root, "b.txt");
 await writeFile(a, "abcdefghij", "utf8");

@@ -205,7 +205,7 @@ export class CodexAuthorityExecutor {
     this.#codexVersion = match[1];
     if (!this.#acceptedCodexVersions.has(this.#codexVersion)) {
       throw new Error(
-        `unsupported Codex CLI version for Codexless direct-profile authority: ${this.#codexVersion}. ` +
+        `unsupported Codex CLI version for Rootbound direct-profile authority: ${this.#codexVersion}. ` +
         `Accepted versions: ${[...this.#acceptedCodexVersions].join(", ")}. ` +
         "This path depends on the experimental command/exec.permissionProfile capability and must be re-accepted before upgrade."
       );
@@ -316,7 +316,7 @@ export class CodexAuthorityExecutor {
         {
           code: "PERMISSION_APPROVAL_REQUIRED",
           nextActions: [
-            "Explicitly trust/authorize the target path in Codex or local Codexless policy, then retry.",
+            "Explicitly trust/authorize the target path in Codex or local Rootbound policy, then retry.",
             "Use a cwd already covered by an explicitly trusted Codex project/root.",
           ],
         }
@@ -328,7 +328,7 @@ export class CodexAuthorityExecutor {
 
     if (!allowedProfiles.has(authority.profileId)) throw new Error(`authority resolver returned a Codex profile that is not currently allowed: ${authority.profileId}`);
     const permissionProfile = access === "readOnly" ? ":read-only" : authority.profileId;
-    if (!allowedProfiles.has(permissionProfile)) throw new Error(`requested Codexless downscope is not available in Codex: ${permissionProfile}`);
+    if (!allowedProfiles.has(permissionProfile)) throw new Error(`requested Rootbound downscope is not available in Codex: ${permissionProfile}`);
 
     return {
       effectiveCwd,
@@ -343,11 +343,11 @@ export class CodexAuthorityExecutor {
     const trusted = findTrustedAncestor(effectiveConfig, cwd);
     if (!trusted) {
       throw new ToolwirePermissionError(
-        `Codex has no explicitly trusted project/root covering cwd ${cwd}; Codexless will not create trust as a side effect of permission resolution.`,
+        `Codex has no explicitly trusted project/root covering cwd ${cwd}; Rootbound will not create trust as a side effect of permission resolution.`,
         {
           code: "PERMISSION_APPROVAL_REQUIRED",
           nextActions: [
-            "Explicitly trust/authorize the target path in Codex or local Codexless policy, then retry.",
+            "Explicitly trust/authorize the target path in Codex or local Rootbound policy, then retry.",
             "Use a cwd already covered by an explicitly trusted Codex project/root.",
           ],
         }
@@ -402,7 +402,7 @@ export class CodexAuthorityExecutor {
       }),
       requestTimeoutMs,
       initializeCapabilities: { experimentalApi: true },
-      clientInfo: { name: "codexless_public_authority", title: "Codexless Public Authority", version: "0.1.0" },
+      clientInfo: { name: "rootbound_public_authority", title: "Rootbound Public Authority", version: "0.1.0" },
     });
   }
 

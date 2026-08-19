@@ -5,11 +5,11 @@ let registry;
 try {
   registry = JSON.parse(readFileSync(registryUrl, "utf8"));
 } catch (error) {
-  throw new Error(`failed to load Codexless method registry: ${error instanceof Error ? error.message : String(error)}`);
+  throw new Error(`failed to load Rootbound method registry: ${error instanceof Error ? error.message : String(error)}`);
 }
 
 if (registry?.defaultAction !== "deny") {
-  throw new Error("Codexless method registry must be fail-closed with defaultAction=deny");
+  throw new Error("Rootbound method registry must be fail-closed with defaultAction=deny");
 }
 
 export function getToolboxMethodRegistry() {

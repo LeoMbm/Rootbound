@@ -4,16 +4,16 @@ import { open } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { ensureCodexlessStateDirs, resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { ensureRootboundStateDirs, resolveRootboundPaths } from "../src/state-paths.mjs";
 import { clearRuntimeState, writeRuntimeState } from "../src/runtime-state.mjs";
 import { resolveTunnelLaunch } from "../src/tunnel-config.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const paths = await ensureCodexlessStateDirs(resolveCodexlessPaths());
-const projectRoot = process.env.CODEXLESS_PROJECT_ROOT || null;
-const projectRef = process.env.CODEXLESS_PROJECT_REF || null;
+const paths = await ensureRootboundStateDirs(resolveRootboundPaths());
+const projectRoot = process.env.ROOTBOUND_PROJECT_ROOT || null;
+const projectRef = process.env.ROOTBOUND_PROJECT_REF || null;
 const runtimeId = `runtime_${randomUUID()}`;
-const restartLimit = parseBoundedInt(process.env.CODEXLESS_TUNNEL_RESTART_LIMIT ?? "3", 0, 20, "CODEXLESS_TUNNEL_RESTART_LIMIT");
+const restartLimit = parseBoundedInt(process.env.ROOTBOUND_TUNNEL_RESTART_LIMIT ?? "3", 0, 20, "ROOTBOUND_TUNNEL_RESTART_LIMIT");
 const launch = resolveTunnelLaunch({ packageRoot, projectRoot });
 const logHandle = await open(paths.logPath, "a", 0o600);
 let child = null;
@@ -30,7 +30,7 @@ async function startChild() {
   const startedAt = Date.now();
   child = spawn(launch.command, launch.args, {
     cwd: projectRoot ?? packageRoot,
-    env: { ...process.env, CODEXLESS_STDIO_NODE: process.execPath, CODEXLESS_STDIO_SCRIPT: path.join(packageRoot, "scripts", "launch.mjs") },
+    env: { ...process.env, ROOTBOUND_STDIO_NODE: process.execPath, ROOTBOUND_STDIO_SCRIPT: path.join(packageRoot, "scripts", "launch.mjs") },
     stdio: ["ignore", logHandle.fd, logHandle.fd],
     windowsHide: true,
     shell: false,

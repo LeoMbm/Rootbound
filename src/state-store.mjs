@@ -1,10 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
-import { ensureCodexlessStateDirs, resolveCodexlessPaths } from "./state-paths.mjs";
+import { ensureRootboundStateDirs, resolveRootboundPaths } from "./state-paths.mjs";
 
 const SCHEMA_VERSION = 4;
 
-export async function openStateStore({ paths = resolveCodexlessPaths() } = {}) {
-  await ensureCodexlessStateDirs(paths);
+export async function openStateStore({ paths = resolveRootboundPaths() } = {}) {
+  await ensureRootboundStateDirs(paths);
   const db = new DatabaseSync(paths.dbPath);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
   createSchema(db);
@@ -69,7 +69,7 @@ function migrateSchema(db) {
     return;
   }
   let version = Number(current.value);
-  if (version > SCHEMA_VERSION) throw new Error(`Unsupported Codexless state schema: ${current.value}`);
+  if (version > SCHEMA_VERSION) throw new Error(`Unsupported Rootbound state schema: ${current.value}`);
   if (version < 2) {
     addColumnIfMissing(db, "bindings", "thread_preview_json", "TEXT");
     addColumnIfMissing(db, "bindings", "checkpoint_count", "INTEGER NOT NULL DEFAULT 0");
@@ -98,7 +98,7 @@ function migrateSchema(db) {
     db.prepare("UPDATE meta SET value='4' WHERE key='schema_version'").run();
     version = 4;
   }
-  if (version !== SCHEMA_VERSION) throw new Error(`Unsupported Codexless state schema: ${version}`);
+  if (version !== SCHEMA_VERSION) throw new Error(`Unsupported Rootbound state schema: ${version}`);
 }
 
 function addColumnIfMissing(db, table, column, definition) {

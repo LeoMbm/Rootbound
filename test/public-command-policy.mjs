@@ -36,12 +36,12 @@ const allowed = [
   ["which", "codex"],
   ["node", "test/public-contract.mjs"],
   ["node", "-p", "1 + 1"],
-  ["deno", "eval", "console.log('codexless')"],
+  ["deno", "eval", "console.log('rootbound')"],
   ["sudo", "echo", "ok"],
   ["wsl.exe", "echo", "ok"],
   ["npm", "test"],
-  ["cmd.exe", "/d", "/s", "/c", "echo codexless"],
-  ["powershell.exe", "-NoProfile", "-Command", "Write-Output 'codexless'"],
+  ["cmd.exe", "/d", "/s", "/c", "echo rootbound"],
+  ["powershell.exe", "-NoProfile", "-Command", "Write-Output 'rootbound'"],
 ];
 
 for (const command of allowed) {

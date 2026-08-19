@@ -1,5 +1,5 @@
 import path from "node:path";
-import { CodexlessToolError } from "./tool-errors.mjs";
+import { RootboundToolError } from "./tool-errors.mjs";
 
 const SECRET_FLAG = /^(?:--?|\/)(?:api[-_]?key|apikey|token|access[-_]?token|refresh[-_]?token|secret|client[-_]?secret|password|passwd|authorization|auth|cookie|private[-_]?key)(?:=(.*))?$/i;
 const SECRET_VALUE = /^(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}$|^gh[pousr]_[A-Za-z0-9_]{20,}$|^github_pat_[A-Za-z0-9_]{20,}$|^xox[baprs]-[A-Za-z0-9-]{10,}$|^[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}$/;
@@ -33,7 +33,7 @@ export function inspectSensitiveArgv(command) {
 export function assertDurableCommandHasNoSecrets(command) {
   const findings = inspectSensitiveArgv(command);
   if (!findings.length) return;
-  throw new CodexlessToolError("Codexless refuses to persist a long-running command whose argv appears to contain credentials or secrets.", {
+  throw new RootboundToolError("Rootbound refuses to persist a long-running command whose argv appears to contain credentials or secrets.", {
     code: "SECRET_PERSISTENCE_BLOCKED",
     category: "safety",
     retryable: false,

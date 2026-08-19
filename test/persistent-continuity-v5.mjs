@@ -3,13 +3,13 @@ import { mkdtemp, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createPersistentContinuityState } from "../src/persistent-continuity-state.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
-const root = await mkdtemp(path.join(os.tmpdir(), "codexless-persistent-continuity-"));
+const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-persistent-continuity-"));
 const projectRoot = path.join(root, "project");
 await mkdir(projectRoot);
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(root, "home") } });
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(root, "home") } });
 let store = await openStateStore({ paths });
 let continuity = createPersistentContinuityState({ store, now: () => 1_000, ttlMs: 60_000 });
 const bound = continuity.bind({ threadId: "thread-1", cwd: projectRoot, threadPreview: { title: "persist me" } });

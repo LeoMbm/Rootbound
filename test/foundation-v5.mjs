@@ -3,12 +3,12 @@ import { mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import { openStateStore } from "../src/state-store.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { projectRefForRoot, registerProject } from "../src/project-registry.mjs";
 import { ensureExactProjectTrust, hasExactTrustedProject, rollbackTrustConfig } from "../src/trust-config.mjs";
 
-const temp = await mkdtemp(path.join(os.tmpdir(), "codexless-v5-"));
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(temp, "home") }, home: temp, platform: process.platform });
+const temp = await mkdtemp(path.join(os.tmpdir(), "rootbound-v5-"));
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(temp, "home") }, home: temp, platform: process.platform });
 const projectDir = path.join(temp, "project");
 await mkdir(projectDir);
 const canonicalProjectDir = await realpath(projectDir);

@@ -22,7 +22,7 @@ const checkpoint = buildContinuityCheckpoint({
   remainingWork: ["Run the full suite on a supported machine."],
   journal: pending.journal,
 });
-assert.match(checkpoint, /^\[External continuity checkpoint from ChatGPT via Codexless\]/);
+assert.match(checkpoint, /^\[External continuity checkpoint from ChatGPT via Rootbound\]/);
 assert.match(checkpoint, /not a previous Codex-generated conclusion/i);
 assert.match(checkpoint, /npm test/);
 assert.match(checkpoint, /src\/index\.js/);

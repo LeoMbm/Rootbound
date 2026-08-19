@@ -63,8 +63,8 @@ export class CodexAppServerClient {
       options: { cwd: this.#cwd },
     }));
     this.clientInfo = {
-      name: clientInfo.name ?? "codexless",
-      title: clientInfo.title ?? "Codexless",
+      name: clientInfo.name ?? "rootbound",
+      title: clientInfo.title ?? "Rootbound",
       version: clientInfo.version ?? "0.1.0",
     };
   }
@@ -235,7 +235,7 @@ export class CodexAppServerClient {
       if (key !== null && typeof message.method === "string") {
         this.#serverRequestMethods.add(message.method);
         if (!this.#serverRequestHandler) {
-          this.#send({ id: message.id, error: { code: -32601, message: `Server-initiated request not supported by Codexless: ${message.method}` } });
+          this.#send({ id: message.id, error: { code: -32601, message: `Server-initiated request not supported by Rootbound: ${message.method}` } });
           continue;
         }
         if (this.#pendingServerRequests.has(key)) {
@@ -316,7 +316,7 @@ export class CodexAppServerClient {
 
   #closePendingServerRequests() {
     for (const [key, entry] of this.#pendingServerRequests) {
-      const error = { code: -32000, message: `Codexless client closed before server request was resolved: ${entry.method}` };
+      const error = { code: -32000, message: `Rootbound client closed before server request was resolved: ${entry.method}` };
       try { this.#send({ id: entry.id, error }); } catch {}
       entry.settled = true;
       entry.settlement = { kind: "reject", error };

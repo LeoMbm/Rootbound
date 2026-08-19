@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import os from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ACCEPTED_CODEX_VERSIONS } from "../src/codex-authority-executor.mjs";
 import { resolveCodexExecutable } from "../src/codex-bin.mjs";
@@ -13,24 +13,32 @@ const { StdioClientTransport } = require("@modelcontextprotocol/client/stdio");
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
 const codexBin = (await resolveCodexExecutable({ acceptedVersions: ACCEPTED_CODEX_VERSIONS })).path;
-const testCwd = process.env.CODEXLESS_TEST_CWD;
-const stateHome = path.join(os.tmpdir(), `codexless-public-contract-${process.pid}`);
+const testCwd = process.env.ROOTBOUND_TEST_CWD;
+const stateHome = path.join(projectRoot, "node_modules", `.rootbound-public-contract-${process.pid}`);
+const codexHome = path.join(stateHome, "codex");
+await mkdir(codexHome, { recursive: true });
+const trustedRoots = [...new Set([projectRoot, ...(testCwd ? [path.resolve(testCwd)] : [])])];
+const codexConfig = trustedRoots
+  .map((root) => `[projects.${JSON.stringify(root)}]\ntrust_level = "trusted"\n`)
+  .join("\n");
+await writeFile(path.join(codexHome, "config.toml"), codexConfig, { mode: 0o600 });
 
 function createIsolatedPublicTestEnv(extra = {}) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
-    if (key.startsWith("CODEX_TOOLBOX_") || key.startsWith("CODEXLESS_")) delete env[key];
+    if (key.startsWith("CODEX_TOOLBOX_") || key.startsWith("ROOTBOUND_")) delete env[key];
   }
   Object.assign(env, {
     CODEX_BIN: codexBin,
-    CODEXLESS_HOME: stateHome,
-    ...(testCwd ? { CODEXLESS_DEFAULT_CWD: testCwd } : {}),
+    CODEX_HOME: codexHome,
+    ROOTBOUND_HOME: stateHome,
+    ...(testCwd ? { ROOTBOUND_DEFAULT_CWD: testCwd } : {}),
     ...extra,
   });
   return env;
 }
 
-assert.equal(PUBLIC_SURFACE_VERSION, "codexless-public-preview-v5");
+assert.equal(PUBLIC_SURFACE_VERSION, "rootbound-public-preview-v5");
 assert.ok(PUBLIC_TOOL_NAMES.length >= 27);
 assert.equal(new Set(PUBLIC_TOOL_NAMES).size, PUBLIC_TOOL_NAMES.length);
 
@@ -99,46 +107,51 @@ async function assertPublicSurface(client) {
   assert.equal(nestedLongCommand.isError, true, "nested Codex launch through command_start must stay blocked");
 }
 
-const client = new Client({ name: "codexless-public-contract", version: "0.1.0" });
+const client = new Client({ name: "rootbound-public-contract", version: "0.1.0" });
 const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(projectRoot, "src", "mcp-stdio.mjs")], cwd: projectRoot, env: createIsolatedPublicTestEnv(), stderr: "pipe" });
 transport.stderr?.setEncoding("utf8");
-transport.stderr?.on("data", (chunk) => process.stderr.write(`[codexless] ${chunk}`));
+transport.stderr?.on("data", (chunk) => process.stderr.write(`[rootbound] ${chunk}`));
 await client.connect(transport);
 try { await assertPublicSurface(client); }
 finally { await client.close().catch(() => {}); await transport.close().catch(() => {}); }
 
-const httpPort = 17691;
-const baseUrl = `http://127.0.0.1:${httpPort}`;
-const httpChild = spawn(process.execPath, [path.join(projectRoot, "src", "mcp-http.mjs")], {
-  cwd: projectRoot,
-  env: createIsolatedPublicTestEnv({ CODEXLESS_HOST: "127.0.0.1", CODEXLESS_PORT: String(httpPort) }),
-  stdio: ["ignore", "pipe", "pipe"],
-  windowsHide: true,
-});
-let httpStderr = "";
-httpChild.stderr.setEncoding("utf8");
-httpChild.stderr.on("data", (chunk) => { httpStderr += chunk; });
-async function waitForHttpHealth() {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    if (httpChild.exitCode !== null) throw new Error(`Codexless HTTP exited early (${httpChild.exitCode}): ${httpStderr}`);
-    try { const response = await fetch(`${baseUrl}/healthz`); if (response.ok) return response.json(); } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 200));
+if (process.env.ROOTBOUND_TEST_SKIP_HTTP === "1") {
+  console.log("Rootbound HTTP public contract SKIPPED by explicit test-only environment override");
+} else {
+  const httpPort = 17691;
+  const baseUrl = `http://127.0.0.1:${httpPort}`;
+  const httpChild = spawn(process.execPath, [path.join(projectRoot, "src", "mcp-http.mjs")], {
+    cwd: projectRoot,
+    env: createIsolatedPublicTestEnv({ ROOTBOUND_HOST: "127.0.0.1", ROOTBOUND_PORT: String(httpPort) }),
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  let httpStderr = "";
+  httpChild.stderr.setEncoding("utf8");
+  httpChild.stderr.on("data", (chunk) => { httpStderr += chunk; });
+  async function waitForHttpHealth() {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      if (httpChild.exitCode !== null) throw new Error(`Rootbound HTTP exited early (${httpChild.exitCode}): ${httpStderr}`);
+      try { const response = await fetch(`${baseUrl}/healthz`); if (response.ok) return response.json(); } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    throw new Error(`Rootbound HTTP did not become healthy: ${httpStderr}`);
   }
-  throw new Error(`Codexless HTTP did not become healthy: ${httpStderr}`);
+
+  try {
+    const health = await waitForHttpHealth();
+    assert.equal(health.ok, true);
+    assert.equal(health.surfaceVersion, PUBLIC_SURFACE_VERSION);
+    assert.equal(health.toolCount, PUBLIC_TOOL_NAMES.length);
+    const httpClient = new Client({ name: "rootbound-public-contract-http", version: "0.1.0" });
+    const httpTransport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`));
+    try { await httpClient.connect(httpTransport); await assertPublicSurface(httpClient); }
+    finally { await httpClient.close().catch(() => {}); }
+  } finally {
+    if (httpChild.exitCode === null) httpChild.kill("SIGTERM");
+  }
 }
 
-try {
-  const health = await waitForHttpHealth();
-  assert.equal(health.ok, true);
-  assert.equal(health.surfaceVersion, PUBLIC_SURFACE_VERSION);
-  assert.equal(health.toolCount, PUBLIC_TOOL_NAMES.length);
-  const httpClient = new Client({ name: "codexless-public-contract-http", version: "0.1.0" });
-  const httpTransport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`));
-  try { await httpClient.connect(httpTransport); await assertPublicSurface(httpClient); }
-  finally { await httpClient.close().catch(() => {}); }
-} finally {
-  if (httpChild.exitCode === null) httpChild.kill("SIGTERM");
-}
-
+await rm(stateHome, { recursive: true, force: true });
 console.log("ChatGPT-only public contract PASS");

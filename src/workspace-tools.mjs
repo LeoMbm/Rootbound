@@ -13,7 +13,7 @@ export function registerWorkspaceTools(server, { store, authorityExecutor, publi
   server.registerTool(
     "codex.workspace_open",
     {
-      title: "Open Codexless Workspace",
+      title: "Open Rootbound Workspace",
       description: "Resolve one local workspace to its canonical real/Git root and durable projectRef, require exact-root Codex trust for that canonical root, and return reusable read-only project context. This never creates or widens Codex trust; missing or ancestor-only trust returns needs_trust with explicit next actions.",
       inputSchema: z.object({ cwd: z.string().min(1).max(32_768).optional() }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },

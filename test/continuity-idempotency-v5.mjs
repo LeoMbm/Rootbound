@@ -3,11 +3,11 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createContinuityIdempotency } from "../src/continuity-idempotency.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
-const root = await mkdtemp(path.join(os.tmpdir(), "codexless-idempotency-"));
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(root, "state") } });
+const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-idempotency-"));
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(root, "state") } });
 const store = await openStateStore({ paths });
 let clock = 100;
 const idem = createContinuityIdempotency({ store, now: () => ++clock });

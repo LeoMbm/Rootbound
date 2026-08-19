@@ -3,14 +3,14 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { buildDiagnosticSnapshot, redactText } from "../src/diagnostics.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
-const temp = await mkdtemp(path.join(os.tmpdir(), "codexless-diagnostic-"));
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(temp, "home") } });
+const temp = await mkdtemp(path.join(os.tmpdir(), "rootbound-diagnostic-"));
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(temp, "home") } });
 const packageRoot = path.join(temp, "package");
 await mkdir(packageRoot);
-await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "codexless", version: "test" }));
+await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "rootbound", version: "test" }));
 const store = await openStateStore({ paths });
 const now = Date.now();
 const realHome = os.homedir();

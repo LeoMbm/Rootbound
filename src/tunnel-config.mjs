@@ -2,15 +2,15 @@ import { readFileSync } from "node:fs";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { inspectSensitiveArgv, redactArgv } from "./secret-boundaries.mjs";
-import { ensureCodexlessStateDirs, resolveCodexlessPaths } from "./state-paths.mjs";
-import { CodexlessToolError } from "./tool-errors.mjs";
+import { ensureRootboundStateDirs, resolveRootboundPaths } from "./state-paths.mjs";
+import { RootboundToolError } from "./tool-errors.mjs";
 
 const SCHEMA_VERSION = 1;
 const ENV_PLACEHOLDER = /^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/;
 const KNOWN_PLACEHOLDERS = new Set(["{node}", "{packageRoot}", "{launchScript}", "{projectRoot}"]);
 const CREDENTIAL_QUERY = /[?&](?:token|key|api_key|apikey|auth|authorization|sig|signature|secret|password)=/i;
 
-export function resolveTunnelLaunch({ env = process.env, packageRoot, projectRoot = null, paths = resolveCodexlessPaths({ env }) } = {}) {
+export function resolveTunnelLaunch({ env = process.env, packageRoot, projectRoot = null, paths = resolveRootboundPaths({ env }) } = {}) {
   if (!packageRoot) throw new Error("resolveTunnelLaunch requires packageRoot");
   const source = loadTunnelTemplate({ env, paths });
   const replacements = new Map([
@@ -24,9 +24,9 @@ export function resolveTunnelLaunch({ env = process.env, packageRoot, projectRoo
   return { command: expanded[0], args: expanded.slice(1), argv: expanded, source: source.source };
 }
 
-export async function saveTunnelConfig({ argv, paths = resolveCodexlessPaths() } = {}) {
+export async function saveTunnelConfig({ argv, paths = resolveRootboundPaths() } = {}) {
   validateTunnelArgvTemplate(argv);
-  await ensureCodexlessStateDirs(paths);
+  await ensureRootboundStateDirs(paths);
   const payload = { schemaVersion: SCHEMA_VERSION, argv: [...argv], updatedAt: Date.now() };
   const temp = `${paths.tunnelConfigPath}.${process.pid}.tmp`;
   await writeFile(temp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
@@ -34,7 +34,7 @@ export async function saveTunnelConfig({ argv, paths = resolveCodexlessPaths() }
   return { configured: true, path: paths.tunnelConfigPath, argv: redactTemplateArgv(argv), envPlaceholders: envNames(argv) };
 }
 
-export async function clearTunnelConfig({ paths = resolveCodexlessPaths() } = {}) {
+export async function clearTunnelConfig({ paths = resolveRootboundPaths() } = {}) {
   try {
     await unlink(paths.tunnelConfigPath);
     return { configured: false, cleared: true, path: paths.tunnelConfigPath };
@@ -44,9 +44,9 @@ export async function clearTunnelConfig({ paths = resolveCodexlessPaths() } = {}
   }
 }
 
-export function tunnelConfigStatus({ paths = resolveCodexlessPaths(), env = process.env } = {}) {
-  if (typeof env.CODEXLESS_TUNNEL_ARGV_JSON === "string" && env.CODEXLESS_TUNNEL_ARGV_JSON.trim()) {
-    const argv = parseArgvJson(env.CODEXLESS_TUNNEL_ARGV_JSON, "CODEXLESS_TUNNEL_ARGV_JSON");
+export function tunnelConfigStatus({ paths = resolveRootboundPaths(), env = process.env } = {}) {
+  if (typeof env.ROOTBOUND_TUNNEL_ARGV_JSON === "string" && env.ROOTBOUND_TUNNEL_ARGV_JSON.trim()) {
+    const argv = parseArgvJson(env.ROOTBOUND_TUNNEL_ARGV_JSON, "ROOTBOUND_TUNNEL_ARGV_JSON");
     return { configured: true, source: "environment", path: null, argv: redactTemplateArgv(argv), envPlaceholders: envNames(argv) };
   }
   try {
@@ -83,8 +83,8 @@ export function validateTunnelArgvTemplate(argv) {
 }
 
 function loadTunnelTemplate({ env, paths }) {
-  const raw = env.CODEXLESS_TUNNEL_ARGV_JSON;
-  if (typeof raw === "string" && raw.trim()) return { source: "environment", argv: parseArgvJson(raw, "CODEXLESS_TUNNEL_ARGV_JSON") };
+  const raw = env.ROOTBOUND_TUNNEL_ARGV_JSON;
+  if (typeof raw === "string" && raw.trim()) return { source: "environment", argv: parseArgvJson(raw, "ROOTBOUND_TUNNEL_ARGV_JSON") };
   try {
     const payload = readPersistent(paths.tunnelConfigPath);
     validateTunnelArgvTemplate(payload.argv);
@@ -93,8 +93,8 @@ function loadTunnelTemplate({ env, paths }) {
     if (error?.code === "ENOENT") {
       throw tunnelError(
         "TUNNEL_NOT_CONFIGURED",
-        "Secure MCP Tunnel is not configured. Configure it once with `codexless tunnel configure ...` or set CODEXLESS_TUNNEL_ARGV_JSON for a temporary override.",
-        ["Run `codexless tunnel configure --argv-json '<json argv>'` using {env:VARIABLE} placeholders for credentials."]
+        "Secure MCP Tunnel is not configured. Configure it once with `rootbound tunnel configure ...` or set ROOTBOUND_TUNNEL_ARGV_JSON for a temporary override.",
+        ["Run `rootbound tunnel configure --argv-json '<json argv>'` using {env:VARIABLE} placeholders for credentials."]
       );
     }
     throw error;
@@ -118,7 +118,7 @@ function expandValue(value, { env, replacements }) {
   if (envMatch) {
     const name = envMatch[1];
     const resolved = env[name];
-    if (typeof resolved !== "string" || !resolved.length) throw tunnelError("TUNNEL_ENV_MISSING", `Tunnel configuration requires environment variable ${name}, but it is not set.`, [`Export ${name} in the environment that starts Codexless.`]);
+    if (typeof resolved !== "string" || !resolved.length) throw tunnelError("TUNNEL_ENV_MISSING", `Tunnel configuration requires environment variable ${name}, but it is not set.`, [`Export ${name} in the environment that starts Rootbound.`]);
     return resolved;
   }
   return value;
@@ -145,5 +145,5 @@ function redactTemplateArgv(argv) {
 }
 
 function tunnelError(code, message, nextActions = [], details = null) {
-  return new CodexlessToolError(message, { code, category: code.includes("SECRET") ? "safety" : "configuration", retryable: false, nextActions, details });
+  return new RootboundToolError(message, { code, category: code.includes("SECRET") ? "safety" : "configuration", retryable: false, nextActions, details });
 }

@@ -42,8 +42,8 @@ export class CodexPublicContextExecutor {
       requestTimeoutMs: 30_000,
       initializeCapabilities: { experimentalApi: true },
       clientInfo: {
-        name: "codexless_public_preview",
-        title: "Codexless Public Preview",
+        name: "rootbound_public_preview",
+        title: "Rootbound Public Preview",
         version: "0.1.0",
       },
     };

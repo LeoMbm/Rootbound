@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { CodexlessToolError } from "./tool-errors.mjs";
+import { RootboundToolError } from "./tool-errors.mjs";
 
 export function createContinuityIdempotency({ store, now = () => Date.now() } = {}) {
   if (!store) throw new Error("continuity idempotency requires a state store");
@@ -13,7 +13,7 @@ export function createContinuityIdempotency({ store, now = () => Date.now() } = 
       const existing = getRow(store.db, operation, key);
       if (existing) {
         if (existing.requestHash !== requestHash) {
-          throw new CodexlessToolError("This idempotencyKey was already used with different continuity input.", {
+          throw new RootboundToolError("This idempotencyKey was already used with different continuity input.", {
             code: "IDEMPOTENCY_KEY_REUSED",
             category: "input",
             retryable: false,
@@ -23,7 +23,7 @@ export function createContinuityIdempotency({ store, now = () => Date.now() } = 
         if (existing.status === "completed") {
           return { mode: "replay", requestHash, result: existing.result, bindingRef: existing.bindingRef };
         }
-        throw new CodexlessToolError("A previous continuity request with this idempotencyKey may already have reached Codex, but completion was not confirmed locally.", {
+        throw new RootboundToolError("A previous continuity request with this idempotencyKey may already have reached Codex, but completion was not confirmed locally.", {
           code: "IDEMPOTENCY_IN_DOUBT",
           category: "state",
           retryable: false,
@@ -48,7 +48,7 @@ export function createContinuityIdempotency({ store, now = () => Date.now() } = 
         WHERE operation=? AND idempotency_key=? AND request_hash=? AND status='pending'`)
         .run(bindingRef, JSON.stringify(result), at, operation, key, requestHash);
       if (updated.changes !== 1) {
-        throw new CodexlessToolError("Could not finalize continuity idempotency state after the operation completed.", {
+        throw new RootboundToolError("Could not finalize continuity idempotency state after the operation completed.", {
           code: "IDEMPOTENCY_FINALIZE_FAILED",
           category: "state",
           retryable: false,
@@ -107,7 +107,7 @@ function hashRequest(request) {
 
 function validateKey(key) {
   if (typeof key !== "string" || key.length < 8 || key.length > 256 || !/^[A-Za-z0-9._:-]+$/.test(key)) {
-    throw new CodexlessToolError("idempotencyKey must be 8..256 characters using letters, digits, dot, underscore, colon, or dash.", {
+    throw new RootboundToolError("idempotencyKey must be 8..256 characters using letters, digits, dot, underscore, colon, or dash.", {
       code: "IDEMPOTENCY_KEY_INVALID",
       category: "input",
       retryable: false,

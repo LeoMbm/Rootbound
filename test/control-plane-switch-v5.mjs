@@ -5,13 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { projectRefForRoot } from "../src/project-registry.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const cli = path.join(repoRoot, "bin", "codexless.mjs");
-const temp = await mkdtemp(path.join(os.tmpdir(), "codexless-control-plane-switch-"));
+const cli = path.join(repoRoot, "bin", "rootbound.mjs");
+const temp = await mkdtemp(path.join(os.tmpdir(), "rootbound-control-plane-switch-"));
 const projectAPath = path.join(temp, "project-a");
 const projectBPath = path.join(temp, "project-b");
 await mkdir(projectAPath);
@@ -19,7 +19,7 @@ await mkdir(projectBPath);
 const projectA = await realpath(projectAPath);
 const projectB = await realpath(projectBPath);
 const stateRoot = path.join(temp, "state");
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: stateRoot }, home: temp, platform: process.platform });
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: stateRoot }, home: temp, platform: process.platform });
 const projectARef = projectRefForRoot(projectA);
 const projectBRef = projectRefForRoot(projectB);
 
@@ -34,8 +34,8 @@ try {
 
 const env = {
   ...process.env,
-  CODEXLESS_HOME: stateRoot,
-  CODEXLESS_TUNNEL_ARGV_JSON: JSON.stringify([process.execPath, "-e", "setInterval(()=>{},1000)"]),
+  ROOTBOUND_HOME: stateRoot,
+  ROOTBOUND_TUNNEL_ARGV_JSON: JSON.stringify([process.execPath, "-e", "setInterval(()=>{},1000)"]),
   NODE_NO_WARNINGS: "1",
 };
 
@@ -82,7 +82,7 @@ async function runCli(args, { expectedExitCode = 0, allowedExitCodes = null } = 
       maxBuffer: 2 * 1024 * 1024,
     });
     if (expectedExitCode !== 0 && !(allowedExitCodes ?? []).includes(0)) {
-      assert.fail(`Expected codexless ${args.join(" ")} to exit ${expectedExitCode}, but it exited 0`);
+      assert.fail(`Expected rootbound ${args.join(" ")} to exit ${expectedExitCode}, but it exited 0`);
     }
     return { ...result, exitCode: 0 };
   } catch (error) {

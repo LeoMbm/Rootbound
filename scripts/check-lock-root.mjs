@@ -55,7 +55,7 @@ const result = {
 if (json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 else {
   const label = status === "ok" ? "PASS" : status === "drift" ? "DRIFT" : "FAIL";
-  process.stdout.write(`Codexless lock check: ${label}${strict ? " (strict)" : ""}; canonical=npm-shrinkwrap.json\n`);
+  process.stdout.write(`Rootbound lock check: ${label}${strict ? " (strict)" : ""}; canonical=npm-shrinkwrap.json\n`);
   for (const problem of problems) process.stdout.write(`[ERROR] ${problem}\n`);
   for (const drift of metadataDrift) process.stdout.write(`[DRIFT] ${drift}\n`);
   for (const action of result.remediation) process.stdout.write(`-> ${action}\n`);

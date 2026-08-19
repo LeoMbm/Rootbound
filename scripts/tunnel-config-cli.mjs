@@ -1,5 +1,5 @@
 import process from "node:process";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { rollbackManagedTunnelSetup } from "../src/tunnel-bootstrap.mjs";
 import { saveTunnelConfig, tunnelConfigStatus } from "../src/tunnel-config.mjs";
 
@@ -19,7 +19,7 @@ try {
   if (Array.isArray(error?.nextActions)) payload.nextActions = error.nextActions;
   if (args.includes("--json")) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   else {
-    process.stderr.write(`Codexless tunnel: ${payload.error}\n`);
+    process.stderr.write(`Rootbound tunnel: ${payload.error}\n`);
     for (const action of payload.nextActions ?? []) process.stderr.write(`  -> ${action}\n`);
   }
   process.exitCode = error?.usage ? 2 : 1;
@@ -37,7 +37,7 @@ function show(argv) {
 }
 async function clear(argv) {
   const json = onlyJson(argv);
-  const paths = resolveCodexlessPaths();
+  const paths = resolveRootboundPaths();
   const before = tunnelConfigStatus({ paths });
   await rollbackManagedTunnelSetup({ paths });
   const after = tunnelConfigStatus({ paths });
@@ -81,7 +81,7 @@ function onlyJson(argv) {
 function emit(value, json) {
   if (json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   else if (value.action === "configured") {
-    process.stdout.write(`Codexless tunnel configured.\nSource: persistent\nConfig: ${value.path}\n`);
+    process.stdout.write(`Rootbound tunnel configured.\nSource: persistent\nConfig: ${value.path}\n`);
     if (value.envPlaceholders?.length) process.stdout.write(`Required environment: ${value.envPlaceholders.join(", ")}\n`);
   } else if (value.action === "status") {
     process.stdout.write(`Tunnel: ${value.configured ? "configured" : "not configured"}\n`);
@@ -92,10 +92,10 @@ function emit(value, json) {
   } else {
     process.stdout.write(`Tunnel config cleared: ${value.cleared ? "yes" : "already absent"}\n`);
     if (value.managedArtifactsCleared) process.stdout.write("Guided tunnel setup state cleared.\n");
-    if (value.environmentOverrideActive) process.stdout.write("Note: CODEXLESS_TUNNEL_ARGV_JSON is still active in the environment.\n");
+    if (value.environmentOverrideActive) process.stdout.write("Note: ROOTBOUND_TUNNEL_ARGV_JSON is still active in the environment.\n");
   }
 }
 function printHelp() {
-  process.stdout.write(`Codexless tunnel configuration (advanced)\n\nNormal users should run:\n  codexless connect .\n\nAdvanced/manual usage:\n  codexless tunnel configure --argv-json '["tunnel-client", "run", "--profile", "my-profile"]'\n  codexless tunnel configure -- tunnel-client run --profile my-profile\n  codexless tunnel show [--json]\n  codexless tunnel clear [--json]\n\nPersistent manual config refuses literal credentials. The guided connect wizard keeps its runtime key outside argv/tunnel.json.\n`);
+  process.stdout.write(`Rootbound tunnel configuration (advanced)\n\nNormal users should run:\n  rootbound connect .\n\nAdvanced/manual usage:\n  rootbound tunnel configure --argv-json '["tunnel-client", "run", "--profile", "my-profile"]'\n  rootbound tunnel configure -- tunnel-client run --profile my-profile\n  rootbound tunnel show [--json]\n  rootbound tunnel clear [--json]\n\nPersistent manual config refuses literal credentials. The guided connect wizard keeps its runtime key outside argv/tunnel.json.\n`);
 }
 function usage(message) { const error = new Error(message); error.usage = true; return error; }

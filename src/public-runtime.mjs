@@ -7,7 +7,7 @@ import { readJsonFile } from "./json-file.mjs";
 import { createPersistentContinuityState } from "./persistent-continuity-state.mjs";
 import { CodexPublicContextExecutor } from "./public-context-executor.mjs";
 import { createPublicServerFactory } from "./public-server-factory.mjs";
-import { resolveCodexlessPaths } from "./state-paths.mjs";
+import { resolveRootboundPaths } from "./state-paths.mjs";
 import { openStateStore } from "./state-store.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "./surface-contracts.mjs";
 
@@ -18,12 +18,12 @@ function envString(env, name, fallback = null) {
 
 export async function createPublicRuntime({ env = process.env } = {}) {
   const supportedPlatform = process.platform === "win32" || (process.platform === "darwin" && process.arch === "arm64");
-  if (!supportedPlatform && env.CODEXLESS_ALLOW_NONWINDOWS_PROBE !== "1") {
-    throw new Error("Codexless Technical Preview currently supports Windows and Apple Silicon macOS only");
+  if (!supportedPlatform && env.ROOTBOUND_ALLOW_NONWINDOWS_PROBE !== "1") {
+    throw new Error("Rootbound Technical Preview currently supports Windows and Apple Silicon macOS only");
   }
 
-  const probeVersion = !supportedPlatform && env.CODEXLESS_ALLOW_NONWINDOWS_PROBE === "1"
-    ? envString(env, "CODEXLESS_PROBE_CODEX_VERSION", null)
+  const probeVersion = !supportedPlatform && env.ROOTBOUND_ALLOW_NONWINDOWS_PROBE === "1"
+    ? envString(env, "ROOTBOUND_PROBE_CODEX_VERSION", null)
     : null;
   const acceptedCodexVersions = probeVersion
     ? [...new Set([...ACCEPTED_CODEX_VERSIONS, probeVersion])]
@@ -31,14 +31,14 @@ export async function createPublicRuntime({ env = process.env } = {}) {
   const codexResolution = await resolveCodexExecutable({ env, acceptedVersions: acceptedCodexVersions });
   const codexBin = codexResolution.path;
 
-  const defaultCwd = envString(env, "CODEXLESS_DEFAULT_CWD", process.cwd());
-  const profileOverride = envString(env, "CODEXLESS_PROFILE", null);
-  const configOverridesFile = envString(env, "CODEXLESS_CONFIG_OVERRIDES_FILE", null);
+  const defaultCwd = envString(env, "ROOTBOUND_DEFAULT_CWD", process.cwd());
+  const profileOverride = envString(env, "ROOTBOUND_PROFILE", null);
+  const configOverridesFile = envString(env, "ROOTBOUND_CONFIG_OVERRIDES_FILE", null);
   const configOverrides = configOverridesFile
-    ? (await readJsonFile(configOverridesFile, "CODEXLESS_CONFIG_OVERRIDES_FILE"))?.overrides
+    ? (await readJsonFile(configOverridesFile, "ROOTBOUND_CONFIG_OVERRIDES_FILE"))?.overrides
     : [];
   if (!Array.isArray(configOverrides) || !configOverrides.every((value) => typeof value === "string" && value.trim())) {
-    throw new Error("CODEXLESS_CONFIG_OVERRIDES_FILE must contain { overrides: [\"key=value\", ...] }");
+    throw new Error("ROOTBOUND_CONFIG_OVERRIDES_FILE must contain { overrides: [\"key=value\", ...] }");
   }
 
   let publicContext = null;
@@ -61,7 +61,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
 
     publicContext = new CodexPublicContextExecutor({ codexBin, defaultCwd, configOverrides });
     await publicContext.start();
-    stateStore = await openStateStore({ paths: resolveCodexlessPaths({ env }) });
+    stateStore = await openStateStore({ paths: resolveRootboundPaths({ env }) });
 
     const continuityState = createPersistentContinuityState({ store: stateStore });
     commandManager = createCommandManager({

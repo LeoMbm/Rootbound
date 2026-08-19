@@ -39,7 +39,7 @@ assert.equal(isSensitivePath("certs/server.pem"), true);
 assert.equal(isSensitivePath("src/app.js"), false);
 assert.doesNotThrow(() => assertDurableCommandHasNoSecrets(["npm", "test"]));
 
-const root = await mkdtemp(path.join(os.tmpdir(), "codexless-sensitive-read-"));
+const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-sensitive-read-"));
 const envFile = path.join(root, ".env");
 await writeFile(envFile, "API_KEY=very-secret\n", "utf8");
 const authorityExecutor = {

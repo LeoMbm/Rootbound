@@ -1,21 +1,21 @@
 # Security
 
-Codexless is a local execution bridge. It can read project files, edit files, and run commands under authority resolved from the user's local Codex environment. Treat it with the same care as other local development tooling that can affect real repositories.
+Rootbound is a local execution bridge. It can read project files, edit files, and run commands under authority resolved from the user's local Codex environment. Treat it with the same care as other local development tooling that can affect real repositories.
 
-This document describes the **Codexless V5 public surface** on the V5 feature branch.
+This document describes the **Rootbound V5 public surface** on the V5 feature branch.
 
 ## Core security rules
 
 V5 is built around these rules:
 
 1. **Codex remains the local authority / sandbox source.**
-2. **Codexless may narrow authority, but a remote caller must not silently widen it.**
+2. **Rootbound may narrow authority, but a remote caller must not silently widen it.**
 3. **Permission / trust denial fails visibly.**
 4. **The public ChatGPT lane must not silently start a Codex model turn.**
 5. **Credentials must not enter ordinary durable state such as SQLite, command argv, logs, diagnostics, or non-secret tunnel metadata.** A credential that the guided tunnel setup must retain is isolated in a dedicated local private-secret file with restricted permissions.
 6. **Ambiguous retries must fail closed when replay could duplicate an external mutation.**
 
-Codexless is not a magic sandbox around deliberately broad local permissions. If the user grants broad workspace authority locally, authorized Codexless operations can be correspondingly powerful.
+Rootbound is not a magic sandbox around deliberately broad local permissions. If the user grants broad workspace authority locally, authorized Rootbound operations can be correspondingly powerful.
 
 ---
 
@@ -25,7 +25,7 @@ The canonical public surface is defined only in `src/surface-contracts.mjs` and 
 
 Current V5 surface:
 
-- `codexless-public-preview-v5`
+- `rootbound-public-preview-v5`
 - 27 public tools
 - no public model catalog
 - no public Codex Agent / turn-start tool
@@ -78,7 +78,7 @@ Interactive App Server command streaming is used where the accepted implementati
 
 Project trust is exact-root and explicit.
 
-For normal onboarding, `codexless connect .` is a guided setup. It:
+For normal onboarding, `rootbound connect .` is a guided setup. It:
 
 1. resolves the canonical project / Git root;
 2. resolves or creates the local tunnel configuration and validates it before touching Codex trust;
@@ -133,7 +133,7 @@ Guarded precise edits:
 
 `codex.edit_undo` and `codex.edit_redo` do **not** use `git reset`.
 
-For eligible precise edits, Codexless stores exact before/after UTF-8 snapshots locally and records before/after SHA-256 values.
+For eligible precise edits, Rootbound stores exact before/after UTF-8 snapshots locally and records before/after SHA-256 values.
 
 Undo is allowed only if the current file still equals the recorded after-hash. Redo is allowed only if the current file still equals the recorded before-hash. Any external modification causes `UNDO_CONFLICT` and the operation fails closed.
 
@@ -185,36 +185,36 @@ Command labels stored for continuity are redacted; raw argv is not copied into t
 Normal users run:
 
 ```text
-codexless connect .
+rootbound connect .
 ```
 
 The wizard may need a Tunnel runtime API key. It first reuses `CONTROL_PLANE_API_KEY` / `OPENAI_API_KEY` when already present. Otherwise interactive input is hidden while the key is entered.
 
-When Codexless needs to retain that key for future supervised starts, it is written to a dedicated local secret file under the Codexless state directory. The generated tunnel-client profile contains only a `file:` reference to that secret file.
+When Rootbound needs to retain that key for future supervised starts, it is written to a dedicated local secret file under the Rootbound state directory. The generated tunnel-client profile contains only a `file:` reference to that secret file.
 
 The runtime key is intentionally excluded from:
 
 - `tunnel.json`;
 - the tunnel process argv;
 - SQLite;
-- Codexless supervisor logs;
+- Rootbound supervisor logs;
 - diagnostics;
 - generated README/config examples.
 
 File protections:
 
 - macOS / POSIX: the secret file is written mode `0600`;
-- Windows: Codexless removes inherited ACLs and grants full access to the current Windows account with `icacls`; setup fails closed if that ACL hardening cannot be applied.
+- Windows: Rootbound removes inherited ACLs and grants full access to the current Windows account with `icacls`; setup fails closed if that ACL hardening cannot be applied.
 
-`tunnel-client doctor` is run against the generated profile before Codex trust is changed. If guided tunnel setup validation fails, Codexless removes the generated tunnel metadata/profile/secret artifacts.
+`tunnel-client doctor` is run against the generated profile before Codex trust is changed. If guided tunnel setup validation fails, Rootbound removes the generated tunnel metadata/profile/secret artifacts.
 
-`codexless tunnel clear` also removes the guided tunnel profile and dedicated secret file. An environment override such as `CODEXLESS_TUNNEL_ARGV_JSON` remains outside Codexless's control and is reported as still active.
+`rootbound tunnel clear` also removes the guided tunnel profile and dedicated secret file. An environment override such as `ROOTBOUND_TUNNEL_ARGV_JSON` remains outside Rootbound's control and is reported as still active.
 
 This Technical Preview uses filesystem permissions / ACLs for the guided local tunnel secret rather than claiming OS Keychain or Credential Manager vault integration.
 
 ### Advanced manual tunnel configuration
 
-`codexless tunnel configure ...` remains an operator/debug path.
+`rootbound tunnel configure ...` remains an operator/debug path.
 
 Persistent manual tunnel config stores an argv **template**, not literal secret values. Detectable literal credentials are rejected; secret arguments should use placeholders such as:
 
@@ -240,7 +240,7 @@ These patterns reduce accidental leakage; they are not proof that every secret f
 
 ## Diagnostics / logging
 
-`codexless diagnostic` is designed for support without dumping project contents.
+`rootbound diagnostic` is designed for support without dumping project contents.
 
 Diagnostic output intentionally excludes:
 
@@ -285,9 +285,9 @@ Webpage content is untrusted input and can contain prompt injection. A model mus
 
 The local HTTP entry point is intended for loopback only. Raw unauthenticated local service exposure to the public internet is not a supported deployment.
 
-Normal ChatGPT access uses the authenticated OpenAI tunnel path and launches Codexless over stdio. The HTTP launcher remains an advanced/local compatibility surface, not the normal V5 onboarding path.
+Normal ChatGPT access uses the authenticated OpenAI tunnel path and launches Rootbound over stdio. The HTTP launcher remains an advanced/local compatibility surface, not the normal V5 onboarding path.
 
-Codexless manages the local stdio command/profile and secret boundary, but it does not control the security of external tunnel infrastructure or a separately supplied manual tunnel command.
+Rootbound manages the local stdio command/profile and secret boundary, but it does not control the security of external tunnel infrastructure or a separately supplied manual tunnel command.
 
 ---
 
@@ -298,15 +298,15 @@ V5 separates the app tree from the state tree.
 macOS default:
 
 ```text
-~/Library/Application Support/Codexless/app
-~/Library/Application Support/Codexless/state
+~/Library/Application Support/Rootbound/app
+~/Library/Application Support/Rootbound/state
 ```
 
 Windows default:
 
 ```text
-%LOCALAPPDATA%\Codexless\app
-%LOCALAPPDATA%\Codexless\state
+%LOCALAPPDATA%\Rootbound\app
+%LOCALAPPDATA%\Rootbound\state
 ```
 
 Security / durability properties:
@@ -322,7 +322,7 @@ Security / durability properties:
 - legacy Windows root-layout migration installs the new app under `app/` rather than moving / deleting the state root;
 - Mac lifecycle/stdio launchers are marked executable by the installer.
 
-The installer itself does not create project trust or tunnel credentials. Those changes happen only through explicit `codexless connect` onboarding.
+The installer itself does not create project trust or tunnel credentials. Those changes happen only through explicit `rootbound connect` onboarding.
 
 ---
 
@@ -350,7 +350,7 @@ Before a V5 release or merge:
 - run `npm run test:v5`;
 - run the full test suite;
 - inspect the packed artifact;
-- run guided `codexless connect .` acceptance on a real Mac;
+- run guided `rootbound connect .` acceptance on a real Mac;
 - run one controlled macOS + Windows matrix / real-machine acceptance before supported release;
 - scan the artifact and repository for secrets / machine paths;
 - run real-machine command / edit / restart / upgrade / uninstall acceptance.
@@ -373,7 +373,7 @@ Known limitations include:
 - Browser Reader is read-first rather than a general browser agent;
 - final V5 release still requires controlled CI and real-machine acceptance evidence.
 
-The durable acceptance checklist is maintained in `docs/plans/codexless-v5.md`.
+The durable acceptance checklist is maintained in `docs/plans/rootbound-v5.md`.
 
 ---
 

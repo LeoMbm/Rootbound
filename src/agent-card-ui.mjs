@@ -1,7 +1,7 @@
-export const AGENT_TASK_CARD_URI = "ui://codexless/codex-task-card-v13.html";
+export const AGENT_TASK_CARD_URI = "ui://rootbound/codex-task-card-v13.html";
 
 export function registerAgentTaskCardResource(server) {
-  server.registerResource("codexless-codex-task-card", AGENT_TASK_CARD_URI, {}, async () => ({
+  server.registerResource("rootbound-codex-task-card", AGENT_TASK_CARD_URI, {}, async () => ({
     contents: [{
       uri: AGENT_TASK_CARD_URI,
       mimeType: "text/html;profile=mcp-app",
@@ -85,7 +85,7 @@ const AGENT_TASK_CARD_HTML = String.raw`
   function stableRequestId(key) {
     if (!stableIds.has(key)) {
       const random = (globalThis.crypto && globalThis.crypto.randomUUID) ? globalThis.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
-      stableIds.set(key, "codexless-card-" + random);
+      stableIds.set(key, "rootbound-card-" + random);
     }
     return stableIds.get(key);
   }
@@ -219,7 +219,7 @@ const AGENT_TASK_CARD_HTML = String.raw`
 
   function commitTokenFromInput(input) {
     if (!input || typeof input !== "object") return null;
-    if (typeof input.codexlessCommitToken === "string" && input.codexlessCommitToken) return input.codexlessCommitToken;
+    if (typeof input.rootboundCommitToken === "string" && input.rootboundCommitToken) return input.rootboundCommitToken;
     if (input._meta && typeof input._meta === "object") {
       const nested = commitTokenFromInput(input._meta); if (nested) return nested;
     }

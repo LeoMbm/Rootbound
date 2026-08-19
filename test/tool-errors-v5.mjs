@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { CodexlessToolError, normalizeToolError, typedToolResponse } from "../src/tool-errors.mjs";
+import { RootboundToolError, normalizeToolError, typedToolResponse } from "../src/tool-errors.mjs";
 import { PUBLIC_SURFACE_VERSION } from "../src/surface-contracts.mjs";
 
 const permission = new Error("trust required");
@@ -16,7 +16,7 @@ assert.deepEqual(normalizeToolError(permission, { operation: "workspace_open" })
   operation: "workspace_open",
 });
 
-const compatibility = new CodexlessToolError("stdin unavailable", {
+const compatibility = new RootboundToolError("stdin unavailable", {
   code: "COMMAND_STDIN_UNSUPPORTED",
   nextActions: ["Use non-interactive mode"],
 });

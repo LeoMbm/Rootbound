@@ -5,16 +5,16 @@ import os from "node:os";
 import path from "node:path";
 import { createEditMutationJournal } from "../src/edit-mutations.mjs";
 import { projectRefForRoot } from "../src/project-registry.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
-const root = await mkdtemp(path.join(os.tmpdir(), "codexless-edit-mutation-"));
+const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-edit-mutation-"));
 const file = path.join(root, "sample.txt");
 const beforeText = "alpha\n";
 const afterText = "beta\n";
 await writeFile(file, afterText, "utf8");
 
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(root, ".state") } });
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(root, ".state") } });
 const store = await openStateStore({ paths });
 const projectRef = projectRefForRoot(root);
 store.upsertProject({ projectRef, root, gitRoot: null, name: "sample", trusted: true, createdAt: 1, updatedAt: 1, lastConnectedAt: 1 });

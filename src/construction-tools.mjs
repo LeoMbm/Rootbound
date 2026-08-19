@@ -104,13 +104,13 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
   if (mutationJournal) {
     server.registerTool("codex.edit_undo", {
       title: "Undo Guarded Precise Edit",
-      description: "Undo one recorded precise_edit by mutationId. Codexless verifies the current file SHA still equals the recorded after-hash before restoring the exact previous UTF-8 content through the authorized sandbox. Refuses on conflicts; does not use git reset or start a model turn.",
+      description: "Undo one recorded precise_edit by mutationId. Rootbound verifies the current file SHA still equals the recorded after-hash before restoring the exact previous UTF-8 content through the authorized sandbox. Refuses on conflicts; does not use git reset or start a model turn.",
       inputSchema: z.object({ mutationId: mutationIdSchema }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     }, async ({ mutationId }) => typedToolResponse(async () => publicMutation(await mutationJournal.undo(mutationId)), { operation: "edit_undo" }));
     server.registerTool("codex.edit_redo", {
       title: "Redo Guarded Precise Edit",
-      description: "Redo one previously undone precise_edit by mutationId. Codexless verifies the current file SHA still equals the recorded before-hash before restoring the exact after-content through the authorized sandbox.",
+      description: "Redo one previously undone precise_edit by mutationId. Rootbound verifies the current file SHA still equals the recorded before-hash before restoring the exact after-content through the authorized sandbox.",
       inputSchema: z.object({ mutationId: mutationIdSchema }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     }, async ({ mutationId }) => typedToolResponse(async () => publicMutation(await mutationJournal.redo(mutationId)), { operation: "edit_redo" }));

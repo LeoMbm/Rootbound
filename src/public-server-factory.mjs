@@ -16,13 +16,13 @@ const z = require("zod/v4");
 const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
 
 export function createPublicServerFactory({ executor, authorityExecutor, publicContext, browserReader, continuityState, commandManager, stateStore, maxConcurrent = 1 }) {
-  if (!executor) throw new Error("Codexless public server requires an authority executor");
-  if (!authorityExecutor) throw new Error("Codexless public server requires authorityExecutor");
-  if (!publicContext) throw new Error("Codexless public server requires publicContext");
-  if (!browserReader) throw new Error("Codexless public server requires browserReader");
-  if (!continuityState) throw new Error("Codexless public server requires continuityState");
-  if (!commandManager) throw new Error("Codexless public server requires commandManager");
-  if (!stateStore) throw new Error("Codexless public server requires stateStore");
+  if (!executor) throw new Error("Rootbound public server requires an authority executor");
+  if (!authorityExecutor) throw new Error("Rootbound public server requires authorityExecutor");
+  if (!publicContext) throw new Error("Rootbound public server requires publicContext");
+  if (!browserReader) throw new Error("Rootbound public server requires browserReader");
+  if (!continuityState) throw new Error("Rootbound public server requires continuityState");
+  if (!commandManager) throw new Error("Rootbound public server requires commandManager");
+  if (!stateStore) throw new Error("Rootbound public server requires stateStore");
   if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 4) throw new Error("maxConcurrent must be an integer between 1 and 4");
 
   const commandSchema = z.object({
@@ -30,14 +30,14 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     cwd: z.string().min(1).max(32_768).optional().describe("Optional local working-directory context. cwd does not let the caller select or widen a permission profile."),
     access: z.enum(["inherit", "readOnly"]).default("readOnly").describe("readOnly is the safe compatibility default. inherit uses the locally authorized/resolved Codex permission profile."),
     timeoutMs: z.number().int().positive().max(120_000).default(30_000),
-    bindingRef: bindingRefSchema.describe("Optional opaque continuity binding. When supplied, Codexless scopes execution to the bound project and journals redacted command metadata for the next continuity checkpoint."),
+    bindingRef: bindingRefSchema.describe("Optional opaque continuity binding. When supplied, Rootbound scopes execution to the bound project and journals redacted command metadata for the next continuity checkpoint."),
   }).strict();
 
   return function createServer() {
     let inFlight = 0;
     const server = new McpServer(
-      { name: "codexless", title: "Codexless Local", version: PUBLIC_SERVER_VERSION, description: "ChatGPT-only local coding bridge built on verified model-free Codex App Server primitives." },
-      { instructions: "Codexless Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Start project work with workspace_open to resolve the canonical projectRef/root/authority, then prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. Successful precise_edit calls may return a mutationId; use edit_undo/edit_redo for guarded local reversal while hashes still match. On supported platforms command_write can send stdin and command_terminate stops the active process. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. Use idempotencyKey on continuity_bind/checkpoint when network retries are possible; ambiguous checkpoint retries fail closed rather than inject twice. Long-running command argv is persisted and therefore rejects detected credentials; command_exec continuity labels are redacted before journaling. The checkpoint is an external delta handoff only; no Codex model turn is started." }
+      { name: "rootbound", title: "Rootbound Local", version: PUBLIC_SERVER_VERSION, description: "ChatGPT-only local coding bridge built on verified model-free Codex App Server primitives." },
+      { instructions: "Rootbound Local is a ChatGPT-only, model-free coding surface. ChatGPT itself must reason, plan, inspect, edit, run tests, interpret failures, and decide next steps. This server exposes no Codex model, model catalog, agent delegation, Task Card, or turn/start tool. Start project work with workspace_open to resolve the canonical projectRef/root/authority, then prefer repo_search/read_many/git_status/git_diff for inspection, apply_patch or precise_edit for edits, command_exec for short buffered tests/builds, and command_start plus command_poll for long-running work. Successful precise_edit calls may return a mutationId; use edit_undo/edit_redo for guarded local reversal while hashes still match. On supported platforms command_write can send stdin and command_terminate stops the active process. Never attempt to launch Codex CLI through command tools; nested Codex launches are refused. Use idempotencyKey on continuity_bind/checkpoint when network retries are possible; ambiguous checkpoint retries fail closed rather than inject twice. Long-running command argv is persisted and therefore rejects detected credentials; command_exec continuity labels are redacted before journaling. The checkpoint is an external delta handoff only; no Codex model turn is started." }
     );
 
     server.registerTool(

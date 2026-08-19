@@ -10,10 +10,10 @@ import {
   validateTunnelId,
   writeManagedTunnelSetup,
 } from "../src/tunnel-bootstrap.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { tunnelConfigStatus } from "../src/tunnel-config.mjs";
 
-const root = await mkdtemp(path.join(os.tmpdir(), "codexless-tunnel-bootstrap-"));
+const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-tunnel-bootstrap-"));
 const home = path.join(root, "home");
 const profileDir = path.join(home, ".config", "tunnel-client");
 await mkdir(profileDir, { recursive: true });
@@ -36,9 +36,9 @@ assert.equal(validateTunnelId("tunnel_short"), false);
 assert.equal(validateRuntimeKey("sk_test-runtime_key-123"), true);
 assert.equal(validateRuntimeKey("bad key with spaces"), false);
 
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(root, "Codexless State") }, home });
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(root, "Rootbound State") }, home });
 const secret = "sk_test-runtime_key-123";
-const packageRoot = path.join(root, "Codexless App With Spaces");
+const packageRoot = path.join(root, "Rootbound App With Spaces");
 const nodePath = path.join(root, "Node Runtime", "node");
 const setup = await writeManagedTunnelSetup({
   tunnelId: tunnelA,
@@ -75,11 +75,11 @@ assert.equal(persistedStatus.configured, true);
 assert.deepEqual(persistedStatus.argv, ["tunnel-client", "run", "--profile-file", paths.tunnelManagedProfilePath]);
 assert.equal(JSON.stringify(persistedStatus).includes(secret), false);
 
-const commandWithSpaces = buildStdioCommand({ nodePath: "/Applications/Node Runtime/node", packageRoot: "/Users/example/Library/Application Support/Codexless/app" });
-assert.equal(commandWithSpaces, "'/Applications/Node Runtime/node' '/Users/example/Library/Application Support/Codexless/app/scripts/launch.mjs' stdio");
+const commandWithSpaces = buildStdioCommand({ nodePath: "/Applications/Node Runtime/node", packageRoot: "/Users/example/Library/Application Support/Rootbound/app" });
+assert.equal(commandWithSpaces, "'/Applications/Node Runtime/node' '/Users/example/Library/Application Support/Rootbound/app/scripts/launch.mjs' stdio");
 assert.equal(
-  buildStdioCommand({ packageRoot: "/Users/example/Library/Application Support/Codexless/app" }),
-  "node '/Users/example/Library/Application Support/Codexless/app/scripts/launch.mjs' stdio"
+  buildStdioCommand({ packageRoot: "/Users/example/Library/Application Support/Rootbound/app" }),
+  "node '/Users/example/Library/Application Support/Rootbound/app/scripts/launch.mjs' stdio"
 );
 
 await rollbackManagedTunnelSetup({ paths });

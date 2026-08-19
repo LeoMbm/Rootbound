@@ -7,7 +7,7 @@ import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { openStateStore } from "../src/state-store.mjs";
 import { registerProject, resolveProjectRoot } from "../src/project-registry.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { runtimeStatus, stopRuntime, tailLog } from "../src/runtime-state.mjs";
 import { resolveTunnelLaunch, tunnelConfigStatus } from "../src/tunnel-config.mjs";
 import {
@@ -28,7 +28,7 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const args = process.argv.slice(2);
 const command = args.shift() ?? "help";
 const options = parseOptions(args);
-const paths = resolveCodexlessPaths();
+const paths = resolveRootboundPaths();
 
 try {
   switch (command) {
@@ -45,7 +45,7 @@ try {
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   if (options.json) process.stdout.write(`${JSON.stringify({ ok: false, error: message, ...(error?.code ? { errorCode: error.code } : {}) })}\n`);
-  else process.stderr.write(`Codexless: ${message}\n`);
+  else process.stderr.write(`Rootbound: ${message}\n`);
   process.exitCode = error instanceof CliUsageError ? 2 : 1;
 }
 
@@ -95,7 +95,7 @@ async function ensureTunnelReadyForConnect(opts, projectRoot) {
   }
 
   const interactive = !opts.json && !opts.yes && process.stdin.isTTY && process.stdout.isTTY;
-  setupLine(opts, "\nCodexless setup");
+  setupLine(opts, "\nRootbound setup");
   setupLine(opts, "Checking ChatGPT tunnel prerequisites...");
   await probeTunnelClient({ cwd: packageRoot });
   setupLine(opts, "✓ tunnel-client detected");
@@ -136,7 +136,7 @@ async function chooseTunnelId({ candidates, interactive, opts }) {
 
   if (candidates.length > 1) {
     if (!interactive) {
-      throw new CliUsageError("Multiple OpenAI tunnels were detected. Run `codexless connect .` interactively once, or set CONTROL_PLANE_TUNNEL_ID for non-interactive setup.");
+      throw new CliUsageError("Multiple OpenAI tunnels were detected. Run `rootbound connect .` interactively once, or set CONTROL_PLANE_TUNNEL_ID for non-interactive setup.");
     }
     process.stdout.write("OpenAI tunnels found:\n");
     candidates.forEach((candidate, index) => process.stdout.write(`  ${index + 1}. ${candidate.id} (${candidate.source})\n`));
@@ -190,11 +190,11 @@ async function startCommand(opts) {
       if (projects.length === 1) project = projects[0];
       else if (projects.length > 1) throw new CliUsageError("start requires a project path when multiple projects are registered");
     }
-    if (!project) throw new CliUsageError("No registered project found; run codexless connect <path> first");
+    if (!project) throw new CliUsageError("No registered project found; run rootbound connect <path> first");
     if (!project.trusted) throw new Error(`Project is not marked trusted: ${project.root}`);
     try { resolveTunnelLaunch({ packageRoot, projectRoot: project.root, paths }); }
     catch (error) {
-      if (error?.code === "TUNNEL_NOT_CONFIGURED") throw new CliUsageError("Tunnel setup is incomplete. Run `codexless connect .` interactively once to finish the guided setup.");
+      if (error?.code === "TUNNEL_NOT_CONFIGURED") throw new CliUsageError("Tunnel setup is incomplete. Run `rootbound connect .` interactively once to finish the guided setup.");
       throw error;
     }
     const runtime = await startSupervisor(project);
@@ -229,7 +229,7 @@ async function startSupervisor(project) {
       restored = true;
     } catch {}
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to switch Codexless runtime from ${previousProject.projectRef} to ${project.projectRef}: ${message}. Previous runtime ${restored ? "was restored" : "could not be restored"}.`);
+    throw new Error(`Failed to switch Rootbound runtime from ${previousProject.projectRef} to ${project.projectRef}: ${message}. Previous runtime ${restored ? "was restored" : "could not be restored"}.`);
   }
 }
 
@@ -237,14 +237,14 @@ async function stopRuntimeForSwitch(projectRef) {
   let stopped = await stopRuntime(paths);
   if (stopped.status !== "stopped") stopped = await stopRuntime(paths, { force: true });
   if (stopped.status !== "stopped") {
-    throw new Error(`Could not stop current Codexless runtime for ${projectRef}; refusing to start a second project runtime in parallel.`);
+    throw new Error(`Could not stop current Rootbound runtime for ${projectRef}; refusing to start a second project runtime in parallel.`);
   }
 }
 
 async function launchSupervisor(project) {
   const child = spawn(process.execPath, [path.join(packageRoot, "scripts", "supervisor.mjs")], {
     cwd: packageRoot,
-    env: { ...process.env, CODEXLESS_PROJECT_REF: project.projectRef, CODEXLESS_PROJECT_ROOT: project.root },
+    env: { ...process.env, ROOTBOUND_PROJECT_REF: project.projectRef, ROOTBOUND_PROJECT_ROOT: project.root },
     detached: true,
     windowsHide: true,
     stdio: "ignore",
@@ -258,11 +258,11 @@ async function launchSupervisor(project) {
     if (runtime.running && runtime.state?.projectRef === project.projectRef) return runtime;
     if (exited) {
       const detail = (await tailLog(paths.logPath, { maxBytes: 8192 })).trim();
-      throw new Error(`Codexless supervisor exited during startup (code=${exited.code} signal=${exited.signal})${detail ? `: ${detail}` : ""}`);
+      throw new Error(`Rootbound supervisor exited during startup (code=${exited.code} signal=${exited.signal})${detail ? `: ${detail}` : ""}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("Codexless supervisor did not become ready within 5 seconds; inspect codexless logs");
+  throw new Error("Rootbound supervisor did not become ready within 5 seconds; inspect rootbound logs");
 }
 
 async function statusCommand(opts) {
@@ -318,7 +318,7 @@ async function confirmTrust(root, configPath) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new CliUsageError(`connect requires explicit approval in non-interactive mode; retry with --yes to trust exact root ${root}`);
   }
-  process.stdout.write(`\nProject access\nCodexless needs explicit Codex trust for exactly:\n  ${root}\nConfig: ${configPath}\nA backup is created before mutation.\n`);
+  process.stdout.write(`\nProject access\nRootbound needs explicit Codex trust for exactly:\n  ${root}\nConfig: ${configPath}\nA backup is created before mutation.\n`);
   if (!await askYesNo("Allow this exact project root? [Y/n] ", true)) throw new CliUsageError("connect cancelled; trust was not changed");
 }
 
@@ -443,7 +443,7 @@ function parseInteger(value, label, min, max) {
 function printResult(value, opts) {
   if (opts.json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   else if (value.action === "connected") {
-    process.stdout.write(`\nCodexless is ready.\nProject: ${value.project.root}\nRef: ${value.project.projectRef}\nTrust: ${value.trust.changed ? "added exact-root trust" : "already trusted"}\nTunnel: ${value.tunnel?.configured ? (value.tunnel.reused ? "reused" : "configured") : "not started"}\nRuntime: ${value.runtime?.status ?? "not started"}\n`);
+    process.stdout.write(`\nRootbound is ready.\nProject: ${value.project.root}\nRef: ${value.project.projectRef}\nTrust: ${value.trust.changed ? "added exact-root trust" : "already trusted"}\nTunnel: ${value.tunnel?.configured ? (value.tunnel.reused ? "reused" : "configured") : "not started"}\nRuntime: ${value.runtime?.status ?? "not started"}\n`);
     if (value.runtime?.switched) process.stdout.write(`Switched from: ${value.runtime.switchedFromProjectRef}\n`);
     if (value.runtime?.status === "running") process.stdout.write(`ChatGPT connector settings: ${TUNNEL_SETUP_URLS.connectors}\n`);
   } else if (Array.isArray(value.projects)) {
@@ -453,5 +453,5 @@ function printResult(value, opts) {
 }
 
 function printHelp() {
-  process.stdout.write(`Codexless V5 control plane\n\nUsage:\n  codexless connect [path] [--yes] [--no-start] [--json]\n  codexless start [path] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless stop [--force] [--json]\n  codexless version\n\nFor normal setup, run only: codexless connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, stores the runtime key in private local state when needed, validates the tunnel, asks once for exact-root Codex trust, and starts the supervised runtime. Connecting or starting another trusted project automatically switches the single supervised runtime; no manual stop is required.\nUse codexless tunnel ... only for advanced/manual tunnel configuration.\n`);
+  process.stdout.write(`Rootbound V5 control plane\n\nUsage:\n  rootbound connect [path] [--yes] [--no-start] [--json]\n  rootbound start [path] [--json]\n  rootbound status [path] [--json]\n  rootbound doctor [path] [--json]\n  rootbound logs [--bytes N] [--follow] [--json]\n  rootbound stop [--force] [--json]\n  rootbound version\n\nFor normal setup, run only: rootbound connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, stores the runtime key in private local state when needed, validates the tunnel, asks once for exact-root Codex trust, and starts the supervised runtime. Connecting or starting another trusted project automatically switches the single supervised runtime; no manual stop is required.\nUse rootbound tunnel ... only for advanced/manual tunnel configuration.\n`);
 }

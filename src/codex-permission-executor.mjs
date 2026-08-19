@@ -70,7 +70,7 @@ export function validatePermissionProjection(started, workspaceRoot) {
   if (!SUPPORTED_BUILTIN_PROFILES.has(profileId)) {
     throw new Error(
       `permission resolver returned unsupported custom permission profile for 0.1: ${profileId}. ` +
-      "The legacy sandbox projection cannot faithfully represent custom filesystem-read constraints, so Codexless fails closed."
+      "The legacy sandbox projection cannot faithfully represent custom filesystem-read constraints, so Rootbound fails closed."
     );
   }
   if (!runtimeWorkspaceRoots.some((root) => normalizeConfigPath(root) === normalizeConfigPath(workspaceRoot))) {
@@ -84,7 +84,7 @@ export function validatePermissionProjection(started, workspaceRoot) {
   if (unknownFields.length) {
     throw new Error(
       `permission resolver returned sandbox fields that 0.1 cannot safely preserve: ${unknownFields.join(", ")}. ` +
-      "Codexless fails closed instead of discarding a possibly restrictive Codex permission field."
+      "Rootbound fails closed instead of discarding a possibly restrictive Codex permission field."
     );
   }
   return { profileId, runtimeWorkspaceRoots, sandbox };
@@ -145,7 +145,7 @@ export class CodexPermissionExecutor {
     this.#codexVersion = match[1];
     if (!this.#acceptedCodexVersions.has(this.#codexVersion)) {
       throw new Error(
-        `unsupported Codex CLI version for Codexless 0.1 permission parity: ${this.#codexVersion}. ` +
+        `unsupported Codex CLI version for Rootbound 0.1 permission parity: ${this.#codexVersion}. ` +
         `Accepted versions: ${[...this.#acceptedCodexVersions].join(", ")}. ` +
         "This path depends on experimental/legacy App Server permission fields and must be re-accepted before upgrade."
       );
@@ -210,7 +210,7 @@ export class CodexPermissionExecutor {
       if (/CreateProcessWithLogonW failed:\s*267|helper_unknown_error|setup refresh had errors/i.test(message)) {
         throw new Error(
           `Codex Windows sandbox could not execute in workspace ${this.#workspaceRoot}. ` +
-          "Mapped/virtual drives such as Google Drive are a known upstream Codex limitation; Codexless will not bypass it with broader permissions. " +
+          "Mapped/virtual drives such as Google Drive are a known upstream Codex limitation; Rootbound will not bypass it with broader permissions. " +
           `Original error: ${message}`
         );
       }
@@ -226,7 +226,7 @@ export class CodexPermissionExecutor {
       cwd: this.#workspaceRoot,
       requestTimeoutMs,
       initializeCapabilities: { experimentalApi: true },
-      clientInfo: { name: "codexless_permission_resolver", title: "Codexless Permission Resolver", version: "0.1.0" },
+      clientInfo: { name: "rootbound_permission_resolver", title: "Rootbound Permission Resolver", version: "0.1.0" },
     });
   }
 
@@ -249,7 +249,7 @@ export class CodexPermissionExecutor {
     if (hasCustomPermissionConfiguration(effectiveConfig)) {
       throw new Error(
         "Codex workspace is not explicitly trusted and custom/default permission configuration is present. " +
-        "Codexless cannot safely infer the exact read ceiling without starting a resolver thread that may mutate trust, so it fails closed."
+        "Rootbound cannot safely infer the exact read ceiling without starting a resolver thread that may mutate trust, so it fails closed."
       );
     }
     if (access === "workspaceWrite") {

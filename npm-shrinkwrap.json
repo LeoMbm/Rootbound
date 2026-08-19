@@ -1,11 +1,11 @@
 {
-  "name": "codexless",
+  "name": "rootbound",
   "version": "0.1.0-preview.0",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
-      "name": "codexless",
+      "name": "rootbound",
       "version": "0.1.0-preview.0",
       "license": "Apache-2.0",
       "dependencies": {
@@ -14,7 +14,7 @@
         "zod": "4.4.3"
       },
       "bin": {
-        "codexless": "bin/codexless-entry.mjs"
+        "rootbound": "bin/rootbound-entry.mjs"
       },
       "devDependencies": {
         "@modelcontextprotocol/client": "2.0.0"

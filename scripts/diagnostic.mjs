@@ -4,11 +4,11 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { buildDiagnosticSnapshot } from "../src/diagnostics.mjs";
 import { openStateStore } from "../src/state-store.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const store = await openStateStore({ paths: resolveCodexlessPaths() });
+const store = await openStateStore({ paths: resolveRootboundPaths() });
 try {
   const snapshot = await buildDiagnosticSnapshot({ store, packageRoot, maxEvents: args.events, maxLogBytes: args.logBytes });
   if (args.output) {
@@ -16,7 +16,7 @@ try {
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
     if (args.json) process.stdout.write(`${JSON.stringify({ ok: true, action: "diagnostic-exported", path: target, generatedAt: snapshot.generatedAt }, null, 2)}\n`);
-    else process.stdout.write(`Codexless diagnostic exported: ${target}\n`);
+    else process.stdout.write(`Rootbound diagnostic exported: ${target}\n`);
   } else {
     process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
   }

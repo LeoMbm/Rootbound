@@ -1,10 +1,10 @@
 # Public export / sync contract — V5
 
-Codexless is the narrow public release tree. Wider upstream development may contain private, experimental, legacy or not-yet-accepted capabilities.
+Rootbound is the narrow public release tree. Wider upstream development may contain private, experimental, legacy or not-yet-accepted capabilities.
 
 Synchronization is one way:
 
-> wider implementation → explicit acceptance → Codexless V5 public contract → validation → release
+> wider implementation → explicit acceptance → Rootbound V5 public contract → validation → release
 
 Do not recursively mirror a wider development tree and then try to delete private capabilities afterward.
 
@@ -19,7 +19,7 @@ The public release boundary is defined by:
 3. `package.json#files` — files eligible for npm packaging;
 4. `test/public-contract.mjs` — public MCP behavior / forbidden surface;
 5. `test/release-contract-v5.mjs` — static release invariants;
-6. `docs/plans/codexless-v5.md` — V5 acceptance checklist;
+6. `docs/plans/rootbound-v5.md` — V5 acceptance checklist;
 7. packed-artifact inspection before release.
 
 Adding a new public tool, accepted remote method, packaged directory or release script is a release-boundary decision and must be reviewed as such.
@@ -28,7 +28,7 @@ Adding a new public tool, accepted remote method, packaged directory or release 
 
 A sync must preserve all of these properties:
 
-- `codexless-public-preview-v5` remains the intended public surface version;
+- `rootbound-public-preview-v5` remains the intended public surface version;
 - no `codex.agent_*`, model catalog or turn-start surface becomes public accidentally;
 - nested Codex CLI launches remain blocked from the model-free command lane;
 - remote callers cannot select arbitrary stronger local permission profiles;
@@ -118,7 +118,7 @@ Windows acceptance must additionally verify explicit fallback / unsupported beha
 
 ## Version mapping
 
-Every published Codexless release should be traceable to the upstream revision(s) from which its accepted public slice was derived. This mapping can live in release notes or a release manifest.
+Every published Rootbound release should be traceable to the upstream revision(s) from which its accepted public slice was derived. This mapping can live in release notes or a release manifest.
 
 The goal remains:
 

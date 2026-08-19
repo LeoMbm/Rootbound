@@ -49,7 +49,7 @@ export async function buildDiagnosticSnapshot({ store, packageRoot, maxEvents = 
   return {
     schemaVersion: 1,
     generatedAt: Date.now(),
-    codexless: {
+    rootbound: {
       packageVersion: pkg.version,
       serverVersion: PUBLIC_SERVER_VERSION,
       surfaceVersion: PUBLIC_SURFACE_VERSION,

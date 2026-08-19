@@ -23,7 +23,7 @@
       "evidence": [
         "Codex 0.148.0-alpha.15 App Server documentation describes command/exec as running one command without starting a thread/turn.",
         "The accepted App Server implementation supports processId plus streamed stdout/stderr deltas on the same connection.",
-        "Codexless rejects model-turn/token-usage notifications observed during model-free command execution."
+        "Rootbound rejects model-turn/token-usage notifications observed during model-free command execution."
       ]
     },
     "command/exec/write": {

@@ -230,8 +230,8 @@ export class CodexAgentExecutor {
           initializeCapabilities: { experimentalApi: true },
           serverRequestHandler,
           clientInfo: {
-            name: "codexless_agent",
-            title: "Codexless Agent",
+            name: "rootbound_agent",
+            title: "Rootbound Agent",
             version: "0.1.0",
           },
         });

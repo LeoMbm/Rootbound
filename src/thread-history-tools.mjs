@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { createContinuityIdempotency } from "./continuity-idempotency.mjs";
-import { CodexlessToolError, typedToolResponse } from "./tool-errors.mjs";
+import { RootboundToolError, typedToolResponse } from "./tool-errors.mjs";
 
 const require = createRequire(import.meta.url);
 const z = require("zod/v4");
@@ -93,7 +93,7 @@ export function registerThreadHistoryTools(server, { context, authorityExecutor,
     async ({ threadId, idempotencyKey }) => typedToolResponse(async () => {
       const metadata = await context.threadMetadata({ threadId });
       if (metadata.thread?.ephemeral === true) {
-        throw new CodexlessToolError("Continuity can bind only to a persisted Codex thread; ephemeral project-context threads cannot accept checkpoints.", {
+        throw new RootboundToolError("Continuity can bind only to a persisted Codex thread; ephemeral project-context threads cannot accept checkpoints.", {
           code: "CONTINUITY_THREAD_EPHEMERAL",
           category: "input",
           retryable: false,
@@ -107,7 +107,7 @@ export function registerThreadHistoryTools(server, { context, authorityExecutor,
         const replay = idem.result;
         try { continuityState.status(replay.bindingRef); }
         catch {
-          throw new CodexlessToolError("The binding saved for this idempotencyKey has expired or was removed.", {
+          throw new RootboundToolError("The binding saved for this idempotencyKey has expired or was removed.", {
             code: "IDEMPOTENCY_RESULT_EXPIRED",
             category: "state",
             retryable: false,
@@ -158,7 +158,7 @@ export function registerThreadHistoryTools(server, { context, authorityExecutor,
       const metadata = await context.threadMetadata({ threadId: pending.threadId });
       const authority = await authorizeThread(authorityExecutor, metadata.thread);
       if (authority.effectiveCwd !== pending.cwd) {
-        throw new CodexlessToolError("continuity binding cwd no longer matches the authorized Codex thread cwd; bind again", {
+        throw new RootboundToolError("continuity binding cwd no longer matches the authorized Codex thread cwd; bind again", {
           code: "CONTINUITY_AUTHORITY_CHANGED",
           category: "permission",
           retryable: false,
@@ -189,7 +189,7 @@ export function registerThreadHistoryTools(server, { context, authorityExecutor,
         binding,
         journalEntriesIncluded: pending.journal.length,
         injectedChars: text.length,
-        externalSource: "ChatGPT via Codexless",
+        externalSource: "ChatGPT via Rootbound",
         ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
       }, authority);
       idempotency?.complete({ operation: "checkpoint", key: input.idempotencyKey, requestHash: idem.requestHash, bindingRef: input.bindingRef, result });
@@ -201,7 +201,7 @@ export function registerThreadHistoryTools(server, { context, authorityExecutor,
     "codex.continuity_unbind",
     {
       title: "Unbind This Chat From Codex",
-      description: "Remove one continuity binding from Codexless. This does not delete, archive, roll back, or otherwise modify the Codex conversation itself.",
+      description: "Remove one continuity binding from Rootbound. This does not delete, archive, roll back, or otherwise modify the Codex conversation itself.",
       inputSchema: z.object({ bindingRef: bindingRefSchema }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -211,7 +211,7 @@ export function registerThreadHistoryTools(server, { context, authorityExecutor,
 
 export function buildContinuityCheckpoint({ summary, decisions = [], remainingWork = [], journal = [] }) {
   const sections = [
-    "[External continuity checkpoint from ChatGPT via Codexless]",
+    "[External continuity checkpoint from ChatGPT via Rootbound]",
     "",
     "This is a delta handoff record from an external ChatGPT session. It is not a previous Codex-generated conclusion.",
     "",
@@ -230,7 +230,7 @@ export function buildContinuityCheckpoint({ summary, decisions = [], remainingWo
 function beginIdempotency(idempotency, input) {
   if (!input.key) return { mode: "disabled", requestHash: null };
   if (!idempotency) {
-    throw new CodexlessToolError("Continuity idempotency storage is unavailable in this runtime.", {
+    throw new RootboundToolError("Continuity idempotency storage is unavailable in this runtime.", {
       code: "IDEMPOTENCY_STORAGE_UNAVAILABLE",
       category: "state",
       retryable: false,
@@ -242,7 +242,7 @@ function beginIdempotency(idempotency, input) {
 async function authorizeThread(authorityExecutor, thread) {
   const cwd = thread?.cwd;
   if (typeof cwd !== "string" || !cwd.trim()) {
-    throw new CodexlessToolError("stored Codex thread has no cwd; Codexless refuses to expose or mutate history without a project authority root", {
+    throw new RootboundToolError("stored Codex thread has no cwd; Rootbound refuses to expose or mutate history without a project authority root", {
       code: "THREAD_CWD_MISSING",
       category: "state",
       retryable: false,

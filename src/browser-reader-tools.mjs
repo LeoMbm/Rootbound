@@ -49,7 +49,7 @@ export function registerBrowserReaderTools(server, browser) {
         cwd: z.string().min(1).max(32_768).optional()
           .describe("Optional project cwd used to resolve the current Codex Browser runtime; it is not a navigation target or permission selector."),
         maxChars: z.number().int().min(1_000).max(200_000).default(80_000)
-          .describe("Maximum DOM snapshot characters returned. Codexless reports original and returned character counts plus truncation."),
+          .describe("Maximum DOM snapshot characters returned. Rootbound reports original and returned character counts plus truncation."),
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },

@@ -39,7 +39,7 @@ for (const script of Object.values(pkg.scripts ?? {})) {
 }
 for (const relative of scriptPaths) await access(path.join(root, relative));
 
-const binEntry = pkg.bin?.codexless;
+const binEntry = pkg.bin?.rootbound;
 assert.equal(typeof binEntry, "string");
 await access(path.join(root, binEntry));
 

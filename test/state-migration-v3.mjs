@@ -3,11 +3,11 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdtemp, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
-const root = await mkdtemp(path.join(os.tmpdir(), "codexless-state-migration-v4-"));
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(root, "home") } });
+const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-state-migration-v4-"));
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(root, "home") } });
 await mkdir(paths.stateDir, { recursive: true });
 const legacy = new DatabaseSync(paths.dbPath);
 legacy.exec(`

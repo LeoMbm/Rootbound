@@ -3,13 +3,13 @@ import { mkdtemp, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createCommandManager } from "../src/command-manager.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
-const root = await mkdtemp(path.join(os.tmpdir(), "codexless-command-manager-"));
+const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-command-manager-"));
 const projectRoot = path.join(root, "project");
 await mkdir(projectRoot);
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(root, "home") } });
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(root, "home") } });
 const store = await openStateStore({ paths });
 let clock = 1_000;
 let resolveResult;
@@ -36,7 +36,7 @@ const manager = createCommandManager({
   authorityExecutor: { resolveAuthority() { throw new Error("sessionFactory stub should own authority resolution"); } },
   codexBin: "/usr/bin/codex",
   packageRoot: root,
-  env: { CODEXLESS_HOME: paths.root },
+  env: { ROOTBOUND_HOME: paths.root },
   platform: "darwin",
   now: () => ++clock,
   sessionFactory,

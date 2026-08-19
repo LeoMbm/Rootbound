@@ -3,10 +3,10 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { clearTunnelConfig, resolveTunnelLaunch, saveTunnelConfig, tunnelConfigStatus } from "../src/tunnel-config.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 
-const root = await mkdtemp(path.join(os.tmpdir(), "codexless-tunnel-config-"));
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(root, "state") } });
+const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-tunnel-config-"));
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(root, "state") } });
 const template = ["tunnel-client", "--token", "{env:TUNNEL_TOKEN}", "--node", "{node}", "--project", "{projectRoot}"];
 
 const saved = await saveTunnelConfig({ argv: template, paths });
@@ -24,7 +24,7 @@ assert.deepEqual(status.argv, template);
 
 const launch = resolveTunnelLaunch({
   env: { TUNNEL_TOKEN: "real-secret" },
-  packageRoot: "/codexless/app",
+  packageRoot: "/rootbound/app",
   projectRoot: "/project",
   paths,
 });
@@ -34,7 +34,7 @@ assert.deepEqual(launch.args.slice(0, 2), ["--token", "real-secret"]);
 assert.equal(launch.argv.includes("real-secret"), true);
 
 assert.throws(
-  () => resolveTunnelLaunch({ env: {}, packageRoot: "/codexless/app", projectRoot: "/project", paths }),
+  () => resolveTunnelLaunch({ env: {}, packageRoot: "/rootbound/app", projectRoot: "/project", paths }),
   (error) => error?.code === "TUNNEL_ENV_MISSING"
 );
 await assert.rejects(
@@ -47,8 +47,8 @@ await assert.rejects(
 );
 
 const envOverride = resolveTunnelLaunch({
-  env: { CODEXLESS_TUNNEL_ARGV_JSON: JSON.stringify(["temporary-client", "--stdio"]) },
-  packageRoot: "/codexless/app",
+  env: { ROOTBOUND_TUNNEL_ARGV_JSON: JSON.stringify(["temporary-client", "--stdio"]) },
+  packageRoot: "/rootbound/app",
   projectRoot: "/project",
   paths,
 });

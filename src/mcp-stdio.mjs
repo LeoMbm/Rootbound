@@ -7,11 +7,11 @@ const { serveStdio } = require("@modelcontextprotocol/server/stdio");
 const runtime = await createPublicRuntime();
 const handle = serveStdio(runtime.createServer, {
   legacy: "serve",
-  onerror: (error) => console.error("[codexless-mcp]", error),
+  onerror: (error) => console.error("[rootbound-mcp]", error),
 });
 
 console.error(
-  `Codexless Local running; defaultCwd=${runtime.authorityValidation.defaultCwd ?? runtime.defaultCwd}; ` +
+  `Rootbound Local running; defaultCwd=${runtime.authorityValidation.defaultCwd ?? runtime.defaultCwd}; ` +
   `modelLane=${runtime.modelLane}; surface=${runtime.surfaceVersion}; tools=${runtime.toolNames.length}`
 );
 

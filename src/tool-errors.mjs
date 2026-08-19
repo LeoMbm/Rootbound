@@ -11,10 +11,10 @@ const CATEGORY_BY_CODE = new Map([
 
 const RETRYABLE_CODES = new Set(["COMMAND_SESSION_NOT_ACTIVE"]);
 
-export class CodexlessToolError extends Error {
-  constructor(message, { code = "CODEXLESS_ERROR", category = null, retryable = false, nextActions = [], details = null } = {}) {
+export class RootboundToolError extends Error {
+  constructor(message, { code = "ROOTBOUND_ERROR", category = null, retryable = false, nextActions = [], details = null } = {}) {
     super(message);
-    this.name = "CodexlessToolError";
+    this.name = "RootboundToolError";
     this.code = code;
     this.category = category ?? CATEGORY_BY_CODE.get(code) ?? "runtime";
     this.retryable = Boolean(retryable);
@@ -25,7 +25,7 @@ export class CodexlessToolError extends Error {
 
 export function normalizeToolError(error, { operation = null } = {}) {
   const message = error instanceof Error ? error.message : String(error);
-  const code = typeof error?.code === "string" && error.code ? error.code : "CODEXLESS_ERROR";
+  const code = typeof error?.code === "string" && error.code ? error.code : "ROOTBOUND_ERROR";
   const category = typeof error?.category === "string" && error.category
     ? error.category
     : CATEGORY_BY_CODE.get(code) ?? inferCategory(message);

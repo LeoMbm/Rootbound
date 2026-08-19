@@ -3,15 +3,15 @@ import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { openStateStore } from "../src/state-store.mjs";
-import { resolveCodexlessPaths } from "../src/state-paths.mjs";
+import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openWorkspace } from "../src/workspace-tools.mjs";
 
-const temp = await mkdtemp(path.join(os.tmpdir(), "codexless-workspace-open-"));
+const temp = await mkdtemp(path.join(os.tmpdir(), "rootbound-workspace-open-"));
 const project = path.join(temp, "project");
 await mkdir(project);
 const canonicalTemp = await realpath(temp);
 const canonicalProject = await realpath(project);
-const paths = resolveCodexlessPaths({ env: { CODEXLESS_HOME: path.join(temp, "home") } });
+const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(temp, "home") } });
 const store = await openStateStore({ paths });
 
 try {
