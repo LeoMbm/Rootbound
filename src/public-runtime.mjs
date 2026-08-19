@@ -8,6 +8,7 @@ import { createPersistentContinuityState } from "./persistent-continuity-state.m
 import { CodexPublicContextExecutor } from "./public-context-executor.mjs";
 import { createPublicServerFactory } from "./public-server-factory.mjs";
 import { createRescueSessionManager } from "./rescue-continuity.mjs";
+import { withRootboundPermissionOverrides } from "./rootbound-permission-profile.mjs";
 import { resolveRootboundPaths } from "./state-paths.mjs";
 import { openStateStore } from "./state-store.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "./surface-contracts.mjs";
@@ -35,12 +36,13 @@ export async function createPublicRuntime({ env = process.env } = {}) {
   const defaultCwd = envString(env, "ROOTBOUND_DEFAULT_CWD", process.cwd());
   const profileOverride = envString(env, "ROOTBOUND_PROFILE", null);
   const configOverridesFile = envString(env, "ROOTBOUND_CONFIG_OVERRIDES_FILE", null);
-  const configOverrides = configOverridesFile
+  const configuredOverrides = configOverridesFile
     ? (await readJsonFile(configOverridesFile, "ROOTBOUND_CONFIG_OVERRIDES_FILE"))?.overrides
     : [];
-  if (!Array.isArray(configOverrides) || !configOverrides.every((value) => typeof value === "string" && value.trim())) {
+  if (!Array.isArray(configuredOverrides) || !configuredOverrides.every((value) => typeof value === "string" && value.trim())) {
     throw new Error("ROOTBOUND_CONFIG_OVERRIDES_FILE must contain { overrides: [\"key=value\", ...] }");
   }
+  const configOverrides = withRootboundPermissionOverrides(configuredOverrides, { profileOverride });
 
   let publicContext = null;
   let stateStore = null;

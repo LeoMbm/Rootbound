@@ -31,6 +31,7 @@ export function resolveRootboundPaths({ env = process.env, platform = process.pl
     appDir: path.join(root, "app"),
     stateDir,
     dbPath: path.join(stateDir, "rootbound.sqlite3"),
+    permissionConsentPath: path.join(stateDir, "permission-consent.json"),
     tunnelConfigPath: path.join(stateDir, "tunnel.json"),
     tunnelManagedProfilePath: path.join(stateDir, "tunnel-client.yaml"),
     tunnelSecretPath: path.join(stateDir, "tunnel-runtime.key"),

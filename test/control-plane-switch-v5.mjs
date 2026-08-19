@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { projectRefForRoot } from "../src/project-registry.mjs";
+import { recordRootboundPermissionConsent } from "../src/rootbound-permission-profile.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
@@ -20,6 +21,7 @@ const projectA = await realpath(projectAPath);
 const projectB = await realpath(projectBPath);
 const stateRoot = path.join(temp, "state");
 const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: stateRoot }, home: temp, platform: process.platform });
+await recordRootboundPermissionConsent({ paths, now: 1 });
 const projectARef = projectRefForRoot(projectA);
 const projectBRef = projectRefForRoot(projectB);
 

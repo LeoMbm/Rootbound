@@ -295,6 +295,34 @@ Validating tunnel configuration...
 
 If validation fails, Rootbound rolls back the generated tunnel setup instead of continuing with a half-configured project.
 
+### Rootbound then asks for its dedicated local permission set
+
+Normal Codex `:workspace` access protects Git metadata such as `.git/index.lock`. Rootbound therefore uses a dedicated local Codex profile for complete Git workflows such as:
+
+```text
+git add
+git commit
+git push
+```
+
+The first time, Rootbound asks before enabling it for Rootbound:
+
+```text
+Rootbound local permissions
+Rootbound uses a dedicated Codex permission profile so it can stage/commit Git changes
+and run outbound commands such as git push.
+
+Allow Rootbound to use these local permissions? [Y/n]
+```
+
+The runtime-only profile is named `rootbound`. It extends `:workspace`, explicitly allows `.git` writes inside the active workspace, enables outbound network access, and keeps local port binding disabled.
+
+Rootbound does **not** write this profile into `~/.codex/config.toml`. It injects the profile as process-local `-c` overrides only into Codex App Server processes launched by Rootbound. The temporary `default_permissions = ":workspace"` override exists only inside those processes because Codex requires an explicit default when custom permission profiles are present.
+
+Your normal Codex configuration and global/default permission profile remain unchanged. A remote ChatGPT call still cannot choose an arbitrary Codex permission profile; public commands expose only `readOnly` or `inherit`.
+
+Press **Enter** or type `y` if you want Rootbound to perform normal Git write/network workflows in the connected project.
+
 ### Rootbound then asks for exact project trust
 
 Example:
@@ -321,6 +349,7 @@ At the end you should see something similar to:
 Rootbound is ready.
 Project: /Users/you/Documents/Dev/my-app
 Trust: added exact-root trust
+Permissions: approved runtime-only rootbound
 Tunnel: configured
 Runtime: running
 ChatGPT connector settings: https://chatgpt.com/#settings/Connectors
@@ -866,6 +895,12 @@ The application tree is separate from persistent state so staged upgrades can re
 Rootbound is designed to fail closed around local Codex authority.
 
 - project trust is exact-root and explicit;
+- Rootbound uses a dedicated runtime-only named Codex profile instead of switching Codex to Full Access;
+- the profile extends `:workspace`, adds `.git` write access inside the active workspace, enables outbound network access, and keeps local binding disabled;
+- the profile is injected only into Rootbound-launched App Server processes and is never written into `~/.codex/config.toml`;
+- the process-local Codex default remains `:workspace`; the user's normal Codex default is not changed;
+- a versioned local consent marker is required before Rootbound starts with this permission contract;
+- remote callers can request only `readOnly` or `inherit`; they cannot name or select a stronger profile;
 - Rootbound does not silently widen Codex permissions;
 - trust mutation is backed up before modification;
 - tunnel validation happens before Codex trust mutation;

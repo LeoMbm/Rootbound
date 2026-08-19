@@ -61,6 +61,26 @@ Security properties:
 
 The nested-command classifier is a product guard, not a general adversarial-process sandbox. Arbitrary code execution can deliberately hide secondary process launches; V5 does not claim to solve that impossible problem by argv inspection alone. The supported model-facing contract must not deliberately disguise Codex model execution inside unrelated commands.
 
+### Rootbound Codex permission profile
+
+The built-in Codex `:workspace` profile intentionally protects Git metadata such as `.git/index.lock`. That means ordinary project edits work while commands such as `git add` and `git commit` can still fail when Git needs to update `.git`.
+
+Guided `rootbound connect .` can enable a dedicated runtime-only named profile called `rootbound`. It:
+
+- extends `:workspace` rather than using Full Access / danger-full-access;
+- grants explicit `write` access to `.git` under the active workspace roots;
+- enables outbound network access for explicit commands such as `git push`;
+- keeps `allow_local_binding = false`;
+- is injected through process-local Codex `-c` overrides only into App Server processes launched by Rootbound;
+- uses a process-local `default_permissions=":workspace"` override because Codex requires an explicit default when custom permission profiles are present;
+- does not write `[permissions.rootbound]` or `default_permissions` into the user's `~/.codex/config.toml`;
+- is selected locally by the Rootbound supervised runtime through `ROOTBOUND_PROFILE=rootbound`;
+- cannot be selected by the remote MCP caller. The public command contract still exposes only `readOnly` and `inherit`, and `inherit` resolves to the locally authorized ceiling.
+
+Rootbound persists only a versioned consent marker for this permission contract in its own private local state. If the managed contract changes, the consent hash changes and guided setup must obtain approval again before starting with the new authority.
+
+Advanced user-supplied `ROOTBOUND_CONFIG_OVERRIDES_FILE` entries are not allowed to redefine the managed `default_permissions` or `permissions.rootbound.*` keys when the Rootbound profile is active.
+
 ### Long-running command output
 
 Long-command output is stored incrementally in bounded SQLite chunks.
@@ -82,12 +102,13 @@ For normal onboarding, `rootbound connect .` is a guided setup. It:
 
 1. resolves the canonical project / Git root;
 2. resolves or creates the local tunnel configuration and validates it before touching Codex trust;
-3. requires interactive approval or explicit `--yes` before adding a previously untrusted root;
-4. skips the prompt only when that exact canonical root is already trusted;
-5. backs up Codex config;
-6. adds only the exact project root;
-7. runs doctor / authority validation;
-8. restores the previous config if post-trust validation fails.
+3. requires interactive approval or explicit `--yes` before recording consent for the current Rootbound runtime permission contract when it has not already been approved;
+4. requires interactive approval or explicit `--yes` before adding a previously untrusted root;
+5. skips trust/permission prompts only when the exact canonical root and current permission-contract consent are already configured;
+6. backs up Codex config before mutation;
+7. adds only the exact project root to persistent Codex config; the Rootbound profile remains process-local;
+8. runs doctor / authority validation using the runtime-only Rootbound profile;
+9. restores the previous config if post-mutation validation fails.
 
 `codex.workspace_open` never creates or widens trust as a side effect. An unauthorized workspace returns a typed `needs_trust` state.
 

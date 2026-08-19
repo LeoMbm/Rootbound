@@ -1,6 +1,8 @@
 import process from "node:process";
 import { ACCEPTED_CODEX_VERSIONS, CodexAuthorityExecutor } from "../src/codex-authority-executor.mjs";
 import { resolveCodexExecutable } from "../src/codex-bin.mjs";
+import { readJsonFile } from "../src/json-file.mjs";
+import { withRootboundPermissionOverrides } from "../src/rootbound-permission-profile.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { openStateStore } from "../src/state-store.mjs";
 
@@ -26,9 +28,19 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 
 try {
   const resolution = await resolveCodexExecutable({ env: process.env, acceptedVersions: ACCEPTED_CODEX_VERSIONS });
+  const profileOverride = typeof process.env.ROOTBOUND_PROFILE === "string" && process.env.ROOTBOUND_PROFILE.trim() ? process.env.ROOTBOUND_PROFILE.trim() : null;
+  const configOverridesFile = typeof process.env.ROOTBOUND_CONFIG_OVERRIDES_FILE === "string" && process.env.ROOTBOUND_CONFIG_OVERRIDES_FILE.trim()
+    ? process.env.ROOTBOUND_CONFIG_OVERRIDES_FILE.trim()
+    : null;
+  const configuredOverrides = configOverridesFile
+    ? (await readJsonFile(configOverridesFile, "ROOTBOUND_CONFIG_OVERRIDES_FILE"))?.overrides
+    : [];
+  const configOverrides = withRootboundPermissionOverrides(configuredOverrides, { profileOverride });
   const executor = new CodexAuthorityExecutor({
     codexBin: resolution.path,
     defaultCwd: command.cwd,
+    profileOverride,
+    configOverrides,
     maxTimeoutMs: Math.max(command.timeoutMs, 120_000),
     watchdogGraceMs: 5_000,
     outputBytesCap: 1_048_576,

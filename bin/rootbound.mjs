@@ -20,7 +20,18 @@ import {
   validateTunnelId,
   writeManagedTunnelSetup,
 } from "../src/tunnel-bootstrap.mjs";
-import { ensureExactProjectTrust, hasExactTrustedProject, removeExactProjectTrust, resolveCodexConfigPath, rollbackTrustConfig } from "../src/trust-config.mjs";
+import {
+  ensureExactProjectTrust,
+  hasExactTrustedProject,
+  removeExactProjectTrust,
+  resolveCodexConfigPath,
+  rollbackTrustConfig,
+} from "../src/trust-config.mjs";
+import {
+  hasRootboundPermissionConsent,
+  recordRootboundPermissionConsent,
+  ROOTBOUND_PERMISSION_PROFILE,
+} from "../src/rootbound-permission-profile.mjs";
 
 class CliUsageError extends Error {}
 
@@ -57,18 +68,22 @@ async function connectCommand(opts) {
   const configPath = resolveCodexConfigPath();
   const tunnel = opts.noStart ? { configured: false, skipped: true, reason: "no-start" } : await ensureTunnelReadyForConnect(opts, resolved.root);
   const alreadyTrusted = await hasExistingExactTrust(configPath, resolved.root);
+  const permissionProfileReady = await hasRootboundPermissionConsent({ paths });
 
+  if (!opts.yes && !permissionProfileReady) await confirmRootboundPermissionProfile();
   if (!opts.yes && !alreadyTrusted) await confirmTrust(resolved.root, configPath);
-  const trust = await ensureExactProjectTrust(resolved.root, { configPath, backupsDir: paths.backupsDir });
+  let trust = null;
   let doctor;
   try {
-    doctor = await runDoctor(resolved.root);
+    trust = await ensureExactProjectTrust(resolved.root, { configPath, backupsDir: paths.backupsDir });
+    doctor = await runDoctor(resolved.root, { profileOverride: ROOTBOUND_PERMISSION_PROFILE });
     if (doctor.exitCode !== 0 || doctor.value?.status === "error" || doctor.value?.project?.ok !== true) {
       const detail = doctor.value?.project?.error ?? doctor.stderr.trim() ?? `doctor status=${doctor.value?.status ?? "unknown"}`;
       throw new Error(`Project validation failed after trust update: ${detail}`);
     }
+    if (!permissionProfileReady) await recordRootboundPermissionConsent({ paths });
   } catch (error) {
-    if (trust.changed) await rollbackTrustConfig(trust).catch(() => {});
+    if (trust?.changed) await rollbackTrustConfig(trust).catch(() => {});
     throw error;
   }
 
@@ -80,6 +95,7 @@ async function connectCommand(opts) {
       action: "connected",
       project,
       trust: { changed: trust.changed, configPath: trust.configPath, backupPath: trust.backupPath },
+      permissionProfile: { id: ROOTBOUND_PERMISSION_PROFILE, changed: !permissionProfileReady, runtimeOnly: true },
       doctor: { status: doctor.value.status, permissionProfile: doctor.value.project.permissionProfile ?? null },
       tunnel,
     };
@@ -194,6 +210,9 @@ async function startCommand(opts) {
     }
     if (!project) throw new CliUsageError("No registered project found; run rootbound connect <path> first");
     if (!project.trusted) throw new Error(`Project is not marked trusted: ${project.root}`);
+    if (!await hasRootboundPermissionConsent({ paths })) {
+      throw new CliUsageError("Rootbound local Git/network permissions have not been approved for this installation. Run `rootbound connect .` interactively once.");
+    }
     try { resolveTunnelLaunch({ packageRoot, projectRoot: project.root, paths }); }
     catch (error) {
       if (error?.code === "TUNNEL_NOT_CONFIGURED") throw new CliUsageError("Tunnel setup is incomplete. Run `rootbound connect .` interactively once to finish the guided setup.");
@@ -246,7 +265,12 @@ async function stopRuntimeForSwitch(projectRef) {
 async function launchSupervisor(project) {
   const child = spawn(process.execPath, [path.join(packageRoot, "scripts", "supervisor.mjs")], {
     cwd: packageRoot,
-    env: { ...process.env, ROOTBOUND_PROJECT_REF: project.projectRef, ROOTBOUND_PROJECT_ROOT: project.root },
+    env: {
+      ...process.env,
+      ROOTBOUND_PROJECT_REF: project.projectRef,
+      ROOTBOUND_PROJECT_ROOT: project.root,
+      ROOTBOUND_PROFILE: ROOTBOUND_PERMISSION_PROFILE,
+    },
     detached: true,
     windowsHide: true,
     stdio: "ignore",
@@ -401,6 +425,14 @@ async function hasExistingExactTrust(configPath, root) {
   catch (error) { if (error?.code === "ENOENT") return false; throw error; }
 }
 
+async function confirmRootboundPermissionProfile() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new CliUsageError("connect requires explicit approval in non-interactive mode; retry with --yes to install the Rootbound Codex permission profile");
+  }
+  process.stdout.write(`\nRootbound local permissions\nRootbound uses a dedicated runtime-only Codex permission profile so it can stage/commit Git changes and run outbound commands such as git push.\nThe profile extends :workspace, grants write access to .git inside the active workspace, enables outbound network access, and is injected only into Codex App Server processes launched by Rootbound.\nIt does not modify ~/.codex/config.toml or Codex's global/default permission profile.\n`);
+  if (!await askYesNo("Allow Rootbound to use these local permissions? [Y/n] ", true)) throw new CliUsageError("connect cancelled; Rootbound permission consent was not recorded");
+}
+
 async function confirmTrust(root, configPath) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new CliUsageError(`connect requires explicit approval in non-interactive mode; retry with --yes to trust exact root ${root}`);
@@ -409,10 +441,11 @@ async function confirmTrust(root, configPath) {
   if (!await askYesNo("Allow this exact project root? [Y/n] ", true)) throw new CliUsageError("connect cancelled; trust was not changed");
 }
 
-async function runDoctor(cwd = null) {
+async function runDoctor(cwd = null, { profileOverride = null } = {}) {
   const argv = [path.join(packageRoot, "scripts", "doctor.mjs"), "--json"];
   if (cwd) argv.push("--cwd", cwd);
-  const child = spawn(process.execPath, argv, { cwd: packageRoot, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+  const env = profileOverride ? { ...process.env, ROOTBOUND_PROFILE: profileOverride } : process.env;
+  const child = spawn(process.execPath, argv, { cwd: packageRoot, env, stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8"); child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -531,7 +564,7 @@ function parseInteger(value, label, min, max) {
 function printResult(value, opts) {
   if (opts.json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   else if (value.action === "connected") {
-    process.stdout.write(`\nRootbound is ready.\nProject: ${value.project.root}\nRef: ${value.project.projectRef}\nTrust: ${value.trust.changed ? "added exact-root trust" : "already trusted"}\nTunnel: ${value.tunnel?.configured ? (value.tunnel.reused ? "reused" : "configured") : "not started"}\nRuntime: ${value.runtime?.status ?? "not started"}\n`);
+    process.stdout.write(`\nRootbound is ready.\nProject: ${value.project.root}\nRef: ${value.project.projectRef}\nTrust: ${value.trust.changed ? "added exact-root trust" : "already trusted"}\nPermissions: ${value.permissionProfile?.changed ? `approved runtime-only ${value.permissionProfile.id}` : `using runtime-only ${value.permissionProfile?.id ?? ROOTBOUND_PERMISSION_PROFILE}`}\nTunnel: ${value.tunnel?.configured ? (value.tunnel.reused ? "reused" : "configured") : "not started"}\nRuntime: ${value.runtime?.status ?? "not started"}\n`);
     if (value.runtime?.switched) process.stdout.write(`Switched from: ${value.runtime.switchedFromProjectRef}\n`);
     if (value.runtime?.status === "running") process.stdout.write(`ChatGPT connector settings: ${TUNNEL_SETUP_URLS.connectors}\n`);
   } else if (Array.isArray(value.projects)) {

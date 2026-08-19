@@ -6,6 +6,7 @@ import { CodexAppServerClient } from "../src/codex-app-server-client.mjs";
 import { ACCEPTED_CODEX_VERSIONS, CodexAuthorityExecutor } from "../src/codex-authority-executor.mjs";
 import { probeCodexExecutable, redactHomePath, resolveCodexExecutable } from "../src/codex-bin.mjs";
 import { readJsonFile } from "../src/json-file.mjs";
+import { withRootboundPermissionOverrides } from "../src/rootbound-permission-profile.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "../src/surface-contracts.mjs";
 
 const require = createRequire(import.meta.url);
@@ -17,6 +18,16 @@ const callerCwd = path.resolve(process.cwd());
 const explicitCwd = args.cwd ? path.resolve(args.cwd) : null;
 const requestedCwd = explicitCwd ?? (callerCwd !== projectRoot ? callerCwd : null);
 const runtimeCwd = requestedCwd ?? projectRoot;
+const profileOverride = typeof process.env.ROOTBOUND_PROFILE === "string" && process.env.ROOTBOUND_PROFILE.trim()
+  ? process.env.ROOTBOUND_PROFILE.trim()
+  : null;
+const configOverridesFile = typeof process.env.ROOTBOUND_CONFIG_OVERRIDES_FILE === "string" && process.env.ROOTBOUND_CONFIG_OVERRIDES_FILE.trim()
+  ? process.env.ROOTBOUND_CONFIG_OVERRIDES_FILE.trim()
+  : null;
+const configuredOverrides = configOverridesFile
+  ? (await readJsonFile(configOverridesFile, "ROOTBOUND_CONFIG_OVERRIDES_FILE"))?.overrides
+  : [];
+const configOverrides = withRootboundPermissionOverrides(configuredOverrides, { profileOverride });
 const checks = [];
 const warnings = [];
 let codexResolution = null;
@@ -82,7 +93,7 @@ try {
 if (codexResolution?.path && codexProbe?.ok) {
   const client = new CodexAppServerClient({
     cwd: runtimeCwd,
-    launch: () => ({ command: codexResolution.path, args: ["app-server", "--stdio"], options: { cwd: runtimeCwd } }),
+    launch: () => ({ command: codexResolution.path, args: [...configOverrides.flatMap((value) => ["-c", value]), "app-server", "--stdio"], options: { cwd: runtimeCwd } }),
     requestTimeoutMs: 20_000,
     initializeCapabilities: { experimentalApi: true },
     stderrHandler: () => {},
@@ -101,7 +112,7 @@ if (codexResolution?.path && codexProbe?.ok) {
 
   if (requestedCwd) {
     try {
-      const authority = new CodexAuthorityExecutor({ codexBin: codexResolution.path, defaultCwd: requestedCwd, acceptedCodexVersions: ACCEPTED_CODEX_VERSIONS });
+      const authority = new CodexAuthorityExecutor({ codexBin: codexResolution.path, defaultCwd: requestedCwd, profileOverride, configOverrides, acceptedCodexVersions: ACCEPTED_CODEX_VERSIONS });
       await authority.validate();
       const resolved = await authority.resolveAuthority({ cwd: requestedCwd, access: "readOnly" });
       projectContext = {
@@ -111,6 +122,7 @@ if (codexResolution?.path && codexProbe?.ok) {
         permissionCeiling: resolved.permissionCeiling,
         authoritySource: resolved.authoritySource,
         trustedAncestor: redactHomePath(resolved.trustedAncestor),
+        profileOverride,
       };
       record("project-authority", true, `read-only authority accepted ${redactHomePath(requestedCwd)} as ${resolved.permissionProfile}`);
     } catch (error) {

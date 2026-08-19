@@ -68,6 +68,13 @@ This document is the durable source of truth for V5. Features existing in source
 - [x] Codex config backup
 - [x] trust rollback when validation fails
 - [x] tunnel validation before trust mutation
+- [x] dedicated runtime-only `rootbound` Codex permission profile extends `:workspace`
+- [x] `.git` writable for Git stage/commit metadata while remaining workspace-scoped
+- [x] outbound command network enabled with local binding disabled
+- [x] Rootbound runtime selects the profile locally; remote callers cannot choose it
+- [x] profile injected only as Rootbound App Server `-c` overrides; no persistent `[permissions.rootbound]` / `default_permissions` mutation
+- [x] versioned local consent marker required before runtime uses the permission contract
+- [x] user override attempts against managed permission keys fail closed
 
 ### Persistence
 
@@ -92,6 +99,8 @@ This document is the durable source of truth for V5. Features existing in source
 - [x] native streaming where accepted
 - [x] explicit Windows fallback / unsupported stdin behavior
 - [x] durable argv secret guard before SQLite persistence
+- [x] Git metadata writes supported under the dedicated Rootbound profile
+- [x] outbound Git commands such as explicit `git push` can use the locally authorized network policy
 
 ### Surface compatibility
 

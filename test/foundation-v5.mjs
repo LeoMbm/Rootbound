@@ -5,7 +5,19 @@ import path from "node:path";
 import { openStateStore } from "../src/state-store.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { projectRefForRoot, registerProject } from "../src/project-registry.mjs";
-import { ensureExactProjectTrust, hasExactTrustedProject, removeExactProjectTrust, rollbackTrustConfig } from "../src/trust-config.mjs";
+import {
+  hasRootboundPermissionConsent,
+  recordRootboundPermissionConsent,
+  ROOTBOUND_PERMISSION_CONFIG_OVERRIDES,
+  ROOTBOUND_PERMISSION_PROFILE,
+  withRootboundPermissionOverrides,
+} from "../src/rootbound-permission-profile.mjs";
+import {
+  ensureExactProjectTrust,
+  hasExactTrustedProject,
+  removeExactProjectTrust,
+  rollbackTrustConfig,
+} from "../src/trust-config.mjs";
 
 const temp = await mkdtemp(path.join(os.tmpdir(), "rootbound-v5-"));
 const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(temp, "home") }, home: temp, platform: process.platform });
@@ -24,6 +36,20 @@ try {
   await mkdir(codexDir);
   const configPath = path.join(codexDir, "config.toml");
   await writeFile(configPath, 'model = "x"\n');
+  assert.equal(await hasRootboundPermissionConsent({ paths }), false);
+  await recordRootboundPermissionConsent({ paths, now: -1 });
+  assert.equal(await hasRootboundPermissionConsent({ paths }), true);
+  assert.equal(ROOTBOUND_PERMISSION_PROFILE, "rootbound");
+  assert.ok(ROOTBOUND_PERMISSION_CONFIG_OVERRIDES.some((value) => value === 'default_permissions=":workspace"'));
+  assert.ok(ROOTBOUND_PERMISSION_CONFIG_OVERRIDES.some((value) => value.includes('filesystem={":workspace_roots"={".git"="write"}}')));
+  assert.ok(ROOTBOUND_PERMISSION_CONFIG_OVERRIDES.some((value) => value === "permissions.rootbound.network.enabled=true"));
+  assert.ok(ROOTBOUND_PERMISSION_CONFIG_OVERRIDES.some((value) => value === "permissions.rootbound.network.allow_local_binding=false"));
+  assert.deepEqual(withRootboundPermissionOverrides([], { profileOverride: ROOTBOUND_PERMISSION_PROFILE }), ROOTBOUND_PERMISSION_CONFIG_OVERRIDES);
+  assert.deepEqual(withRootboundPermissionOverrides(["features.foo=true"], { profileOverride: null }), ["features.foo=true"]);
+  assert.throws(
+    () => withRootboundPermissionOverrides(['permissions.rootbound.network.enabled=false'], { profileOverride: ROOTBOUND_PERMISSION_PROFILE }),
+    (error) => error?.code === "ROOTBOUND_PERMISSION_OVERRIDE_CONFLICT"
+  );
   const trust = await ensureExactProjectTrust(canonicalProjectDir, { configPath, backupsDir: paths.backupsDir, now: 0 });
   assert.equal(trust.changed, true);
   const after = await readFile(configPath, "utf8");
