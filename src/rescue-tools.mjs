@@ -161,8 +161,8 @@ export function registerRescueTools(server, { context, authorityExecutor, contin
       const result = await context.threadSearchOccurrences({ threadId, query: input.query, cursor: input.cursor, limit: input.limit });
       return { status: "ok", source: "thread/searchOccurrences", thread: publicThread(metadata.thread), result, modelTurnStarted: false };
     } catch (error) {
-      const fallback = await fallbackSearchItems({ context, threadId, query: input.query, limit: input.limit });
-      return { status: "ok", source: "thread/items/list-fallback", thread: publicThread(metadata.thread), matches: fallback.matches, searchedItems: fallback.searchedItems,
+      const fallback = await fallbackSearchVisibleHistory({ context, threadId, query: input.query, limit: input.limit });
+      return { status: "ok", source: fallback.source, thread: publicThread(metadata.thread), matches: fallback.matches, searchedItems: fallback.searchedItems,
         experimentalError: { name: error?.name ?? "Error", message: error?.message ?? String(error) }, modelTurnStarted: false };
     }
   }, { operation: "continuity_search" }));
@@ -295,25 +295,46 @@ async function commitsSinceBaseline({ authorityExecutor, cwd, baselineHead, curr
   return result.stdout.split(/\r?\n/).filter(Boolean).map((line) => { const [sha, ...rest] = line.split("\t"); return { sha, subject: rest.join("\t").slice(0, 500) }; });
 }
 
-async function fallbackSearchItems({ context, threadId, query, limit }) {
+async function fallbackSearchVisibleHistory({ context, threadId, query, limit }) {
   const needle = query.toLowerCase();
   let cursor = null;
   let searchedItems = 0;
   const matches = [];
-  for (let page = 0; page < 5 && matches.length < limit; page += 1) {
-    const result = await context.threadItems({ threadId, cursor, limit: 100, sortDirection: "desc" });
-    const payload = result?.items ?? {};
-    const items = Array.isArray(payload?.data) ? payload.data : [];
-    for (const item of items) {
+  try {
+    for (let page = 0; page < 5 && matches.length < limit; page += 1) {
+      const result = await context.threadItems({ threadId, cursor, limit: 100, sortDirection: "desc" });
+      const payload = result?.items ?? {};
+      const items = Array.isArray(payload?.data) ? payload.data : [];
+      for (const item of items) {
+        searchedItems += 1;
+        const text = collectVisibleText(item);
+        if (text.toLowerCase().includes(needle)) matches.push(compactValue(item, 0));
+        if (matches.length >= limit) break;
+      }
+      cursor = payload?.nextCursor ?? null;
+      if (!cursor) break;
+    }
+    return { source: "thread/items/list-fallback", matches, searchedItems };
+  } catch {
+    cursor = null;
+    searchedItems = 0;
+    matches.length = 0;
+  }
+
+  for (let page = 0; page < 8 && matches.length < limit; page += 1) {
+    const result = await context.threadRead({ threadId, cursor, limit: 50, sortDirection: "desc" });
+    const payload = result?.turns ?? {};
+    const turns = Array.isArray(payload?.data) ? payload.data : [];
+    for (const turn of turns) {
       searchedItems += 1;
-      const text = collectVisibleText(item);
-      if (text.toLowerCase().includes(needle)) matches.push(compactValue(item, 0));
+      const text = collectVisibleText(turn);
+      if (text.toLowerCase().includes(needle)) matches.push(compactValue(turn, 0));
       if (matches.length >= limit) break;
     }
     cursor = payload?.nextCursor ?? null;
     if (!cursor) break;
   }
-  return { matches, searchedItems };
+  return { source: "thread/turns/list-fallback", matches, searchedItems };
 }
 
 function projectBoundedHistory(read) {

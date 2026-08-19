@@ -162,6 +162,17 @@ try {
   assert.equal(searched.structuredContent.source, "thread/searchOccurrences");
   assert.equal(searched.structuredContent.modelTurnStarted, false);
 
+  const occurrenceSearch = context.threadSearchOccurrences;
+  context.threadSearchOccurrences = async () => { throw new Error("thread/searchOccurrences unsupported"); };
+  context.threadItems = async () => { throw new Error("thread/items/list unsupported"); };
+  const searchedViaTurns = await tools.get("codex.continuity_search").handler({ query: "Please fix", cwd: projectRoot, limit: 5 }, { sessionId: "handler-test" });
+  assert.equal(searchedViaTurns.isError, false);
+  assert.equal(searchedViaTurns.structuredContent.source, "thread/turns/list-fallback");
+  assert.equal(searchedViaTurns.structuredContent.matches.length, 1);
+  assert.equal(searchedViaTurns.structuredContent.modelTurnStarted, false);
+  context.threadSearchOccurrences = occurrenceSearch;
+  delete context.threadItems;
+
   continuity.record(handlerRescue.bindingRef, { kind: "edit", path: "target.txt", status: "applied" });
   const handoff = await tools.get("codex.continuity_handoff").handler({
     summary: "Fixed target safely.",

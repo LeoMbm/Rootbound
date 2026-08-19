@@ -362,7 +362,7 @@ Rootbound can inject a verified handoff into the original Codex thread
 
 `continuity_resume` ranks persisted sessions using the canonical project root, repository identity when available, branch, compatible Git SHA and `recency_at`. A thread started from a subdirectory of the same Git root can still match. Exact/compatible matches continue directly; genuinely ambiguous matches return candidates instead of guessing.
 
-The resume payload is bounded: Rootbound projects recent visible history plus current worktree facts rather than dumping an entire transcript. The original Codex thread remains available as cold memory through `continuity_search`.
+The resume payload is bounded: Rootbound projects recent visible history plus current worktree facts rather than dumping an entire transcript. The original Codex thread remains available as cold memory through `continuity_search`, using occurrence search when supported and bounded visible-history fallbacks otherwise.
 
 Rootbound keeps the durable continuity binding as internal plumbing. The product flow uses an opaque `rescueRef`. ChatGPT should propagate that ref silently between Rootbound tools when needed; the user should never need to copy a binding or rescue identifier.
 

@@ -234,7 +234,7 @@ Do not turn Rootbound into a general IDE, cloud project-memory product, multi-ag
 
 ### KF-P2 — cold memory / quota presentation
 
-- [x] on-demand search inside the original persisted Codex thread as cold memory; use occurrence search when accepted and bounded item-list fallback otherwise
+- [x] on-demand search inside the original persisted Codex thread as cold memory; use occurrence search when accepted, then bounded item-list or turn-list fallbacks depending on App Server support
 - [x] richer quota-state presentation / rate-limit update observation without making continuity depend on quota availability
 
 ### Killer-flow non-goals
