@@ -20,7 +20,7 @@ import {
   validateTunnelId,
   writeManagedTunnelSetup,
 } from "../src/tunnel-bootstrap.mjs";
-import { ensureExactProjectTrust, hasExactTrustedProject, resolveCodexConfigPath, rollbackTrustConfig } from "../src/trust-config.mjs";
+import { ensureExactProjectTrust, hasExactTrustedProject, removeExactProjectTrust, resolveCodexConfigPath, rollbackTrustConfig } from "../src/trust-config.mjs";
 
 class CliUsageError extends Error {}
 
@@ -35,6 +35,8 @@ try {
     case "connect": await connectCommand(options); break;
     case "start": await startCommand(options); break;
     case "status": await statusCommand(options); break;
+    case "project": await projectCommand(options); break;
+    case "trust": await trustCommand(options); break;
     case "doctor": await doctorCommand(options); break;
     case "logs": await logsCommand(options); break;
     case "stop": await stopCommand(options); break;
@@ -278,6 +280,91 @@ async function statusCommand(opts) {
   } finally { store.close(); }
 }
 
+async function projectCommand(opts) {
+  const subcommand = opts.positionals[0] ?? "list";
+  if (subcommand === "list") {
+    if (opts.positionals.length > 1) throw new CliUsageError("Usage: rootbound project list [--json]");
+    const store = await openStateStore({ paths });
+    try {
+      const projects = store.listProjects();
+      if (opts.json) printResult({ ok: true, action: "project-list", projects }, opts);
+      else {
+        process.stdout.write(`Projects: ${projects.length}\n`);
+        for (const project of projects) process.stdout.write(`- ${project.projectRef}  ${project.root}${project.trusted ? "  trusted" : ""}\n`);
+      }
+    } finally { store.close(); }
+    return;
+  }
+
+  if (subcommand !== "remove") throw new CliUsageError(`Unknown project subcommand: ${subcommand}`);
+  const target = opts.positionals[1];
+  if (!target || opts.positionals.length > 2) throw new CliUsageError("Usage: rootbound project remove <project-ref-or-path> [--remove-trust] [--json]");
+
+  const store = await openStateStore({ paths });
+  try {
+    const project = findRegisteredProject(store, target);
+    if (!project) throw new CliUsageError(`No registered project matches: ${target}`);
+    const runtime = await runtimeStatus(paths);
+    if (runtime.running && runtime.state?.projectRef === project.projectRef) {
+      throw new CliUsageError(`Refusing to remove the active project ${project.projectRef}. Switch Rootbound to another project or run rootbound stop first.`);
+    }
+    let trustRemoval = null;
+    if (opts.removeTrust) {
+      trustRemoval = await removeExactProjectTrust(project.root, { configPath: resolveCodexConfigPath(), backupsDir: paths.backupsDir });
+    }
+    try {
+      if (!store.deleteProject(project.projectRef)) throw new Error(`Failed to remove registered project: ${project.projectRef}`);
+    } catch (error) {
+      if (trustRemoval?.changed) await rollbackTrustConfig(trustRemoval).catch(() => {});
+      throw error;
+    }
+    printResult({
+      ok: true,
+      action: "project-removed",
+      project,
+      trust: opts.removeTrust ? { removed: trustRemoval?.changed === true, configPath: trustRemoval?.configPath ?? null, backupPath: trustRemoval?.backupPath ?? null } : { removed: false },
+      notes: [
+        "Registry state and project-scoped Rootbound records were removed by SQLite cascade.",
+        "Project files were not changed.",
+        opts.removeTrust ? "The exact-root Codex trust block was removed when present, with a backup created first." : "Codex trust configuration was not changed; pass --remove-trust to remove the exact-root trust block too.",
+      ],
+    }, opts);
+  } finally { store.close(); }
+}
+
+function findRegisteredProject(store, target) {
+  if (target.startsWith("project_")) return store.getProject(target);
+  const requested = comparableRoot(path.resolve(target));
+  return store.listProjects().find((project) => comparableRoot(project.root) === requested) ?? null;
+}
+
+function comparableRoot(value) {
+  const resolved = path.resolve(value);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+async function trustCommand(opts) {
+  const subcommand = opts.positionals[0];
+  const target = opts.positionals[1];
+  if (subcommand !== "remove" || !target || opts.positionals.length > 2) {
+    throw new CliUsageError("Usage: rootbound trust remove <path> [--json]");
+  }
+  const root = path.resolve(target);
+  const runtime = await runtimeStatus(paths);
+  if (runtime.running && runtime.state?.projectRoot && comparableRoot(runtime.state.projectRoot) === comparableRoot(root)) {
+    throw new CliUsageError(`Refusing to remove trust for the active Rootbound project: ${root}. Switch to another project or run rootbound stop first.`);
+  }
+  const result = await removeExactProjectTrust(root, { configPath: resolveCodexConfigPath(), backupsDir: paths.backupsDir });
+  printResult({
+    ok: true,
+    action: result.changed ? "trust-removed" : "trust-not-found",
+    root,
+    changed: result.changed,
+    configPath: result.configPath,
+    backupPath: result.backupPath,
+  }, opts);
+}
+
 async function doctorCommand(opts) {
   const cwd = opts.positionals[0] ?? null;
   const result = await runDoctor(cwd);
@@ -419,7 +506,7 @@ function setupLine(opts, text) {
 }
 
 function parseOptions(argv) {
-  const out = { positionals: [], json: false, yes: false, follow: false, force: false, noStart: false, bytes: null };
+  const out = { positionals: [], json: false, yes: false, follow: false, force: false, noStart: false, removeTrust: false, bytes: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--json") out.json = true;
@@ -427,6 +514,7 @@ function parseOptions(argv) {
     else if (arg === "--follow" || arg === "-f") out.follow = true;
     else if (arg === "--force") out.force = true;
     else if (arg === "--no-start") out.noStart = true;
+    else if (arg === "--remove-trust") out.removeTrust = true;
     else if (arg === "--bytes") { if (!argv[i + 1]) throw new CliUsageError("--bytes requires a value"); out.bytes = argv[++i]; }
     else if (arg.startsWith("-")) throw new CliUsageError(`Unknown option: ${arg}`);
     else out.positionals.push(arg);
@@ -453,5 +541,5 @@ function printResult(value, opts) {
 }
 
 function printHelp() {
-  process.stdout.write(`Rootbound V5 control plane\n\nUsage:\n  rootbound connect [path] [--yes] [--no-start] [--json]\n  rootbound start [path] [--json]\n  rootbound status [path] [--json]\n  rootbound doctor [path] [--json]\n  rootbound logs [--bytes N] [--follow] [--json]\n  rootbound stop [--force] [--json]\n  rootbound version\n\nFor normal setup, run only: rootbound connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, stores the runtime key in private local state when needed, validates the tunnel, asks once for exact-root Codex trust, and starts the supervised runtime. Connecting or starting another trusted project automatically switches the single supervised runtime; no manual stop is required.\nUse rootbound tunnel ... only for advanced/manual tunnel configuration.\n`);
+  process.stdout.write(`Rootbound V5 control plane\n\nUsage:\n  rootbound connect [path] [--yes] [--no-start] [--json]\n  rootbound start [path] [--json]\n  rootbound status [path] [--json]\n  rootbound project list [--json]\n  rootbound project remove <project-ref-or-path> [--remove-trust] [--json]\n  rootbound trust remove <path> [--json]\n  rootbound doctor [path] [--json]\n  rootbound logs [--bytes N] [--follow] [--json]\n  rootbound stop [--force] [--json]\n  rootbound version\n\nFor normal setup, run only: rootbound connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, stores the runtime key in private local state when needed, validates the tunnel, asks once for exact-root Codex trust, and starts the supervised runtime. Connecting or starting another trusted project automatically switches the single supervised runtime; no manual stop is required.\nUse rootbound project remove to forget stale registry entries without deleting project files; add --remove-trust to remove that exact-root Codex trust block too. Use rootbound trust remove for stale trust blocks that no longer have a registry row.\nUse rootbound tunnel ... only for advanced/manual tunnel configuration.\n`);
 }

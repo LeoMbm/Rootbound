@@ -39,6 +39,33 @@ export async function ensureExactProjectTrust(root, { configPath = resolveCodexC
   return { changed: true, configPath, backupPath };
 }
 
+export async function removeExactProjectTrust(root, { configPath = resolveCodexConfigPath(), backupsDir, now = Date.now() } = {}) {
+  if (!backupsDir) throw new Error("removeExactProjectTrust requires backupsDir");
+  let original = "";
+  try { original = await readFile(configPath, "utf8"); }
+  catch (error) { if (error?.code === "ENOENT") return { changed: false, configPath, backupPath: null }; throw error; }
+  if (!hasExactTrustedProject(original, root)) return { changed: false, configPath, backupPath: null };
+
+  await mkdir(backupsDir, { recursive: true, mode: 0o700 });
+  const stamp = new Date(now).toISOString().replaceAll(":", "-");
+  const backupPath = path.join(backupsDir, `codex-config-${stamp}.toml`);
+  await copyFile(configPath, backupPath);
+
+  const escaped = root.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  const header = `[projects."${escaped}"]`;
+  const lines = original.split("\n");
+  const start = lines.findIndex((line) => line === header);
+  if (start < 0) return { changed: false, configPath, backupPath: null };
+  let end = start + 1;
+  while (end < lines.length && !/^\s*\[/.test(lines[end])) end += 1;
+  const removeStart = start > 0 && lines[start - 1].trim() === "" ? start - 1 : start;
+  const next = [...lines.slice(0, removeStart), ...lines.slice(end)].join("\n");
+  const temp = `${configPath}.rootbound-${process.pid}.tmp`;
+  await writeFile(temp, next, { mode: 0o600 });
+  await rename(temp, configPath);
+  return { changed: true, configPath, backupPath };
+}
+
 export async function rollbackTrustConfig({ configPath, backupPath }) {
   if (!backupPath) return { rolledBack: false };
   await copyFile(backupPath, configPath);

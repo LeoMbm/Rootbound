@@ -114,6 +114,7 @@ function createStore(db, paths) {
     getProject(projectRef) { return normalizeProject(db.prepare("SELECT * FROM projects WHERE project_ref=?").get(projectRef)); },
     getProjectByRoot(root) { return normalizeProject(db.prepare("SELECT * FROM projects WHERE root=?").get(root)); },
     listProjects() { return db.prepare("SELECT * FROM projects ORDER BY updated_at DESC, name ASC").all().map(normalizeProject); },
+    deleteProject(projectRef) { return db.prepare("DELETE FROM projects WHERE project_ref=?").run(projectRef).changes > 0; },
     upsertProject(project) {
       db.prepare(`INSERT INTO projects(project_ref, root, git_root, name, trusted, created_at, updated_at, last_connected_at)
         VALUES(?, ?, ?, ?, ?, ?, ?, ?)

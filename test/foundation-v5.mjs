@@ -5,7 +5,7 @@ import path from "node:path";
 import { openStateStore } from "../src/state-store.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { projectRefForRoot, registerProject } from "../src/project-registry.mjs";
-import { ensureExactProjectTrust, hasExactTrustedProject, rollbackTrustConfig } from "../src/trust-config.mjs";
+import { ensureExactProjectTrust, hasExactTrustedProject, removeExactProjectTrust, rollbackTrustConfig } from "../src/trust-config.mjs";
 
 const temp = await mkdtemp(path.join(os.tmpdir(), "rootbound-v5-"));
 const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(temp, "home") }, home: temp, platform: process.platform });
@@ -30,8 +30,18 @@ try {
   assert.equal(hasExactTrustedProject(after, canonicalProjectDir), true);
   const second = await ensureExactProjectTrust(canonicalProjectDir, { configPath, backupsDir: paths.backupsDir, now: 1 });
   assert.equal(second.changed, false);
+  const removedTrust = await removeExactProjectTrust(canonicalProjectDir, { configPath, backupsDir: paths.backupsDir, now: 2 });
+  assert.equal(removedTrust.changed, true);
+  assert.equal(hasExactTrustedProject(await readFile(configPath, "utf8"), canonicalProjectDir), false);
+  await rollbackTrustConfig(removedTrust);
+  assert.equal(hasExactTrustedProject(await readFile(configPath, "utf8"), canonicalProjectDir), true);
   await rollbackTrustConfig(trust);
   assert.equal(await readFile(configPath, "utf8"), 'model = "x"\n');
+
+  assert.equal(store.deleteProject(registered.projectRef), true);
+  assert.equal(store.getProject(registered.projectRef), null);
+  assert.equal(store.listProjects().length, 0);
+  assert.equal(store.deleteProject(registered.projectRef), false);
 } finally {
   store.close();
 }

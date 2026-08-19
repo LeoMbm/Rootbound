@@ -171,6 +171,32 @@ This is an advanced/offline path; normal users should use plain `rootbound conne
 rootbound status
 ```
 
+### Manage registered projects
+
+List the local Rootbound project registry:
+
+```sh
+rootbound project list
+```
+
+Remove a stale registry entry by exact stored path or `projectRef`:
+
+```sh
+rootbound project remove /path/to/old-project
+rootbound project remove project_...
+rootbound project remove /path/to/old-project --remove-trust
+```
+
+Removing a project deletes its Rootbound registry row and project-scoped Rootbound records through SQLite foreign-key cascade. It **never deletes project files**. By default Codex trust is left unchanged; `--remove-trust` removes the matching exact-root trust block after creating a config backup. Rootbound refuses to remove the project that currently owns the running supervised runtime; switch to another project or stop Rootbound first.
+
+For an old exact-root trust entry that no longer has a Rootbound registry row:
+
+```sh
+rootbound trust remove /path/to/old-project
+```
+
+Trust removal is backed up first and also refuses to target the currently active Rootbound project.
+
 ### Validate the local lane
 
 ```sh
