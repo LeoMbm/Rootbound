@@ -22,6 +22,8 @@ import {
 } from "../src/tunnel-bootstrap.mjs";
 import { ensureExactProjectTrust, hasExactTrustedProject, resolveCodexConfigPath, rollbackTrustConfig } from "../src/trust-config.mjs";
 
+class CliUsageError extends Error {}
+
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
 const command = args.shift() ?? "help";
@@ -202,13 +204,44 @@ async function startCommand(opts) {
 
 async function startSupervisor(project) {
   const current = await runtimeStatus(paths);
+  if (current.running && current.state?.projectRef === project.projectRef) return current;
+
+  let previousProject = null;
   if (current.running) {
-    if (current.state?.projectRef && current.state.projectRef !== project.projectRef) {
-      throw new Error(`Codexless runtime is already connected to ${current.state.projectRef}; stop it before switching projects`);
-    }
-    return current;
+    previousProject = current.state?.projectRef && current.state?.projectRoot
+      ? { projectRef: current.state.projectRef, root: current.state.projectRoot }
+      : null;
+    await stopRuntimeForSwitch(current.state?.projectRef ?? "unknown");
+  } else if (current.stale) {
+    await stopRuntime(paths);
   }
-  if (current.stale) await stopRuntime(paths);
+
+  try {
+    const runtime = await launchSupervisor(project);
+    return previousProject
+      ? { ...runtime, switched: true, switchedFromProjectRef: previousProject.projectRef, switchedFromProjectRoot: previousProject.root }
+      : runtime;
+  } catch (error) {
+    if (!previousProject) throw error;
+    let restored = false;
+    try {
+      await launchSupervisor(previousProject);
+      restored = true;
+    } catch {}
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to switch Codexless runtime from ${previousProject.projectRef} to ${project.projectRef}: ${message}. Previous runtime ${restored ? "was restored" : "could not be restored"}.`);
+  }
+}
+
+async function stopRuntimeForSwitch(projectRef) {
+  let stopped = await stopRuntime(paths);
+  if (stopped.status !== "stopped") stopped = await stopRuntime(paths, { force: true });
+  if (stopped.status !== "stopped") {
+    throw new Error(`Could not stop current Codexless runtime for ${projectRef}; refusing to start a second project runtime in parallel.`);
+  }
+}
+
+async function launchSupervisor(project) {
   const child = spawn(process.execPath, [path.join(packageRoot, "scripts", "supervisor.mjs")], {
     cwd: packageRoot,
     env: { ...process.env, CODEXLESS_PROJECT_REF: project.projectRef, CODEXLESS_PROJECT_ROOT: project.root },
@@ -411,6 +444,7 @@ function printResult(value, opts) {
   if (opts.json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   else if (value.action === "connected") {
     process.stdout.write(`\nCodexless is ready.\nProject: ${value.project.root}\nRef: ${value.project.projectRef}\nTrust: ${value.trust.changed ? "added exact-root trust" : "already trusted"}\nTunnel: ${value.tunnel?.configured ? (value.tunnel.reused ? "reused" : "configured") : "not started"}\nRuntime: ${value.runtime?.status ?? "not started"}\n`);
+    if (value.runtime?.switched) process.stdout.write(`Switched from: ${value.runtime.switchedFromProjectRef}\n`);
     if (value.runtime?.status === "running") process.stdout.write(`ChatGPT connector settings: ${TUNNEL_SETUP_URLS.connectors}\n`);
   } else if (Array.isArray(value.projects)) {
     process.stdout.write(`Runtime: ${value.runtime.status}\nState: ${value.stateRoot}\nProjects: ${value.projects.length}\n`);
@@ -419,7 +453,5 @@ function printResult(value, opts) {
 }
 
 function printHelp() {
-  process.stdout.write(`Codexless V5 control plane\n\nUsage:\n  codexless connect [path] [--yes] [--no-start] [--json]\n  codexless start [path] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless stop [--force] [--json]\n  codexless version\n\nFor normal setup, run only: codexless connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, stores the runtime key in private local state when needed, validates the tunnel, asks once for exact-root Codex trust, and starts the supervised runtime.\nUse codexless tunnel ... only for advanced/manual tunnel configuration.\n`);
+  process.stdout.write(`Codexless V5 control plane\n\nUsage:\n  codexless connect [path] [--yes] [--no-start] [--json]\n  codexless start [path] [--json]\n  codexless status [path] [--json]\n  codexless doctor [path] [--json]\n  codexless logs [--bytes N] [--follow] [--json]\n  codexless stop [--force] [--json]\n  codexless version\n\nFor normal setup, run only: codexless connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, stores the runtime key in private local state when needed, validates the tunnel, asks once for exact-root Codex trust, and starts the supervised runtime. Connecting or starting another trusted project automatically switches the single supervised runtime; no manual stop is required.\nUse codexless tunnel ... only for advanced/manual tunnel configuration.\n`);
 }
-
-class CliUsageError extends Error {}
