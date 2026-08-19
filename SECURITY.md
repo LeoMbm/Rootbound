@@ -392,7 +392,7 @@ Clients should use these fields instead of parsing human error strings.
 
 ## Dependency / release boundary
 
-Before a V5 release or merge:
+Before the Apple Silicon macOS Technical Preview release or merge:
 
 - install dependencies from a clean trusted environment;
 - regenerate npm lock root metadata using npm, not hand edits;
@@ -400,9 +400,11 @@ Before a V5 release or merge:
 - run the full test suite;
 - inspect the packed artifact;
 - run guided `rootbound connect .` acceptance on a real Mac;
-- run one controlled macOS + Windows matrix / real-machine acceptance before supported release;
+- complete controlled real-machine macOS acceptance for the public preview scope;
 - scan the artifact and repository for secrets / machine paths;
-- run real-machine command / edit / restart / upgrade / uninstall acceptance.
+- run real-machine command / edit / restart / upgrade / uninstall acceptance on Apple Silicon macOS.
+
+Windows implementation may remain in the repository, but Windows must not be advertised as supported until its separate real-machine acceptance is green.
 
 The V5 workflow is intentionally manual-only while stabilization is in progress; noisy failing CI must not be re-enabled on every push before it is green.
 
@@ -415,12 +417,12 @@ The Technical Preview is not a claim of production hardening.
 Known limitations include:
 
 - Intel macOS is not part of the supported preview;
-- Windows long-command interactivity is limited by the accepted App Server implementation and uses explicit fallback behavior;
+- Windows is not part of this public preview yet; Windows-specific implementation exists but real-machine release validation is pending;
 - the guided tunnel runtime key is protected by filesystem permissions / ACLs rather than OS-native vault integration;
 - sensitive-file detection is heuristic and filename-based;
 - argv inspection cannot prevent deliberately obfuscated secondary process execution in arbitrary custom code;
 - Browser Reader is read-first rather than a general browser agent;
-- final V5 release still requires controlled CI and real-machine acceptance evidence.
+- final macOS preview release still requires the remaining controlled Mac release evidence.
 
 The durable acceptance checklist is maintained in `docs/plans/rootbound-v5.md`.
 

@@ -50,6 +50,8 @@ await access(path.join(root, "src", "tunnel-bootstrap.mjs"));
 assert.equal(packageJson.engines?.node, ">=22.13.0");
 assert.equal(packageJson.bin?.rootbound, "bin/rootbound-entry.mjs");
 assert.equal(packageJson.repository?.url, "git+https://github.com/LeoMbm/Rootbound.git");
+assert.match(packageJson.description ?? "", /Apple Silicon macOS Technical Preview/);
+assert.doesNotMatch(packageJson.description ?? "", /^Windows and Apple Silicon macOS Technical Preview/);
 assert.equal(packageJson.homepage, "https://github.com/LeoMbm/Rootbound#readme");
 assert.equal(packageJson.bugs?.url, "https://github.com/LeoMbm/Rootbound/issues");
 assert.equal(packageJson.scripts?.["check:syntax"], "node scripts/validate-v5-syntax.mjs");
@@ -87,6 +89,9 @@ assert.match(selfUpgradeResult.error, /Refusing in-place self-upgrade/);
 
 assert.match(readme, /rootbound-public-preview-v5/);
 assert.match(readme, /32 public tools/);
+assert.match(readme, /Apple Silicon macOS Technical Preview/);
+assert.match(readme, /Windows support is .*not part of this public preview yet/i);
+assert.doesNotMatch(readme, /\*\*Windows \+ Apple Silicon macOS Technical Preview\*\*/);
 assert.match(readme, /codex\.continuity_resume/);
 assert.match(readme, /codex\.continuity_handoff/);
 assert.match(readme, /codex\.continuity_rollback/);

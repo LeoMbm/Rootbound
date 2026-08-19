@@ -1,6 +1,6 @@
 # Rootbound V5 — Durable Daily Driver Plan
 
-Status: core V5 plus the Codex interruption/quota-rescue implementation are on `feat/quota-rescue-continuity`. macOS guided setup/lifecycle acceptance is green. The 32-tool quota-rescue surface passes the model-free automated release gate; real ChatGPT acceptance of the newly installed surface plus supported-Windows validation remain before merge/release.
+Status: core V5 plus the Codex interruption/quota-rescue implementation are on `feat/quota-rescue-continuity`. **Release scope is Apple Silicon macOS first.** macOS guided setup/lifecycle acceptance is green. The 32-tool quota-rescue surface passes the model-free automated release gate. Windows is explicitly deferred until separate real-machine validation is complete.
 
 This document is the durable source of truth for V5. Features existing in source is not enough: V5 is ready only when the validation / real-machine checklist below is green.
 
@@ -327,7 +327,7 @@ Do not restore push / PR triggers until:
 1. the post-wizard `npm run validate:v5` passes on trusted execution;
 2. syntax checks pass;
 3. the full repository test run is reviewed;
-4. one controlled macOS + Windows validation run is green;
+4. one controlled Apple Silicon macOS validation run is green for the current public preview scope;
 5. notification policy is chosen deliberately.
 
 ## Remaining release blockers
@@ -338,7 +338,7 @@ Do not restore push / PR triggers until:
 - [ ] trusted-machine `npm test` after guided-connect changes
 - [ ] `npm pack --dry-run` + packed-file review after guided-connect changes
 - [ ] `npm run validate:release` after guided-connect changes
-- [ ] one controlled Mac + Windows validation run before supported release
+- [ ] one controlled Apple Silicon Mac validation run before supported release
 
 ### Real-machine Mac acceptance
 
@@ -370,7 +370,9 @@ Must now be repeated/extended with the new normal flow:
 - [ ] staged upgrade
 - [ ] uninstall preserving state
 
-### Real-machine Windows acceptance
+### Deferred — real-machine Windows acceptance
+
+Windows is **not a blocker for the Mac-first Technical Preview**. It becomes a blocker only before Rootbound publicly claims Windows support.
 
 - [ ] fresh install into `app/`
 - [ ] state preservation outside `app/`
@@ -404,3 +406,5 @@ V5 is ready to merge only when:
 8. real-machine acceptance covers guided connect, command, edit, restart, upgrade and uninstall.
 9. README / SECURITY / public contract match the implementation.
 10. `main` remains untouched until that evidence exists.
+
+For the current Mac-first release, “supported OS” means Apple Silicon macOS only. Windows validation remains a separate future gate.

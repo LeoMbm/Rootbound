@@ -4,7 +4,9 @@
 
 ### Give ChatGPT safe local coding access through Codex.
 
-**Windows + Apple Silicon macOS Technical Preview**
+**Apple Silicon macOS Technical Preview**
+
+Windows support is implemented in parts of the codebase but is **not part of this public preview yet**. Real-machine Windows validation is still pending.
 
 </div>
 
@@ -124,7 +126,7 @@ git --version
 
 Then check Node.js.
 
-Open Terminal on macOS, or PowerShell / Command Prompt on Windows:
+Open Terminal on macOS:
 
 ```sh
 node --version
@@ -202,27 +204,11 @@ Verify the install:
 rootbound version
 ```
 
-### 2.3 Install on Windows
+### Windows
 
-From the cloned Rootbound directory:
+Windows support is not part of this public Technical Preview yet. The repository contains Windows-specific implementation work, but it has not completed the same real-machine acceptance required for release.
 
-```bat
-bin\rootbound-install.cmd
-```
-
-The Windows Technical Preview installs Rootbound under:
-
-```text
-%LOCALAPPDATA%\Rootbound\app\
-```
-
-The Windows installer currently does not add Rootbound to your global `PATH` automatically. You can call it directly with:
-
-```bat
-%LOCALAPPDATA%\Rootbound\app\bin\rootbound.cmd version
-```
-
-In the rest of this README, commands are written as `rootbound ...`. On Windows, use the full command above if you have not added Rootbound to your own `PATH`.
+Do not treat the current Windows paths/scripts as a supported public install until the Windows validation checklist is green.
 
 ---
 
@@ -635,14 +621,6 @@ The CLI link normally lives at:
 ~/.local/bin/rootbound
 ```
 
-## Rootbound is not on PATH on Windows
-
-Use:
-
-```bat
-%LOCALAPPDATA%\Rootbound\app\bin\rootbound.cmd status
-```
-
 ## `tunnel-client was not found on PATH`
 
 Install the supported Secure MCP Tunnel client from:
@@ -937,7 +915,7 @@ The application tree is separate from persistent state so staged upgrades can re
 └── backups/
 ```
 
-### Windows
+### Windows state layout (not yet public-preview supported)
 
 ```text
 %LOCALAPPDATA%\Rootbound\
@@ -947,6 +925,8 @@ The application tree is separate from persistent state so staged upgrades can re
 ├── logs\
 └── backups\
 ```
+
+The Windows implementation is retained for ongoing validation, but this release only claims Apple Silicon macOS support.
 
 ---
 
@@ -1081,5 +1061,9 @@ Version-specific implementation plans and acceptance checklists live in [`docs/p
 Apache-2.0.
 
 Rootbound is an independent project. It is not an OpenAI product and does not imply OpenAI endorsement.
+
+## Shoutout
+
+Shoutout to [@liyana31811](https://github.com/liyana31811), creator of [Codexless](https://github.com/liyana31811/Codexless). Their work was an early source of inspiration while Rootbound was taking shape.
 
 > **Keep working in ChatGPT. Use Codex when you explicitly need Codex.**
