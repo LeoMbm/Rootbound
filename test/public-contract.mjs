@@ -45,6 +45,7 @@ assert.equal(new Set(PUBLIC_TOOL_NAMES).size, PUBLIC_TOOL_NAMES.length);
 const requiredNames = [
   "codex.command_start", "codex.command_poll", "codex.command_write", "codex.command_terminate",
   "codex.workspace_open", "codex.precise_edit", "codex.edit_undo", "codex.edit_redo",
+  "codex.continuity_resume", "codex.quota_status", "codex.continuity_handoff", "codex.continuity_rollback", "codex.continuity_search",
 ];
 const forbiddenNames = [
   "codex.account_preflight", "codex.model_list", "codex.agent_start", "codex.agent_card_render", "codex.agent_card_state",
@@ -75,6 +76,11 @@ async function assertPublicSurface(client) {
   const statusTool = tools.tools.find((tool) => tool.name === "codex.git_status");
   const diffTool = tools.tools.find((tool) => tool.name === "codex.git_diff");
   const contextTool = tools.tools.find((tool) => tool.name === "codex.project_context");
+  const resumeTool = tools.tools.find((tool) => tool.name === "codex.continuity_resume");
+  const quotaTool = tools.tools.find((tool) => tool.name === "codex.quota_status");
+  const handoffTool = tools.tools.find((tool) => tool.name === "codex.continuity_handoff");
+  const rollbackTool = tools.tools.find((tool) => tool.name === "codex.continuity_rollback");
+  const continuitySearchTool = tools.tools.find((tool) => tool.name === "codex.continuity_search");
 
   assert.equal(commandTool?.annotations?.destructiveHint, true);
   assert.equal(commandStartTool?.annotations?.destructiveHint, true);
@@ -88,6 +94,11 @@ async function assertPublicSurface(client) {
   assert.equal(statusTool?.annotations?.readOnlyHint, true);
   assert.equal(diffTool?.annotations?.readOnlyHint, true);
   assert.equal(patchTool?.annotations?.destructiveHint, true);
+  assert.equal(resumeTool?.annotations?.readOnlyHint, true);
+  assert.equal(quotaTool?.annotations?.readOnlyHint, true);
+  assert.equal(handoffTool?.annotations?.destructiveHint, true);
+  assert.equal(rollbackTool?.annotations?.destructiveHint, true);
+  assert.equal(continuitySearchTool?.annotations?.readOnlyHint, true);
   assert.match(commandTool?.description ?? "", /without starting a Codex model turn/i);
   assert.match(commandStartTool?.description ?? "", /without starting a Codex model turn/i);
   assert.match(commandPollTool?.description ?? "", /incremental/i);
@@ -98,6 +109,11 @@ async function assertPublicSurface(client) {
   assert.match(redoTool?.description ?? "", /hash|SHA/i);
   assert.match(patchTool?.description ?? "", /does not start a Codex model turn/i);
   assert.match(contextTool?.description ?? "", /read-only/i);
+  assert.match(resumeTool?.description ?? "", /without starting a Codex model turn/i);
+  assert.match(quotaTool?.description ?? "", /without starting a Codex model turn/i);
+  assert.match(handoffTool?.description ?? "", /without starting a model turn/i);
+  assert.match(rollbackTool?.description ?? "", /never uses git reset/i);
+  assert.match(continuitySearchTool?.description ?? "", /cold memory/i);
 
   const nestedCodexCommand = await client.callTool({ name: "codex.command_exec", arguments: { command: [codexBin, "--version"], access: "readOnly" } });
   assert.equal(nestedCodexCommand.isError, true, "nested Codex launch must stay blocked");

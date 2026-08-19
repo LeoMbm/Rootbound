@@ -42,9 +42,13 @@ legacy.close();
 const store = await openStateStore({ paths });
 try {
   const version = store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get();
-  assert.equal(version.value, "4");
+  assert.equal(version.value, "5");
   const table = store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='command_output_chunks'").get();
   assert.equal(table.name, "command_output_chunks");
+  const rescueTable = store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='rescue_sessions'").get();
+  assert.equal(rescueTable.name, "rescue_sessions");
+  const rescueMutationTable = store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='rescue_mutations'").get();
+  assert.equal(rescueMutationTable.name, "rescue_mutations");
 
   const now = Date.now();
   store.upsertProject({ projectRef: "project_test", root: root, gitRoot: null, name: "test", trusted: false, createdAt: now, updatedAt: now, lastConnectedAt: null });

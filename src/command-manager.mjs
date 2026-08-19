@@ -13,6 +13,7 @@ const DEFAULT_OUTPUT_CAP = 2 * 1024 * 1024;
 export function createCommandManager({
   store,
   continuityState = null,
+  rescueManager = null,
   authorityExecutor,
   codexBin,
   configOverrides = [],
@@ -88,6 +89,10 @@ export function createCommandManager({
       updatedAt: at,
     });
     store.recordEvent({ projectRef: row.projectRef, bindingRef: row.bindingRef, kind: error ? "command.failed" : "command.finished", payload: { commandId, exitCode }, createdAt: at });
+    if (row.bindingRef && row.access === "inherit" && rescueManager) {
+      const rescue = rescueManager.activeByBinding(row.bindingRef);
+      if (rescue) void rescueManager.refreshExpected(rescue, { rollbackSafe: false, reason: "long_command_write_capable" }).catch(() => {});
+    }
     const session = sessions.get(commandId);
     sessions.delete(commandId);
     persistedBytes.delete(commandId);
@@ -102,6 +107,11 @@ export function createCommandManager({
       assertNoNestedCodexInvocation(command, { codexBin });
       assertDurableCommandHasNoSecrets(command);
       const scope = scopeFor({ bindingRef, cwd });
+      const rescue = scope.bindingRef && rescueManager ? rescueManager.activeByBinding(scope.bindingRef) : null;
+      if (rescue && access === "inherit") {
+        await rescueManager.assertNoDrift(rescue);
+        rescueManager.markRollbackPartial(rescue, "long_command_write_capable");
+      }
       const at = now();
       const commandId = `command_${randomUUID()}`;
       store.createCommand({ commandId, projectRef: scope.projectRef, bindingRef: scope.bindingRef, argv: command, cwd: scope.cwd, status: "starting", access, timeoutMs, startedAt: at, updatedAt: at });
@@ -158,6 +168,9 @@ export function createCommandManager({
       const chunks = store.listCommandOutputAfter(commandId, cursor, limit).map((chunk) => ({ cursor: chunk.cursor, stream: chunk.stream, text: chunk.data.toString("utf8"), bytes: chunk.data.length, at: chunk.at }));
       return {
         commandId,
+        bindingRef: command.bindingRef ?? null,
+        cwd: command.cwd,
+        access: command.access,
         status: command.status,
         exitCode: command.exitCode,
         error: command.error,

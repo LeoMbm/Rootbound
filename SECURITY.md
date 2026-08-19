@@ -26,10 +26,10 @@ The canonical public surface is defined only in `src/surface-contracts.mjs` and 
 Current V5 surface:
 
 - `rootbound-public-preview-v5`
-- 27 public tools
+- 32 public tools
 - no public model catalog
 - no public Codex Agent / turn-start tool
-- no public quota-routing surface
+- quota observation is read-only/advisory and never routes or starts a model turn
 
 Private/internal capabilities do not automatically become public capabilities.
 
@@ -165,6 +165,34 @@ Checkpoint flow uses fail-closed state:
 If a connection fails in the ambiguous interval after `pending`, a retry with the same key returns `IDEMPOTENCY_IN_DOUBT` instead of blindly injecting the checkpoint again.
 
 Reusing the same idempotency key with a different request payload is rejected.
+
+### Rescue sessions
+
+`codex.continuity_resume` can create a rescue session that links a persisted Codex thread to the current authorized project without starting a Codex model turn.
+
+Security properties:
+
+- thread selection is constrained to the authorized canonical project/Git root;
+- repository/branch/SHA evidence is used to rank continuity matches rather than trusting recency alone;
+- genuinely ambiguous matches are returned as ambiguous instead of guessed;
+- remote HTTP does not assume that an MCP transport session uniquely identifies one ChatGPT conversation;
+- the product flow uses an opaque `rescueRef`; the underlying continuity `bindingRef` remains internal plumbing;
+- write-capable rescue operations verify the current worktree fingerprint before continuing;
+- unexpected external drift fails closed before another guarded write, rollback, or handoff;
+- quota status is advisory only and continuity still works when quota observation is unavailable.
+
+### Rescue rollback
+
+Rescue rollback is intentionally narrower than source-control rollback.
+
+- it never runs `git reset`, `git checkout`, or rewinds the repository HEAD;
+- the original rescue worktree fingerprint, including pre-existing dirty work, is the rollback baseline;
+- supported Rootbound-owned file mutations are snapshotted locally with before/after existence and SHA guards;
+- sensitive paths are not copied into rescue snapshots;
+- external divergence causes rollback refusal rather than overwrite;
+- arbitrary write-capable commands, unsupported/sensitive snapshots, degraded very-large worktrees, or low-level edit undo/redo make global rescue rollback coverage `partial`; global rescue rollback is then refused.
+
+`codex.continuity_handoff` rechecks project/thread authority and drift before injecting the bounded checkpoint into the original persisted thread.
 
 ---
 

@@ -1,6 +1,6 @@
 # Rootbound V5 — Durable Daily Driver Plan
 
-Status: P0/P1 implementation is substantially complete on `feat/thread-history-continuity`. The core local release suite passed on an Apple Silicon Mac before the guided-connect changes; the new one-command onboarding must now be revalidated before merge.
+Status: core V5 plus the Codex interruption/quota-rescue implementation are on `feat/quota-rescue-continuity`. macOS guided setup/lifecycle acceptance is green. The 32-tool quota-rescue surface passes the model-free automated release gate; real ChatGPT acceptance of the newly installed surface plus supported-Windows validation remain before merge/release.
 
 This document is the durable source of truth for V5. Features existing in source is not enough: V5 is ready only when the validation / real-machine checklist below is green.
 
@@ -97,7 +97,7 @@ This document is the durable source of truth for V5. Features existing in source
 
 - [x] public surface = `rootbound-public-preview-v5`
 - [x] canonical tool list in `src/surface-contracts.mjs`
-- [x] current public tool count = 27
+- [x] current public tool count = 32
 - [x] dynamic doctor validation (no fixed tool-count dependency)
 - [x] `surfaceVersion` on migrated typed responses
 - [x] stale snapshot reconnect guidance
@@ -200,6 +200,53 @@ This document is the durable source of truth for V5. Features existing in source
 - [x] no Codex model turn
 - [ ] real ChatGPT connection acceptance on current target surfaces
 
+## Killer-flow backlog — Codex interruption / quota rescue
+
+This is the next product layer after the V5 safety/release gates. The goal is deliberately narrow:
+
+> A Codex interruption or quota limit should become a non-event: the user says `@Rootbound continue`, ChatGPT resumes the correct work safely, and Rootbound can hand verified state back to the original Codex thread later.
+
+Do not turn Rootbound into a general IDE, cloud project-memory product, multi-agent framework, or task manager. Keep the product centered on the Codex ↔ ChatGPT continuity loop.
+
+### KF-P0 — zero-context resume
+
+- [x] `codex.continuity_resume({ cwd?, threadId? })` facade as the preferred resume entrypoint
+- [x] deterministic bounded handoff projection; do not dump raw history or unbounded command output
+- [x] support `recency_at` thread ordering
+- [x] continuation-integrity matching using canonical project/root plus repository identity, branch, compatible Git SHA and recency
+- [x] handle Codex threads created from subdirectories: exact-cwd lookup first, then safely consider thread cwds contained by the canonical Git root
+- [x] return explicit match confidence/reason (`exact`, `compatible`, `ambiguous`, `not_found`)
+- [x] join historical Codex state with the current authoritative worktree state
+- [x] create or reuse the continuity binding automatically
+- [x] hide binding plumbing from the user; local stable MCP sessions may scope implicitly, while remote HTTP uses a per-rescue opaque `rescueRef` so transport sessions are not assumed to equal ChatGPT conversations
+- [x] MCP instructions: resume/continue/quota-interruption intent calls `continuity_resume` first; ask for a thread id only on genuine ambiguity
+- [ ] golden product test: a brand-new ChatGPT chat receiving only `@Rootbound continue` finds the correct Codex session, explains current state, and continues work without any Codex model turn
+
+### KF-P1 — verified rescue lifecycle
+
+- [x] `codex.continuity_handoff` facade for ChatGPT → original Codex thread handback
+- [x] quota awareness via supported App Server rate-limit snapshots/updates; advisory context only, never a prerequisite for resume
+- [x] show quota reset/limit state when available without treating missing/changed buckets as a failure of continuity
+- [x] drift detection while a rescue session is active: branch/HEAD and Rootbound-tracked file SHA changes trigger reinspection instead of blind continuation
+- [x] rescue rollback that restores only Rootbound-owned changes made after the rescue baseline, never pre-existing dirty worktree changes and never via `git reset`
+- [x] rollback refuses files that diverged externally after Rootbound's last known SHA
+- [x] safe return flow reports verified journal activity, current worktree state, commits when observable, remaining work and checkpoint destination
+
+### KF-P2 — cold memory / quota presentation
+
+- [x] on-demand search inside the original persisted Codex thread as cold memory; use occurrence search when accepted and bounded item-list fallback otherwise
+- [x] richer quota-state presentation / rate-limit update observation without making continuity depend on quota availability
+
+### Killer-flow non-goals
+
+- no automatic Codex model turn
+- no multi-agent orchestration
+- no cloud Rootbound dependency
+- no dashboard-first workflow
+- no general task/project management layer
+- no LLM summarization inside Rootbound for resume selection; Rootbound projects bounded facts, ChatGPT reasons over them
+- no Rescue Card UI; ambiguity is represented as structured tool output and ChatGPT asks only when necessary
+
 ## Release / CI hardening completed
 
 - [x] push-triggered noisy V5 workflow disabled
@@ -248,6 +295,7 @@ Those results prove the core V5 lane, but **they do not certify the new guided-c
 - foundation / trust
 - runtime state
 - persistent continuity
+- quota-rescue session state / integrity matching / drift / guarded rollback / handoff / cold-memory search
 - SQLite migration / command chunks
 - long-command manager
 - workspace open

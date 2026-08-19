@@ -1,4 +1,4 @@
-export const PUBLIC_SERVER_VERSION = "0.1.0-preview.8";
+export const PUBLIC_SERVER_VERSION = "0.1.0-preview.9";
 export const PUBLIC_SURFACE_VERSION = "rootbound-public-preview-v5";
 
 export const PUBLIC_TOOL_NAMES = Object.freeze([
@@ -18,6 +18,11 @@ export const PUBLIC_TOOL_NAMES = Object.freeze([
   "codex.continuity_status",
   "codex.continuity_checkpoint",
   "codex.continuity_unbind",
+  "codex.continuity_resume",
+  "codex.quota_status",
+  "codex.continuity_handoff",
+  "codex.continuity_rollback",
+  "codex.continuity_search",
   "codex.repo_search",
   "codex.read_many",
   "codex.apply_patch",

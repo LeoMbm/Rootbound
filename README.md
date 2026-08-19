@@ -21,7 +21,7 @@ The V5 goal is simple: **one durable local control plane, one project registry, 
 Current public surface:
 
 - `rootbound-public-preview-v5`
-- 27 public tools
+- 32 public tools
 - no public model catalog
 - no public Codex agent / turn-start surface
 - durable SQLite state
@@ -30,6 +30,10 @@ Current public surface:
 - long-running commands with incremental polling
 - interactive stdin / terminate on supported App Server implementations
 - continuity bindings and idempotent checkpoints
+- zero-context Codex → ChatGPT rescue sessions with integrity matching
+- advisory Codex quota state and reset timing when App Server exposes it
+- guarded rescue drift detection / rollback / handoff back to the original Codex thread
+- on-demand cold-memory search in persisted Codex history
 - guarded precise-edit undo / redo
 - paginated project reads and searches
 - **guided one-command tunnel + project setup via `rootbound connect .`**
@@ -334,6 +338,42 @@ Continuity state survives MCP/runtime restarts through SQLite.
 
 `continuity_bind` and `continuity_checkpoint` accept optional idempotency keys. Checkpoints use fail-closed pending/completed state so an ambiguous network retry does not blindly inject the same checkpoint twice.
 
+### Codex interruption / quota rescue
+
+- `codex.continuity_resume`
+- `codex.quota_status`
+- `codex.continuity_handoff`
+- `codex.continuity_rollback`
+- `codex.continuity_search`
+
+The preferred product flow is deliberately small:
+
+```text
+Codex interrupted / quota exhausted
+        ↓
+@Rootbound continue
+        ↓
+Rootbound finds and verifies the persisted Codex session
+        ↓
+ChatGPT continues with the current local worktree
+        ↓
+Rootbound can inject a verified handoff into the original Codex thread
+```
+
+`continuity_resume` ranks persisted sessions using the canonical project root, repository identity when available, branch, compatible Git SHA and `recency_at`. A thread started from a subdirectory of the same Git root can still match. Exact/compatible matches continue directly; genuinely ambiguous matches return candidates instead of guessing.
+
+The resume payload is bounded: Rootbound projects recent visible history plus current worktree facts rather than dumping an entire transcript. The original Codex thread remains available as cold memory through `continuity_search`.
+
+Rootbound keeps the durable continuity binding as internal plumbing. The product flow uses an opaque `rescueRef`. ChatGPT should propagate that ref silently between Rootbound tools when needed; the user should never need to copy a binding or rescue identifier.
+
+Quota state is **advisory**. Resume continues to work when quota state is missing, changed, or still available. Rootbound does not start a Codex model turn to inspect quota or history.
+
+During a rescue, write-capable Rootbound operations are checked against the last known worktree fingerprint. Unexpected branch/HEAD/file drift fails closed and forces reinspection before another write or handoff.
+
+`continuity_rollback` never uses `git reset` and never rewinds work that existed before the rescue. Rootbound snapshots supported files around guarded `precise_edit` / `apply_patch` mutations and restores them only while SHA/existence guards still match. Arbitrary write-capable commands, sensitive/unsupported snapshots, very large degraded worktrees, or low-level undo/redo deliberately change rescue rollback coverage to `partial`; in that state a global rescue rollback is refused rather than pretending it is safe.
+
+`continuity_handoff` revalidates the original thread/project authority, injects a bounded checkpoint into that persisted thread without starting a model turn, and reports the current worktree, observable commits, journaled activity, remaining work supplied by ChatGPT, and current quota state.
+
 ### Browser Reader
 
 - `codex.browser_status`
@@ -427,15 +467,9 @@ The V5 implementation is still on the feature branch and has not been merged int
 
 The durable implementation plan / acceptance checklist lives in [`docs/plans/rootbound-v5.md`](docs/plans/rootbound-v5.md).
 
-The core V5 release suite has passed locally on an Apple Silicon Mac during stabilization. The guided one-command setup added afterward must be revalidated before merge.
+The core V5 release suite and macOS guided setup/lifecycle have passed during stabilization. The quota-rescue branch also passes the model-free sandbox release gate; real ChatGPT acceptance of the newly installed 32-tool surface and supported-Windows validation remain before release.
 
-Known release-validation work still includes:
-
-- rerun local `validate:v5` / `validate:release` after guided-setup changes;
-- real ChatGPT connector acceptance through the supervised tunnel;
-- one controlled macOS + Windows validation run before release;
-- final upgrade / uninstall acceptance on both supported platforms;
-- final documentation / release packaging review.
+Known release-validation work still includes real ChatGPT acceptance of the quota-rescue flow through the supervised tunnel, one controlled Windows validation run, and final documentation/package review before merge.
 
 ---
 

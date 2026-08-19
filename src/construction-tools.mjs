@@ -16,6 +16,7 @@ const DEFAULT_TOTAL_CHARS = 200_000;
 const MAX_TOTAL_CHARS = 500_000;
 const MAX_PRECISE_EDIT_CHARS = 64_000;
 const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
+const rescueRefSchema = z.string().regex(/^rescue_[0-9a-f-]{36}$/i).optional();
 const mutationIdSchema = z.string().regex(/^mutation_[0-9a-f-]{36}$/i);
 const READ_FILE_SCRIPT = "const fs=require('node:fs');process.stdout.write(fs.readFileSync(process.argv[1]));";
 const PRECISE_EDIT_SCRIPT = `
@@ -37,7 +38,7 @@ const next=text.split(oldText).join(newText);
 fs.writeFileSync(p,next,'utf8');
 `;
 
-export function registerConstructionTools(server, { authorityExecutor, continuityState = null, stateStore = null }) {
+export function registerConstructionTools(server, { authorityExecutor, continuityState = null, stateStore = null, rescueManager = null, getSessionKey = null }) {
   if (!authorityExecutor) return;
   const mutationJournal = stateStore ? createEditMutationJournal({ store: stateStore, authorityExecutor }) : null;
 
@@ -51,9 +52,17 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
       maxTotalChars: z.number().int().min(1_000).max(MAX_TOTAL_CHARS).default(DEFAULT_TOTAL_CHARS),
       cursor: z.string().max(2_048).optional(),
       allowSensitive: z.boolean().default(false),
+      rescueRef: rescueRefSchema,
     }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async (input) => typedToolResponse(() => readManyAuthorized({ authorityExecutor, ...input }), { operation: "read_many" }));
+  }, async (input, ctx) => typedToolResponse(async () => {
+    const resolved = rescueManager && getSessionKey
+      ? rescueManager.resolveBinding({ sessionKey: getSessionKey(ctx), cwd: input.cwd, rescueRef: input.rescueRef })
+      : { bindingRef: null, rescue: null, implicit: false };
+    const scoped = resolved.bindingRef && continuityState ? continuityState.assertCwd(resolved.bindingRef, input.cwd) : null;
+    const { rescueRef: _rescueRef, ...readInput } = input;
+    return readManyAuthorized({ authorityExecutor, ...readInput, cwd: scoped?.targetCwd ?? input.cwd });
+  }, { operation: "read_many" }));
 
   server.registerTool("codex.precise_edit", {
     title: "Guarded Precise Project Edit",
@@ -66,18 +75,37 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
       expectedSha256: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
       cwd: z.string().min(1).max(32_768).optional(),
       previewOnly: z.boolean().default(false),
+      rescueRef: rescueRefSchema,
       bindingRef: bindingRefSchema,
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-  }, async ({ bindingRef, ...input }) => typedToolResponse(async () => {
-    const scoped = bindingRef && continuityState ? continuityState.assertCwd(bindingRef, input.cwd) : null;
+  }, async ({ bindingRef, rescueRef, ...input }, ctx) => typedToolResponse(async () => {
+    const resolved = rescueManager && getSessionKey
+      ? rescueManager.resolveBinding({ sessionKey: getSessionKey(ctx), cwd: input.cwd, explicitBindingRef: bindingRef, rescueRef })
+      : { bindingRef: bindingRef ?? null, rescue: null, implicit: false };
+    const effectiveBindingRef = resolved.bindingRef;
+    if (resolved.rescue && !input.previewOnly) await rescueManager.assertNoDrift(resolved.rescue);
+    const scoped = effectiveBindingRef && continuityState ? continuityState.assertCwd(effectiveBindingRef, input.cwd) : null;
+    const effectiveCwd = scoped?.targetCwd ?? input.cwd ?? resolved.rescue?.projectRoot;
+    const rescueBefore = resolved.rescue && !input.previewOnly
+      ? await rescueManager.captureSnapshots(resolved.rescue, [path.resolve(effectiveCwd ?? resolved.rescue.projectRoot, input.path)])
+      : null;
     const requestedSensitive = isSensitivePath(input.path);
-    const result = await preciseEditAuthorized({
-      authorityExecutor,
-      ...input,
-      cwd: scoped?.targetCwd ?? input.cwd,
-      captureSnapshot: Boolean(mutationJournal && !input.previewOnly && !requestedSensitive),
-    });
+    let result;
+    try {
+      result = await preciseEditAuthorized({
+        authorityExecutor,
+        ...input,
+        cwd: effectiveCwd,
+        captureSnapshot: Boolean(mutationJournal && !input.previewOnly && !requestedSensitive),
+      });
+    } catch (error) {
+      if (resolved.rescue && rescueBefore) {
+        try { await rescueManager.recordSnapshotsAfter(resolved.rescue, { operation: "precise_edit_failed", before: rescueBefore }); }
+        catch { rescueManager.markRollbackPartial(resolved.rescue, "precise_edit_failed_snapshot_unknown"); }
+      }
+      throw error;
+    }
     const { mutationSnapshot, ...publicResult } = result;
     const sensitive = requestedSensitive || isSensitivePath(publicResult.path);
     let mutationId = null;
@@ -88,16 +116,20 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
         const at = Date.now();
         project = stateStore.upsertProject({ projectRef: projectRefForRoot(root), root, gitRoot: null, name: path.basename(root), trusted: true, createdAt: at, updatedAt: at, lastConnectedAt: at });
       }
-      const mutation = mutationJournal.record({ projectRef: project.projectRef, bindingRef, cwd: publicResult.cwd, path: publicResult.path, beforeSha256: publicResult.beforeSha256, afterSha256: publicResult.afterSha256, beforeText: mutationSnapshot.beforeText, afterText: mutationSnapshot.afterText });
+      const mutation = mutationJournal.record({ projectRef: project.projectRef, bindingRef: effectiveBindingRef, cwd: publicResult.cwd, path: publicResult.path, beforeSha256: publicResult.beforeSha256, afterSha256: publicResult.afterSha256, beforeText: mutationSnapshot.beforeText, afterText: mutationSnapshot.afterText });
       mutationId = mutation.mutationId;
-      stateStore.recordEvent({ projectRef: project.projectRef, bindingRef, kind: "edit.recorded", payload: { mutationId, path: publicResult.path }, createdAt: Date.now() });
+      stateStore.recordEvent({ projectRef: project.projectRef, bindingRef: effectiveBindingRef, kind: "edit.recorded", payload: { mutationId, path: publicResult.path }, createdAt: Date.now() });
     }
-    if (bindingRef && continuityState && !publicResult.previewOnly) continuityState.record(bindingRef, { kind: "edit", path: publicResult.path, cwd: publicResult.cwd, status: "applied", changed: publicResult.changed, previewOnly: false });
+    if (effectiveBindingRef && continuityState && !publicResult.previewOnly) continuityState.record(effectiveBindingRef, { kind: "edit", path: publicResult.path, cwd: publicResult.cwd, status: "applied", changed: publicResult.changed, previewOnly: false });
+    const updatedRescue = resolved.rescue && rescueBefore
+      ? await rescueManager.recordSnapshotsAfter(resolved.rescue, { operation: "precise_edit", before: rescueBefore })
+      : resolved.rescue;
     return {
       ...publicResult,
       ...(mutationId ? { mutationId, undoAvailable: true } : {}),
       ...(!mutationId && sensitive && !publicResult.previewOnly ? { undoAvailable: false, undoUnavailableReason: "sensitive_path" } : {}),
-      ...(bindingRef ? { continuityJournaled: !publicResult.previewOnly } : {}),
+      ...(effectiveBindingRef ? { continuityJournaled: !publicResult.previewOnly } : {}),
+      ...(resolved.implicit && updatedRescue ? { rescueSession: rescueManager.publicSession(updatedRescue) } : {}),
     };
   }, { operation: "precise_edit" }));
 
@@ -107,13 +139,31 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
       description: "Undo one recorded precise_edit by mutationId. Rootbound verifies the current file SHA still equals the recorded after-hash before restoring the exact previous UTF-8 content through the authorized sandbox. Refuses on conflicts; does not use git reset or start a model turn.",
       inputSchema: z.object({ mutationId: mutationIdSchema }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    }, async ({ mutationId }) => typedToolResponse(async () => publicMutation(await mutationJournal.undo(mutationId)), { operation: "edit_undo" }));
+    }, async ({ mutationId }) => typedToolResponse(async () => {
+      const before = mutationJournal.get(mutationId);
+      const rescue = before?.bindingRef && rescueManager ? rescueManager.activeByBinding(before.bindingRef) : null;
+      if (rescue) await rescueManager.assertNoDrift(rescue);
+      const result = await mutationJournal.undo(mutationId);
+      const updatedRescue = rescue
+        ? await rescueManager.refreshExpected(rescueManager.markRollbackPartial(rescue, "edit_undo_redo_used"), { rollbackSafe: false, reason: "edit_undo_redo_used" })
+        : null;
+      return { ...publicMutation(result), ...(updatedRescue ? { rescueSession: rescueManager.publicSession(updatedRescue) } : {}) };
+    }, { operation: "edit_undo" }));
     server.registerTool("codex.edit_redo", {
       title: "Redo Guarded Precise Edit",
       description: "Redo one previously undone precise_edit by mutationId. Rootbound verifies the current file SHA still equals the recorded before-hash before restoring the exact after-content through the authorized sandbox.",
       inputSchema: z.object({ mutationId: mutationIdSchema }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    }, async ({ mutationId }) => typedToolResponse(async () => publicMutation(await mutationJournal.redo(mutationId)), { operation: "edit_redo" }));
+    }, async ({ mutationId }) => typedToolResponse(async () => {
+      const before = mutationJournal.get(mutationId);
+      const rescue = before?.bindingRef && rescueManager ? rescueManager.activeByBinding(before.bindingRef) : null;
+      if (rescue) await rescueManager.assertNoDrift(rescue);
+      const result = await mutationJournal.redo(mutationId);
+      const updatedRescue = rescue
+        ? await rescueManager.refreshExpected(rescueManager.markRollbackPartial(rescue, "edit_undo_redo_used"), { rollbackSafe: false, reason: "edit_undo_redo_used" })
+        : null;
+      return { ...publicMutation(result), ...(updatedRescue ? { rescueSession: rescueManager.publicSession(updatedRescue) } : {}) };
+    }, { operation: "edit_redo" }));
   }
 }
 
@@ -179,7 +229,7 @@ export async function preciseEditAuthorized({ authorityExecutor, path: requested
   return { status: previewOnly ? "preview" : "applied", path: target, cwd: effectiveCwd, trustedAncestor: root, permissionProfile: authority.permissionProfile, occurrenceCount, beforeSha256, afterSha256, beforeBytes: initialBuffer.length, afterBytes: afterBuffer.length, changed: beforeSha256 !== afterSha256, previewOnly, preview, modelTurnStarted: false, ...(snapshotAllowed ? { mutationSnapshot: { beforeText: initial.text, afterText: nextText } } : {}) };
 }
 
-function publicMutation(row) { return { mutationId: row.mutationId, projectRef: row.projectRef, bindingRef: row.bindingRef, path: row.path, cwd: row.cwd, beforeSha256: row.beforeSha256, afterSha256: row.afterSha256, status: row.status, action: row.action, modelTurnStarted: false }; }
+function publicMutation(row) { return { mutationId: row.mutationId, projectRef: row.projectRef, path: row.path, cwd: row.cwd, beforeSha256: row.beforeSha256, afterSha256: row.afterSha256, status: row.status, action: row.action, modelTurnStarted: false }; }
 async function readTextViaSandbox({ authorityExecutor, target, cwd, access }) {
   const result = await authorityExecutor.exec({ command: [process.execPath, "-e", READ_FILE_SCRIPT, target], cwd, access, timeoutMs: 10_000 });
   if (result.exitCode !== 0) throw new Error(`authorized file read failed: ${result.stderr || `exit ${result.exitCode}`}`);

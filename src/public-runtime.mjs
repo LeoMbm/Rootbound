@@ -7,6 +7,7 @@ import { readJsonFile } from "./json-file.mjs";
 import { createPersistentContinuityState } from "./persistent-continuity-state.mjs";
 import { CodexPublicContextExecutor } from "./public-context-executor.mjs";
 import { createPublicServerFactory } from "./public-server-factory.mjs";
+import { createRescueSessionManager } from "./rescue-continuity.mjs";
 import { resolveRootboundPaths } from "./state-paths.mjs";
 import { openStateStore } from "./state-store.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "./surface-contracts.mjs";
@@ -64,9 +65,11 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     stateStore = await openStateStore({ paths: resolveRootboundPaths({ env }) });
 
     const continuityState = createPersistentContinuityState({ store: stateStore });
+    const rescueManager = createRescueSessionManager({ store: stateStore, authorityExecutor, continuityState });
     commandManager = createCommandManager({
       store: stateStore,
       continuityState,
+      rescueManager,
       authorityExecutor,
       codexBin,
       configOverrides,
@@ -80,6 +83,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       publicContext,
       browserReader,
       continuityState,
+      rescueManager,
       commandManager,
       stateStore,
       maxConcurrent: 1,

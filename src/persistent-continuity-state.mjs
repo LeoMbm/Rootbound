@@ -45,6 +45,18 @@ export function createPersistentContinuityState({ store, ttlMs = DEFAULT_TTL_MS,
       const binding = store.upsertBinding({ bindingRef: `binding_${randomUUID()}`, projectRef: project.projectRef, threadId, threadPreview, createdAt: at, touchedAt: at, checkpointCount: 0, lastCheckpointAt: null, lastAckSeq: 0 });
       return publicBinding(binding, store);
     },
+    bindOrReuse({ threadId, cwd, threadPreview = null }) {
+      if (typeof threadId !== "string" || !threadId) throw new Error("continuity bind requires threadId");
+      if (typeof cwd !== "string" || !cwd) throw new Error("continuity bind requires cwd");
+      cleanup();
+      const project = ensureProject(cwd);
+      const existing = store.getBindingByProjectThread(project.projectRef, threadId);
+      if (!existing) return { ...this.bind({ threadId, cwd, threadPreview }), reused: false };
+      existing.touchedAt = now();
+      if (threadPreview !== null && threadPreview !== undefined) existing.threadPreview = threadPreview;
+      store.upsertBinding(existing);
+      return { ...publicBinding(existing, store), reused: true };
+    },
     status(bindingRef) { return publicBinding(getRequired(bindingRef), store); },
     resolve(bindingRef) {
       const binding = getRequired(bindingRef);

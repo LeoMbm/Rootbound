@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { ensureRootboundStateDirs, resolveRootboundPaths } from "./state-paths.mjs";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 export async function openStateStore({ paths = resolveRootboundPaths() } = {}) {
   await ensureRootboundStateDirs(paths);
@@ -51,6 +51,39 @@ function createSchema(db) {
       payload_json TEXT NOT NULL, created_at INTEGER NOT NULL,
       FOREIGN KEY(project_ref) REFERENCES projects(project_ref) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS rescue_sessions (
+      rescue_ref TEXT PRIMARY KEY,
+      session_key TEXT,
+      project_ref TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      binding_ref TEXT NOT NULL,
+      status TEXT NOT NULL,
+      match_json TEXT NOT NULL,
+      baseline_git_json TEXT NOT NULL,
+      baseline_fingerprint_json TEXT NOT NULL,
+      expected_fingerprint_json TEXT NOT NULL,
+      quota_json TEXT,
+      rollback_coverage TEXT NOT NULL DEFAULT 'complete',
+      rollback_reasons_json TEXT NOT NULL DEFAULT '[]',
+      started_at INTEGER NOT NULL,
+      touched_at INTEGER NOT NULL,
+      handed_off_at INTEGER,
+      FOREIGN KEY(project_ref) REFERENCES projects(project_ref) ON DELETE CASCADE,
+      FOREIGN KEY(binding_ref) REFERENCES bindings(binding_ref) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS rescue_mutations (
+      rescue_mutation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rescue_ref TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      path TEXT NOT NULL,
+      before_exists INTEGER NOT NULL,
+      before_sha256 TEXT,
+      before_text BLOB,
+      after_exists INTEGER NOT NULL,
+      after_sha256 TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY(rescue_ref) REFERENCES rescue_sessions(rescue_ref) ON DELETE CASCADE
+    );
   `);
 }
 
@@ -59,6 +92,9 @@ function createIndexes(db) {
     CREATE INDEX IF NOT EXISTS idx_bindings_touched ON bindings(touched_at);
     CREATE INDEX IF NOT EXISTS idx_events_binding_seq ON events(binding_ref, event_id);
     CREATE INDEX IF NOT EXISTS idx_command_output_cursor ON command_output_chunks(command_id, chunk_seq);
+    CREATE INDEX IF NOT EXISTS idx_rescue_sessions_session ON rescue_sessions(session_key, status, touched_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_rescue_sessions_project ON rescue_sessions(project_ref, status, touched_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_rescue_mutations_session ON rescue_mutations(rescue_ref, rescue_mutation_id DESC);
   `);
 }
 
@@ -97,6 +133,45 @@ function migrateSchema(db) {
   if (version < 4) {
     db.prepare("UPDATE meta SET value='4' WHERE key='schema_version'").run();
     version = 4;
+  }
+  if (version < 5) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS rescue_sessions (
+        rescue_ref TEXT PRIMARY KEY,
+        session_key TEXT,
+        project_ref TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        binding_ref TEXT NOT NULL,
+        status TEXT NOT NULL,
+        match_json TEXT NOT NULL,
+        baseline_git_json TEXT NOT NULL,
+        baseline_fingerprint_json TEXT NOT NULL,
+        expected_fingerprint_json TEXT NOT NULL,
+        quota_json TEXT,
+        rollback_coverage TEXT NOT NULL DEFAULT 'complete',
+        rollback_reasons_json TEXT NOT NULL DEFAULT '[]',
+        started_at INTEGER NOT NULL,
+        touched_at INTEGER NOT NULL,
+        handed_off_at INTEGER,
+        FOREIGN KEY(project_ref) REFERENCES projects(project_ref) ON DELETE CASCADE,
+        FOREIGN KEY(binding_ref) REFERENCES bindings(binding_ref) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS rescue_mutations (
+        rescue_mutation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rescue_ref TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        path TEXT NOT NULL,
+        before_exists INTEGER NOT NULL,
+        before_sha256 TEXT,
+        before_text BLOB,
+        after_exists INTEGER NOT NULL,
+        after_sha256 TEXT,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY(rescue_ref) REFERENCES rescue_sessions(rescue_ref) ON DELETE CASCADE
+      );
+    `);
+    db.prepare("UPDATE meta SET value='5' WHERE key='schema_version'").run();
+    version = 5;
   }
   if (version !== SCHEMA_VERSION) throw new Error(`Unsupported Rootbound state schema: ${version}`);
 }
@@ -140,6 +215,55 @@ function createStore(db, paths) {
     },
     deleteBinding(bindingRef) { return db.prepare("DELETE FROM bindings WHERE binding_ref=?").run(bindingRef).changes > 0; },
     deleteBindingsTouchedBefore(cutoff) { return db.prepare("DELETE FROM bindings WHERE touched_at < ?").run(cutoff).changes; },
+    getBindingByProjectThread(projectRef, threadId) {
+      return normalizeBinding(db.prepare("SELECT * FROM bindings WHERE project_ref=? AND thread_id=? ORDER BY touched_at DESC LIMIT 1").get(projectRef, threadId));
+    },
+    getRescueSession(rescueRef) { return normalizeRescueSession(db.prepare("SELECT * FROM rescue_sessions WHERE rescue_ref=?").get(rescueRef)); },
+    listActiveRescueSessionsBySessionKey(sessionKey) {
+      if (typeof sessionKey !== "string" || !sessionKey) return [];
+      return db.prepare("SELECT * FROM rescue_sessions WHERE session_key=? AND status='active' ORDER BY touched_at DESC").all(sessionKey).map(normalizeRescueSession);
+    },
+    getActiveRescueSessionForProject(sessionKey, projectRef) {
+      if (typeof sessionKey !== "string" || !sessionKey) return null;
+      return normalizeRescueSession(db.prepare("SELECT * FROM rescue_sessions WHERE session_key=? AND project_ref=? AND status='active' ORDER BY touched_at DESC LIMIT 1").get(sessionKey, projectRef));
+    },
+    getActiveRescueSessionByBinding(bindingRef) {
+      if (typeof bindingRef !== "string" || !bindingRef) return null;
+      return normalizeRescueSession(db.prepare("SELECT * FROM rescue_sessions WHERE binding_ref=? AND status='active' ORDER BY touched_at DESC LIMIT 1").get(bindingRef));
+    },
+    replaceActiveRescueSessionsByBinding(bindingRef, touchedAt = Date.now()) {
+      if (typeof bindingRef !== "string" || !bindingRef) return 0;
+      return db.prepare("UPDATE rescue_sessions SET status='replaced', touched_at=? WHERE binding_ref=? AND status='active'").run(touchedAt, bindingRef).changes;
+    },
+    upsertRescueSession(session) {
+      db.prepare(`INSERT INTO rescue_sessions(rescue_ref, session_key, project_ref, thread_id, binding_ref, status, match_json, baseline_git_json, baseline_fingerprint_json, expected_fingerprint_json, quota_json, rollback_coverage, rollback_reasons_json, started_at, touched_at, handed_off_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(rescue_ref) DO UPDATE SET session_key=excluded.session_key, project_ref=excluded.project_ref,
+          thread_id=excluded.thread_id, binding_ref=excluded.binding_ref, status=excluded.status, match_json=excluded.match_json,
+          baseline_git_json=excluded.baseline_git_json, baseline_fingerprint_json=excluded.baseline_fingerprint_json,
+          expected_fingerprint_json=excluded.expected_fingerprint_json,
+          quota_json=excluded.quota_json, rollback_coverage=excluded.rollback_coverage,
+          rollback_reasons_json=excluded.rollback_reasons_json, touched_at=excluded.touched_at, handed_off_at=excluded.handed_off_at`).run(
+        session.rescueRef, session.sessionKey ?? null, session.projectRef, session.threadId, session.bindingRef, session.status,
+        JSON.stringify(session.match ?? {}), JSON.stringify(session.baselineGit ?? {}), JSON.stringify(session.baselineFingerprint ?? {}), JSON.stringify(session.expectedFingerprint ?? {}),
+        session.quota === null || session.quota === undefined ? null : JSON.stringify(session.quota), session.rollbackCoverage ?? "complete",
+        JSON.stringify(session.rollbackReasons ?? []), session.startedAt, session.touchedAt, session.handedOffAt ?? null
+      );
+      return this.getRescueSession(session.rescueRef);
+    },
+    addRescueMutation({ rescueRef, operation, path, beforeExists, beforeSha256 = null, beforeText = null, afterExists, afterSha256 = null, createdAt = Date.now() }) {
+      const result = db.prepare(`INSERT INTO rescue_mutations(rescue_ref, operation, path, before_exists, before_sha256, before_text, after_exists, after_sha256, created_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        rescueRef, operation, path, beforeExists ? 1 : 0, beforeSha256,
+        beforeText === null || beforeText === undefined ? null : Buffer.from(beforeText, "utf8"),
+        afterExists ? 1 : 0, afterSha256, createdAt
+      );
+      return Number(result.lastInsertRowid);
+    },
+    listRescueMutations(rescueRef, { reverse = false } = {}) {
+      return db.prepare(`SELECT * FROM rescue_mutations WHERE rescue_ref=? ORDER BY rescue_mutation_id ${reverse ? "DESC" : "ASC"}`).all(rescueRef).map(normalizeRescueMutation);
+    },
+    deleteRescueMutations(rescueRef) { return db.prepare("DELETE FROM rescue_mutations WHERE rescue_ref=?").run(rescueRef).changes; },
     recordEvent({ projectRef = null, bindingRef = null, kind, payload = {}, createdAt = Date.now() }) {
       const result = db.prepare("INSERT INTO events(project_ref, binding_ref, kind, payload_json, created_at) VALUES(?, ?, ?, ?, ?)").run(projectRef, bindingRef, kind, JSON.stringify(payload), createdAt);
       return Number(result.lastInsertRowid);
@@ -209,3 +333,40 @@ function normalizeCommand(row) {
     updatedAt: row.updated_at === null ? Number(row.started_at) : Number(row.updated_at), stdout: row.stdout, stderr: row.stderr,
     stdoutTruncated: row.stdout_truncated === 1, stderrTruncated: row.stderr_truncated === 1, error: row.error };
 }
+function normalizeRescueSession(row) {
+  if (!row) return null;
+  return {
+    rescueRef: row.rescue_ref,
+    sessionKey: row.session_key ?? null,
+    projectRef: row.project_ref,
+    threadId: row.thread_id,
+    bindingRef: row.binding_ref,
+    status: row.status,
+    match: parseJson(row.match_json, {}),
+    baselineGit: parseJson(row.baseline_git_json, {}),
+    baselineFingerprint: parseJson(row.baseline_fingerprint_json, {}),
+    expectedFingerprint: parseJson(row.expected_fingerprint_json, {}),
+    quota: row.quota_json ? parseJson(row.quota_json, null) : null,
+    rollbackCoverage: row.rollback_coverage ?? "complete",
+    rollbackReasons: parseJson(row.rollback_reasons_json, []),
+    startedAt: Number(row.started_at),
+    touchedAt: Number(row.touched_at),
+    handedOffAt: row.handed_off_at === null ? null : Number(row.handed_off_at),
+  };
+}
+function normalizeRescueMutation(row) {
+  if (!row) return null;
+  return {
+    rescueMutationId: Number(row.rescue_mutation_id),
+    rescueRef: row.rescue_ref,
+    operation: row.operation,
+    path: row.path,
+    beforeExists: row.before_exists === 1,
+    beforeSha256: row.before_sha256 ?? null,
+    beforeText: row.before_text === null ? null : Buffer.from(row.before_text).toString("utf8"),
+    afterExists: row.after_exists === 1,
+    afterSha256: row.after_sha256 ?? null,
+    createdAt: Number(row.created_at),
+  };
+}
+function parseJson(value, fallback) { try { return JSON.parse(value); } catch { return fallback; } }

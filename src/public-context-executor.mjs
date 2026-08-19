@@ -1,5 +1,6 @@
 import path from "node:path";
 import { CodexAppServerClient } from "./codex-app-server-client.mjs";
+import { readCodexQuotaSnapshot } from "./codex-quota-snapshot.mjs";
 
 const CHROME_SKILL_NAME = "chrome:control-chrome";
 const NODE_REPL_SERVER = "node_repl";
@@ -17,6 +18,7 @@ export class CodexPublicContextExecutor {
   #generation = 0;
   #startPromise = null;
   #threadsByCwd = new Map();
+  #lastRateLimitUpdateAt = null;
 
   constructor({ codexBin, defaultCwd, configOverrides = [], clientFactory = null }) {
     if (!codexBin) throw new Error("CodexPublicContextExecutor requires codexBin");
@@ -48,6 +50,11 @@ export class CodexPublicContextExecutor {
       },
     };
     this.#client = clientFactory ? clientFactory(options) : new CodexAppServerClient(options);
+    this.#client.onNotification?.((message) => {
+      if (message?.method === "account/rateLimits/updated" && message.params && typeof message.params === "object") {
+        this.#lastRateLimitUpdateAt = new Date().toISOString();
+      }
+    });
   }
 
   get generation() { return this.#generation; }
@@ -111,8 +118,9 @@ export class CodexPublicContextExecutor {
     };
   }
 
-  async threadList({ cwd = this.#defaultCwd, cursor, limit = 20, sortKey = "updated_at", sortDirection = "desc", archived = false, searchTerm } = {}) {
-    const params = { cwd: path.resolve(cwd), limit, sortKey, sortDirection, archived };
+  async threadList({ cwd = this.#defaultCwd, omitCwd = false, cursor, limit = 20, sortKey = "updated_at", sortDirection = "desc", archived = false, searchTerm } = {}) {
+    const params = { limit, sortKey, sortDirection, archived };
+    if (!omitCwd) params.cwd = path.resolve(cwd);
     if (cursor) params.cursor = cursor;
     if (searchTerm) params.searchTerm = searchTerm;
     return sanitizeHistoryPayload(await this.#request("thread/list", params));
@@ -139,6 +147,18 @@ export class CodexPublicContextExecutor {
     if (turnId) params.turnId = turnId;
     if (cursor) params.cursor = cursor;
     return { thread: threadMetadata.thread, items: sanitizeHistoryPayload(await this.#request("thread/items/list", params)) };
+  }
+
+  async threadSearchOccurrences({ threadId, query, cursor, limit = 20 }) {
+    const params = { threadId, searchTerm: query, pageSize: limit };
+    if (cursor) params.cursor = cursor;
+    return sanitizeHistoryPayload(await this.#request("thread/searchOccurrences", params));
+  }
+
+  async quotaSnapshot() {
+    await this.#ensureStarted();
+    const snapshot = await readCodexQuotaSnapshot({ client: this.#client });
+    return projectQuotaSnapshot(snapshot, this.#lastRateLimitUpdateAt);
   }
 
   async injectContinuity({ threadId, text }) {
@@ -243,4 +263,48 @@ export function sanitizeHistoryPayload(value) {
     output[key] = sanitizeHistoryPayload(child);
   }
   return output;
+}
+
+export function projectQuotaSnapshot(snapshot, latestUpdateObservedAt = null) {
+  const projectedRateLimits = snapshot?.rateLimits?.status === "ok"
+    ? {
+        status: "ok",
+        method: snapshot.rateLimits.method,
+        limits: Array.isArray(snapshot.rateLimits.value?.limits)
+          ? snapshot.rateLimits.value.limits.map((limit) => ({
+              key: limit.key ?? null,
+              limitId: limit.limitId ?? null,
+              limitName: limit.limitName ?? null,
+              planType: limit.planType ?? null,
+              rateLimitReachedType: limit.rateLimitReachedType ?? null,
+              spendControlReached: limit.spendControlReached ?? null,
+              windows: Array.isArray(limit.windows) ? limit.windows.map((window) => ({
+                kind: window.kind,
+                usedPercent: window.usedPercent,
+                resetsAt: window.resetsAt,
+                windowDurationMins: window.windowDurationMins,
+              })) : [],
+            }))
+          : [],
+      }
+    : { status: snapshot?.rateLimits?.status ?? "unavailable", method: snapshot?.rateLimits?.method ?? "account/rateLimits/read", error: snapshot?.rateLimits?.error ?? null };
+  const limits = projectedRateLimits.status === "ok" ? projectedRateLimits.limits : [];
+  const exactCodex = limits.filter((limit) => [limit.key, limit.limitId].some((value) => typeof value === "string" && value.toLowerCase() === "codex"));
+  const relevant = exactCodex.length ? exactCodex : limits.filter((limit) => /codex/i.test(`${limit.key ?? ""} ${limit.limitId ?? ""} ${limit.limitName ?? ""}`));
+  const considered = relevant.length ? relevant : limits;
+  const exhausted = considered.some((limit) => limit.spendControlReached === true || Boolean(limit.rateLimitReachedType) || limit.windows.some((window) => Number(window.usedPercent) >= 100));
+  const resetCandidates = considered.flatMap((limit) => limit.windows.map((window) => window.resetsAt)).filter(Number.isInteger);
+  return {
+    status: snapshot?.status ?? "unavailable",
+    observedAt: snapshot?.observedAt ?? null,
+    codex: {
+      availability: !considered.length ? "unknown" : exhausted ? "exhausted" : "available",
+      exhausted,
+      resetsAt: resetCandidates.length ? Math.min(...resetCandidates) : null,
+      limits: considered,
+    },
+    rateLimits: projectedRateLimits,
+    latestUpdateObserved: latestUpdateObservedAt !== null,
+    latestUpdateObservedAt,
+  };
 }

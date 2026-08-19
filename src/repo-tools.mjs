@@ -1,10 +1,12 @@
 import { createRequire } from "node:module";
+import path from "node:path";
 import { decodeCursor, encodeCursor } from "./pagination.mjs";
 import { typedToolResponse } from "./tool-errors.mjs";
 
 const require = createRequire(import.meta.url);
 const z = require("zod/v4");
 const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
+const rescueRefSchema = z.string().regex(/^rescue_[0-9a-f-]{36}$/i).optional();
 const cwdSchema = z.string().min(1).max(32_768).optional();
 const SEARCH_PAGE_SCRIPT = String.raw`
 const fs=require('node:fs');
@@ -137,7 +139,7 @@ function formatResult(rel,lineNumber,column,line){
 })().catch((error)=>finish({ok:false,error:error&&error.message?error.message:String(error)}));
 `;
 
-export function registerRepoTools(server, { authorityExecutor, continuityState = null }) {
+export function registerRepoTools(server, { authorityExecutor, continuityState = null, rescueManager = null, getSessionKey = null }) {
   if (!authorityExecutor) return;
 
   server.registerTool(
@@ -152,12 +154,14 @@ export function registerRepoTools(server, { authorityExecutor, continuityState =
         maxResults: z.number().int().min(1).max(200).default(100),
         cursor: z.string().max(2_048).optional(),
         includeSensitive: z.boolean().default(false),
+        rescueRef: rescueRefSchema,
         bindingRef: bindingRefSchema,
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ query, cwd, glob, maxResults, cursor, includeSensitive, bindingRef }) => typedToolResponse(async () => {
-      const scoped = bindingRef && continuityState ? continuityState.assertCwd(bindingRef, cwd) : null;
+    async ({ query, cwd, glob, maxResults, cursor, includeSensitive, rescueRef, bindingRef }, ctx) => typedToolResponse(async () => {
+      const resolved = rescueManager && getSessionKey ? rescueManager.resolveBinding({ sessionKey: getSessionKey(ctx), cwd, explicitBindingRef: bindingRef, rescueRef }) : { bindingRef: bindingRef ?? null };
+      const scoped = resolved.bindingRef && continuityState ? continuityState.assertCwd(resolved.bindingRef, cwd) : null;
       return searchPageAuthorized({ authorityExecutor, query, cwd: scoped?.targetCwd ?? cwd, glob, maxResults, cursor, includeSensitive });
     }, { operation: "repo_search" })
   );
@@ -165,10 +169,11 @@ export function registerRepoTools(server, { authorityExecutor, continuityState =
   server.registerTool("codex.git_status", {
     title: "Read Git Status",
     description: "Read git status for an authorized project via official Codex command/exec with read-only authority. Does not start a Codex model turn.",
-    inputSchema: z.object({ cwd: cwdSchema, bindingRef: bindingRefSchema }).strict(),
+    inputSchema: z.object({ cwd: cwdSchema, rescueRef: rescueRefSchema, bindingRef: bindingRefSchema }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async ({ cwd, bindingRef }) => typedToolResponse(async () => {
-    const scoped = bindingRef && continuityState ? continuityState.assertCwd(bindingRef, cwd) : null;
+  }, async ({ cwd, rescueRef, bindingRef }, ctx) => typedToolResponse(async () => {
+    const resolved = rescueManager && getSessionKey ? rescueManager.resolveBinding({ sessionKey: getSessionKey(ctx), cwd, explicitBindingRef: bindingRef, rescueRef }) : { bindingRef: bindingRef ?? null };
+    const scoped = resolved.bindingRef && continuityState ? continuityState.assertCwd(resolved.bindingRef, cwd) : null;
     const result = await authorityExecutor.exec({ command: ["git", "status", "--short", "--branch"], cwd: scoped?.targetCwd ?? cwd, access: "readOnly", timeoutMs: 10_000 });
     return projectCommandResult(result);
   }, { operation: "git_status", isError: (payload) => payload?.status === "failed" }));
@@ -176,10 +181,11 @@ export function registerRepoTools(server, { authorityExecutor, continuityState =
   server.registerTool("codex.git_diff", {
     title: "Read Git Diff",
     description: "Read the current git diff for an authorized project via official Codex command/exec with read-only authority. Can read staged or unstaged changes without starting a Codex model turn.",
-    inputSchema: z.object({ cwd: cwdSchema, staged: z.boolean().default(false), pathspec: z.array(z.string().min(1).max(4_096)).max(50).default([]), bindingRef: bindingRefSchema }).strict(),
+    inputSchema: z.object({ cwd: cwdSchema, staged: z.boolean().default(false), pathspec: z.array(z.string().min(1).max(4_096)).max(50).default([]), rescueRef: rescueRefSchema, bindingRef: bindingRefSchema }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async ({ cwd, staged, pathspec, bindingRef }) => typedToolResponse(async () => {
-    const scoped = bindingRef && continuityState ? continuityState.assertCwd(bindingRef, cwd) : null;
+  }, async ({ cwd, staged, pathspec, rescueRef, bindingRef }, ctx) => typedToolResponse(async () => {
+    const resolved = rescueManager && getSessionKey ? rescueManager.resolveBinding({ sessionKey: getSessionKey(ctx), cwd, explicitBindingRef: bindingRef, rescueRef }) : { bindingRef: bindingRef ?? null };
+    const scoped = resolved.bindingRef && continuityState ? continuityState.assertCwd(resolved.bindingRef, cwd) : null;
     const command = ["git", "diff"];
     if (staged) command.push("--cached");
     if (pathspec.length) command.push("--", ...pathspec);
@@ -190,15 +196,33 @@ export function registerRepoTools(server, { authorityExecutor, continuityState =
   server.registerTool("codex.apply_patch", {
     title: "Apply Authorized Project Patch",
     description: "Apply an OpenAI apply_patch patch generated by ChatGPT through official Codex command/exec. The patch is executed under the locally resolved Codex permission profile and does not start a Codex model turn. Use this for coherent multi-file edits; use precise_edit for guarded exact-text replacements.",
-    inputSchema: z.object({ patch: z.string().min(1).max(500_000), cwd: cwdSchema, bindingRef: bindingRefSchema }).strict(),
+    inputSchema: z.object({ patch: z.string().min(1).max(500_000), cwd: cwdSchema, rescueRef: rescueRefSchema, bindingRef: bindingRefSchema }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-  }, async ({ patch, cwd, bindingRef }) => typedToolResponse(async () => {
+  }, async ({ patch, cwd, rescueRef, bindingRef }, ctx) => typedToolResponse(async () => {
     if (!patch.startsWith("*** Begin Patch") || !patch.includes("*** End Patch")) throw inputError("apply_patch payload must use the *** Begin Patch / *** End Patch format");
-    const scoped = bindingRef && continuityState ? continuityState.assertCwd(bindingRef, cwd) : null;
+    const resolved = rescueManager && getSessionKey ? rescueManager.resolveBinding({ sessionKey: getSessionKey(ctx), cwd, explicitBindingRef: bindingRef, rescueRef }) : { bindingRef: bindingRef ?? null, rescue: null, implicit: false };
+    const effectiveBindingRef = resolved.bindingRef;
+    if (resolved.rescue) await rescueManager.assertNoDrift(resolved.rescue);
+    const scoped = effectiveBindingRef && continuityState ? continuityState.assertCwd(effectiveBindingRef, cwd) : null;
+    const effectiveCwd = scoped?.targetCwd ?? cwd ?? resolved.rescue?.projectRoot;
+    const patchPaths = resolved.rescue ? pathsFromApplyPatch(patch).map((value) => path.resolve(effectiveCwd ?? resolved.rescue.projectRoot, value)) : [];
+    const rescueBefore = resolved.rescue ? await rescueManager.captureSnapshots(resolved.rescue, patchPaths) : null;
     const result = await authorityExecutor.exec({ command: ["apply_patch", patch], cwd: scoped?.targetCwd ?? cwd, access: "inherit", timeoutMs: 30_000 });
-    if (bindingRef && continuityState) continuityState.record(bindingRef, { kind: "patch", cwd: result.effectiveCwd, status: result.exitCode === 0 ? "applied" : "failed", exitCode: result.exitCode });
-    return projectCommandResult(result, { continuityJournaled: Boolean(bindingRef) });
+    if (effectiveBindingRef && continuityState) continuityState.record(effectiveBindingRef, { kind: "patch", cwd: result.effectiveCwd, status: result.exitCode === 0 ? "applied" : "failed", exitCode: result.exitCode });
+    const updatedRescue = resolved.rescue
+      ? await rescueManager.recordSnapshotsAfter(resolved.rescue, { operation: "apply_patch", before: rescueBefore })
+      : resolved.rescue;
+    return projectCommandResult(result, { continuityJournaled: Boolean(effectiveBindingRef), ...(resolved.implicit && updatedRescue ? { rescueSession: rescueManager.publicSession(updatedRescue) } : {}) });
   }, { operation: "apply_patch", isError: (payload) => payload?.status === "failed" }));
+}
+
+export function pathsFromApplyPatch(patch) {
+  const paths = [];
+  for (const line of String(patch).split(/\r?\n/)) {
+    const match = line.match(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/) ?? line.match(/^\*\*\* Move to: (.+)$/);
+    if (match?.[1]) paths.push(match[1].trim());
+  }
+  return [...new Set(paths)];
 }
 
 export async function searchPageAuthorized({ authorityExecutor, query, cwd, glob = null, maxResults = 100, cursor = null, includeSensitive = false }) {

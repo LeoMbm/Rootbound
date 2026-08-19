@@ -56,6 +56,7 @@ assert.equal(packageJson.scripts?.["check:syntax"], "node scripts/validate-v5-sy
 assert.equal(packageJson.scripts?.["validate:v5"], "node scripts/validate-v5.mjs");
 assert.match(packageJson.scripts?.["validate:release"] ?? "", /check:lock:strict/);
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /tunnel-bootstrap-v5\.mjs/, "test:v5 must cover guided tunnel bootstrap");
+assert.match(packageJson.scripts?.["test:v5"] ?? "", /rescue-continuity-v5\.mjs/, "test:v5 must cover quota-rescue continuity");
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /release-contract-v5\.mjs/, "test:v5 must include the release contract guard");
 assert.ok(packageJson.files?.includes("docs/plans/rootbound-v5.md"), "V5 plan must be packaged because README links to it");
 
@@ -85,7 +86,10 @@ assert.equal(selfUpgradeResult.ok, false);
 assert.match(selfUpgradeResult.error, /Refusing in-place self-upgrade/);
 
 assert.match(readme, /rootbound-public-preview-v5/);
-assert.match(readme, /27 public tools/);
+assert.match(readme, /32 public tools/);
+assert.match(readme, /codex\.continuity_resume/);
+assert.match(readme, /codex\.continuity_handoff/);
+assert.match(readme, /codex\.continuity_rollback/);
 assert.match(readme, /guided one-command/i);
 assert.match(readme, /Normal setup: one command/i);
 assert.match(readme, /rootbound connect \./);
@@ -101,7 +105,9 @@ assert.match(tunnelCli, /Normal users should run:/);
 assert.match(tunnelCli, /rootbound connect \./);
 
 assert.match(security, /Rootbound V5 public surface/);
-assert.match(security, /27 public tools/);
+assert.match(security, /32 public tools/);
+assert.match(security, /Rescue rollback/);
+assert.match(security, /remote HTTP does not assume/i);
 assert.doesNotMatch(security, /codex\.agent_(?:start|send|commit)/);
 assert.doesNotMatch(security, /exactly 21 tools/);
 
