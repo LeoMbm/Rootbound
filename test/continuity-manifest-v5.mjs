@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildContinuityManifest, canonicalJson, manifestInjectionFooter, persistContinuityManifest } from "../src/continuity-manifest.mjs";
+import { buildContinuityManifest, canonicalJson, manifestInjectionFooter, persistContinuityManifest, verifyContinuityManifest } from "../src/continuity-manifest.mjs";
 
 const rescue = {
   rescueRef: "rescue_11111111-1111-4111-8111-111111111111",
@@ -58,6 +58,7 @@ const common = {
 const first = buildContinuityManifest(common);
 const second = buildContinuityManifest(common);
 assert.equal(first.integrity.hash, second.integrity.hash, "fixed inputs must produce deterministic integrity hash");
+assert.equal(verifyContinuityManifest(first).ok, true);
 assert.equal(first.schema, "rootbound.continuity.v1");
 assert.equal(first.reported.verified, false);
 assert.equal(first.reported.source, "chatgpt_handoff_input");
@@ -79,7 +80,15 @@ assert.equal(persisted.payload.kind, "continuity_manifest");
 assert.equal(persisted.payload.manifest.integrity.hash, first.integrity.hash);
 assert.equal(persisted.throughSeq, 7);
 
-const tampered = buildContinuityManifest({ ...common, summary: "different" });
-assert.notEqual(tampered.integrity.hash, first.integrity.hash, "reported fields are explicitly labelled but still covered by integrity hash");
+const tamperedCopy = structuredClone(first);
+tamperedCopy.reported.summary = "tampered after signing";
+const verification = verifyContinuityManifest(tamperedCopy);
+assert.equal(verification.ok, false);
+assert.equal(verification.reason, "hash_mismatch");
+assert.throws(() => manifestInjectionFooter(tamperedCopy), /valid manifest/);
+assert.throws(() => persistContinuityManifest({ store: fakeStore, manifest: tamperedCopy, projectRef: project.projectRef, bindingRef: rescue.bindingRef }), /invalid continuity manifest/);
+
+const different = buildContinuityManifest({ ...common, summary: "different" });
+assert.notEqual(different.integrity.hash, first.integrity.hash, "reported fields are explicitly labelled but still covered by integrity hash");
 
 console.log("continuity-manifest-v5: ok");
