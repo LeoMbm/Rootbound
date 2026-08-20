@@ -1,26 +1,34 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { open } from "node:fs/promises";
+import { open, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { getActiveConnection, getConnection, loadConnectionRegistry } from "../src/connection-registry.mjs";
+import { resolveConnectionPaths } from "../src/connection-paths.mjs";
 import { ensureRootboundStateDirs, resolveRootboundPaths } from "../src/state-paths.mjs";
 import { clearRuntimeState, writeRuntimeState } from "../src/runtime-state.mjs";
 import { resolveTunnelLaunch } from "../src/tunnel-config.mjs";
+import { managedTunnelEnvironment } from "../src/tunnel-bootstrap.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const paths = await ensureRootboundStateDirs(resolveRootboundPaths());
 const projectRoot = process.env.ROOTBOUND_PROJECT_ROOT || null;
 const projectRef = process.env.ROOTBOUND_PROJECT_REF || null;
+const registry = await loadConnectionRegistry({ paths });
+const requestedConnection = process.env.ROOTBOUND_CONNECTION_ID ? getConnection(registry, process.env.ROOTBOUND_CONNECTION_ID) : null;
+const connection = requestedConnection ?? getActiveConnection(registry);
+if (!connection) throw new Error("No active Rootbound connection; run `rootbound connect .` first.");
+const connectionPaths = resolveConnectionPaths({ paths, connection });
 const runtimeId = `runtime_${randomUUID()}`;
 const restartLimit = parseBoundedInt(process.env.ROOTBOUND_TUNNEL_RESTART_LIMIT ?? "3", 0, 20, "ROOTBOUND_TUNNEL_RESTART_LIMIT");
-const launch = resolveTunnelLaunch({ packageRoot, projectRoot });
+const launch = resolveTunnelLaunch({ packageRoot, projectRoot, paths: connectionPaths });
 const logHandle = await open(paths.logPath, "a", 0o600);
 let child = null;
 let stopping = false;
 let restarts = 0;
 
-log(`supervisor start pid=${process.pid} project=${projectRef ?? "none"} tunnelSource=${launch.source ?? "unknown"}`);
+log(`supervisor start pid=${process.pid} project=${projectRef ?? "none"} connection=${connection.id} tunnel=${connection.tunnelId ?? "unknown"} tunnelSource=${launch.source ?? "unknown"}`);
 await startChild();
 
 process.on("SIGINT", () => void shutdown("SIGINT"));
@@ -28,9 +36,15 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
 async function startChild() {
   const startedAt = Date.now();
+  if (connectionPaths.tunnelHealthUrlPath) await unlink(connectionPaths.tunnelHealthUrlPath).catch((error) => { if (error?.code !== "ENOENT") throw error; });
   child = spawn(launch.command, launch.args, {
     cwd: projectRoot ?? packageRoot,
-    env: { ...process.env, ROOTBOUND_STDIO_NODE: process.execPath, ROOTBOUND_STDIO_SCRIPT: path.join(packageRoot, "scripts", "launch.mjs") },
+    env: {
+      ...managedTunnelEnvironment(process.env),
+      ROOTBOUND_STDIO_NODE: process.execPath,
+      ROOTBOUND_STDIO_SCRIPT: path.join(packageRoot, "scripts", "launch.mjs"),
+      ROOTBOUND_CONNECTION_ID: connection.id,
+    },
     stdio: ["ignore", logHandle.fd, logHandle.fd],
     windowsHide: true,
     shell: false,
@@ -41,27 +55,67 @@ async function startChild() {
     child.once("error", (error) => { clearTimeout(timer); reject(error); });
     child.once("exit", (code, signal) => { clearTimeout(timer); reject(new Error(`tunnel exited during startup: code=${code} signal=${signal}`)); });
   });
-  await writeRuntimeState(paths, {
-    schemaVersion: 1,
-    status: "running",
+
+  await writeRuntimeState(paths, runtimeValue({ status: "starting", ready: false, startedAt }));
+  const readiness = await waitForTunnelReadiness({ healthUrlPath: connectionPaths.tunnelHealthUrlPath, timeoutMs: 10_000 });
+  if (!readiness.ok && connection.storageKind !== "legacy-global") {
+    try { child.kill("SIGTERM"); } catch {}
+    throw new Error(`Tunnel did not become ready: ${readiness.error}`);
+  }
+  const readyAt = readiness.ok ? Date.now() : null;
+  await writeRuntimeState(paths, runtimeValue({ status: readiness.ok ? "ready" : "running", ready: readiness.ok, startedAt, readyAt, legacyReadinessFallback: !readiness.ok }));
+  log(`tunnel ${readiness.ok ? "ready" : "running (legacy readiness fallback)"} pid=${child.pid}`);
+  child.once("exit", (code, signal) => void onChildExit(code, signal));
+}
+
+function runtimeValue({ status, ready, startedAt, readyAt = null, legacyReadinessFallback = false }) {
+  return {
+    schemaVersion: 2,
+    status,
+    ready,
     runtimeId,
     supervisorPid: process.pid,
     pid: process.pid,
-    tunnelPid: child.pid,
+    tunnelPid: child?.pid ?? null,
     startedAt,
+    readyAt,
     projectRef,
     projectRoot,
+    connectionId: connection.id,
+    connectionName: connection.name,
+    tunnelId: connection.tunnelId ?? null,
     transport: "secure-mcp-tunnel",
     tunnelSource: launch.source ?? null,
-  });
-  log(`tunnel running pid=${child.pid}`);
-  child.once("exit", (code, signal) => void onChildExit(code, signal));
+    legacyReadinessFallback,
+  };
+}
+
+async function waitForTunnelReadiness({ healthUrlPath, timeoutMs }) {
+  if (!healthUrlPath) return { ok: false, error: "health URL path unavailable" };
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "health URL not published";
+  while (Date.now() < deadline) {
+    if (!child || child.exitCode !== null || child.signalCode !== null) return { ok: false, error: "tunnel exited before readiness" };
+    try {
+      const base = (await readFile(healthUrlPath, "utf8")).trim().replace(/\/$/, "");
+      if (base) {
+        const response = await fetch(`${base}/readyz`, { signal: AbortSignal.timeout(1500) });
+        if (response.ok) return { ok: true, url: base };
+        lastError = `/readyz returned HTTP ${response.status}`;
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") lastError = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return { ok: false, error: lastError };
 }
 
 async function onChildExit(code, signal) {
   log(`tunnel exit code=${code} signal=${signal}`);
   child = null;
   if (stopping) return;
+  await writeRuntimeState(paths, runtimeValue({ status: "recovering", ready: false, startedAt: Date.now() })).catch(() => {});
   if (restarts >= restartLimit) {
     log(`restart limit reached (${restartLimit}); supervisor stopping`);
     await clearRuntimeState(paths).catch(() => {});
@@ -90,6 +144,7 @@ async function shutdown(signal) {
     await Promise.race([new Promise((resolve) => current.once("exit", resolve)), new Promise((resolve) => setTimeout(resolve, 2000))]);
     if (current.exitCode === null && current.signalCode === null) { try { current.kill("SIGKILL"); } catch {} }
   }
+  if (connectionPaths.tunnelHealthUrlPath) await unlink(connectionPaths.tunnelHealthUrlPath).catch(() => {});
   await clearRuntimeState(paths).catch(() => {});
   await logHandle.close().catch(() => {});
   process.exit(0);
