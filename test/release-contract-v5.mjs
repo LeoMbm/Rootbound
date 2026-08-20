@@ -47,6 +47,7 @@ await access(path.join(root, "scripts", "check-lock-root.mjs"));
 await access(path.join(root, "src", "tunnel-bootstrap.mjs"));
 await access(path.join(root, "src", "connection-registry.mjs"));
 await access(path.join(root, "src", "connection-paths.mjs"));
+await access(path.join(root, "src", "runtime-mutation-lock.mjs"));
 await access(path.join(root, "scripts", "connection-cli.mjs"));
 
 assert.equal(packageJson.engines?.node, ">=22.13.0");
@@ -60,8 +61,11 @@ assert.equal(packageJson.scripts?.["check:syntax"], "node scripts/validate-v5-sy
 assert.equal(packageJson.scripts?.["validate:v5"], "node scripts/validate-v5.mjs");
 assert.match(packageJson.scripts?.["validate:release"] ?? "", /check:lock:strict/);
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /tunnel-bootstrap-v5\.mjs/, "test:v5 must cover guided tunnel bootstrap");
+assert.match(packageJson.scripts?.["test:v5"] ?? "", /runtime-mutation-lock-v5\.mjs/, "test:v5 must serialize runtime mutations");
+assert.match(packageJson.scripts?.["test:v5"] ?? "", /runtime-readiness-v5\.mjs/, "test:v5 must require scoped tunnel readiness");
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /connection-registry-v5\.mjs/, "test:v5 must cover connection registry durability");
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /connection-tunnel-isolation-v5\.mjs/, "test:v5 must cover connection tunnel isolation");
+assert.match(packageJson.scripts?.["test:v5"] ?? "", /connection-switch-v5\.mjs/, "test:v5 must cover connection switch rollback");
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /rescue-continuity-v5\.mjs/, "test:v5 must cover quota-rescue continuity");
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /release-contract-v5\.mjs/, "test:v5 must include the release contract guard");
 assert.ok(packageJson.files?.includes("docs/plans/rootbound-v5.md"), "V5 plan must be packaged because README links to it");
@@ -83,6 +87,7 @@ assert.match(rootboundEntry, /rootbound project remove/);
 assert.match(rootboundEntry, /rootbound trust remove/);
 assert.match(rootboundEntry, /rootbound connection list/);
 assert.match(rootboundEntry, /connection-cli\.mjs/);
+assert.match(rootboundEntry, /withRuntimeMutationLock/);
 assert.match(connectionCli, /CONNECTION_SWITCH_FAILED_RESTORED/);
 assert.match(connectionCli, /validateManagedTunnel/);
 
