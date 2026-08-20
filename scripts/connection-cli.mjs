@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
+import { readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { addConnection, createConnectionId, getActiveConnection, getConnection, loadConnectionRegistry, setActiveConnection, validateConnectionName } from "../src/connection-registry.mjs";
+import { addConnection, createConnectionId, getActiveConnection, getConnection, loadConnectionRegistry, removeConnection, setActiveConnection, validateConnectionName } from "../src/connection-registry.mjs";
 import { resolveConnectionPaths } from "../src/connection-paths.mjs";
 import { runtimeStatus, stopRuntime, tailLog } from "../src/runtime-state.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
@@ -21,6 +22,8 @@ try {
   else if (command === "current") await current();
   else if (command === "add") await add();
   else if (command === "switch") await switchConnection();
+  else if (command === "repair") await repairConnection();
+  else if (command === "remove") await removeConnectionCommand();
   else if (command === "help" || command === "-h" || command === "--help") help();
   else throw usage(`Unknown connection command: ${command}`);
 } catch (error) {
@@ -145,6 +148,63 @@ async function switchConnection() {
   }
 }
 
+async function repairConnection() {
+  const selector = argv.shift();
+  if (!selector || argv.length) throw usage("Usage: rootbound connection repair <name-or-id>");
+  const registry = await loadConnectionRegistry({ paths });
+  const target = getConnection(registry, selector);
+  if (!target) throw errorCode("CONNECTION_NOT_FOUND", `No connection matches: ${selector}`);
+  const runtime = await runtimeStatus(paths);
+  if (runtime.running && runtime.state?.connectionId === target.id) throw errorCode("CONNECTION_IN_USE", `Connection "${target.name}" is used by the running runtime. Switch connections or stop Rootbound before repairing it.`);
+  const connectionPaths = resolveConnectionPaths({ paths, connection: target });
+  const tunnel = tunnelConfigStatus({ paths: connectionPaths, env: {} });
+  const tunnelId = tunnel.tunnelId ?? target.tunnelId;
+  if (!tunnelId) throw errorCode("CONNECTION_REPAIR_UNSUPPORTED", `Connection "${target.name}" is not a Rootbound-managed tunnel profile and cannot be repaired automatically.`);
+  let previousKey;
+  try { previousKey = await readFile(connectionPaths.tunnelSecretPath, "utf8"); }
+  catch (error) { throw errorCode("CONNECTION_SECRET_MISSING", `Connection "${target.name}" has no managed runtime key to rotate.`); }
+  const apiKey = await resolveRuntimeKey();
+  try {
+    const managed = await writeManagedTunnelSetup({ tunnelId, apiKey, packageRoot, paths: connectionPaths });
+    await validateManagedTunnel({ profilePath: managed.profilePath, cwd: packageRoot });
+  } catch (error) {
+    try { await writeManagedTunnelSetup({ tunnelId, apiKey: previousKey, packageRoot, paths: connectionPaths }); }
+    catch (restoreError) {
+      const wrapped = new Error(`Repair failed and the previous connection configuration could not be restored: ${message(error)}; restore error: ${message(restoreError)}`);
+      wrapped.code = "CONNECTION_REPAIR_RESTORE_FAILED";
+      throw wrapped;
+    }
+    const wrapped = new Error(`Repair failed for "${target.name}"; the previous runtime key was restored: ${message(error)}`);
+    wrapped.code = "CONNECTION_REPAIR_FAILED_RESTORED";
+    throw wrapped;
+  }
+  const value = { ok: true, action: "connection-repaired", connection: target, tunnelId };
+  if (json) return emit(value);
+  process.stdout.write(`Connection repaired: ${target.name}\nTunnel: ${tunnelId}\n`);
+  if (target.id === registry.activeConnectionId) process.stdout.write("Run `rootbound connect .` to start the active connection with the repaired credential.\n");
+}
+
+async function removeConnectionCommand() {
+  const selector = argv.shift();
+  if (!selector || argv.length) throw usage("Usage: rootbound connection remove <name-or-id> [--json]");
+  const registry = await loadConnectionRegistry({ paths });
+  const target = getConnection(registry, selector);
+  if (!target) throw errorCode("CONNECTION_NOT_FOUND", `No connection matches: ${selector}`);
+  const runtime = await runtimeStatus(paths);
+  if (runtime.running && (runtime.state?.connectionId === target.id || (!runtime.state?.connectionId && target.storageKind === "legacy-global"))) {
+    throw errorCode("CONNECTION_IN_USE", `Connection "${target.name}" is used by the running runtime. Switch connections or stop Rootbound before removing it.`);
+  }
+  const connectionPaths = resolveConnectionPaths({ paths, connection: target });
+  await rollbackManagedTunnelSetup({ paths: connectionPaths });
+  if (connectionPaths.tunnelHealthUrlPath) await unlink(connectionPaths.tunnelHealthUrlPath).catch((error) => { if (error?.code !== "ENOENT") throw error; });
+  const removed = await removeConnection({ paths, selector: target.id });
+  const value = { ok: true, action: "connection-removed", connection: target, activeConnectionId: removed.activeConnectionId };
+  if (json) return emit(value);
+  process.stdout.write(`Connection removed: ${target.name}\n`);
+  const next = getActiveConnection(removed.registry);
+  process.stdout.write(`Active connection: ${next?.name ?? "none"}\n`);
+}
+
 async function launchSupervisor({ projectRef, projectRoot, connectionId }) {
   const child = spawn(process.execPath, [path.join(packageRoot, "scripts", "supervisor.mjs")], {
     cwd: packageRoot,
@@ -220,7 +280,7 @@ function emit(value) { if (json) process.stdout.write(`${JSON.stringify(value, n
 function message(error) { return error instanceof Error ? error.message : String(error); }
 function usage(text) { const error = new Error(text); error.usage = true; return error; }
 function errorCode(code, text) { const error = new Error(text); error.code = code; return error; }
-function help() { process.stdout.write("Rootbound connections\n\n  rootbound connection list [--json]\n  rootbound connection current [--json]\n  rootbound connection add <name>\n  rootbound connection switch <name-or-id> [--json]\n"); }
+function help() { process.stdout.write("Rootbound connections\n\n  rootbound connection list [--json]\n  rootbound connection current [--json]\n  rootbound connection add <name>\n  rootbound connection switch <name-or-id> [--json]\n  rootbound connection repair <name-or-id>\n  rootbound connection remove <name-or-id> [--json]\n"); }
 async function askQuestion(prompt) { const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); try { return await rl.question(prompt); } finally { rl.close(); } }
 async function askSecret(prompt) {
   if (!process.stdin.isTTY || !process.stdout.isTTY || typeof process.stdin.setRawMode !== "function") throw usage("Secret input requires an interactive terminal.");
