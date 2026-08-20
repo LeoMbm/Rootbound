@@ -3,7 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { addConnection, createConnectionId, getActiveConnection, getConnection, loadConnectionRegistry, setActiveConnection } from "../src/connection-registry.mjs";
+import { addConnection, createConnectionId, getActiveConnection, getConnection, loadConnectionRegistry, setActiveConnection, validateConnectionName } from "../src/connection-registry.mjs";
 import { resolveConnectionPaths } from "../src/connection-paths.mjs";
 import { runtimeStatus, stopRuntime, tailLog } from "../src/runtime-state.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
@@ -33,12 +33,18 @@ try {
 async function list() {
   requireNoArgs();
   const registry = await loadConnectionRegistry({ paths });
-  const rows = registry.connections.map((connection) => ({ ...connection, active: connection.id === registry.activeConnectionId, tunnel: safeTunnelStatus(connection) }));
-  if (json) return emit({ ok: true, action: "connection-list", activeConnectionId: registry.activeConnectionId, connections: rows });
+  const runtime = await runtimeStatus(paths);
+  const rows = registry.connections.map((connection) => ({
+    ...connection,
+    active: connection.id === registry.activeConnectionId,
+    runtime: runtime.running && runtime.state?.connectionId === connection.id,
+    tunnel: safeTunnelStatus(connection),
+  }));
+  if (json) return emit({ ok: true, action: "connection-list", activeConnectionId: registry.activeConnectionId, runtimeConnectionId: runtime.state?.connectionId ?? null, connections: rows });
   process.stdout.write(`Connections: ${rows.length}\n`);
   for (const row of rows) {
     const label = row.tunnel.tunnelId ?? (row.tunnel.configured ? "configured" : "not configured");
-    process.stdout.write(`${row.active ? "*" : " "} ${row.name}  ${label}\n`);
+    process.stdout.write(`${row.active ? "*" : " "} ${row.name}  ${label}${row.runtime ? "  runtime" : ""}\n`);
   }
 }
 
@@ -49,17 +55,21 @@ async function current() {
   if (!connection) throw errorCode("CONNECTION_NOT_CONFIGURED", "No active connection. Run `rootbound connect .` or `rootbound connection add <name>`.");
   const tunnel = safeTunnelStatus(connection);
   const runtime = await runtimeStatus(paths);
-  emit({ ok: true, action: "connection-current", connection, tunnel, runtime });
+  const drift = runtime.running && Boolean(runtime.state?.connectionId) && runtime.state.connectionId !== connection.id;
+  const value = { ok: true, action: "connection-current", connection, tunnel, runtime, drift };
+  emit(value);
   if (!json) {
     process.stdout.write(`Connection: ${connection.name}\n`);
     if (tunnel.tunnelId) process.stdout.write(`Tunnel: ${tunnel.tunnelId}\n`);
-    process.stdout.write(`Runtime: ${runtime.status}${runtime.state?.connectionId === connection.id ? " (this connection)" : ""}\n`);
+    if (drift) process.stdout.write(`Runtime: ${runtime.status} (different connection: ${runtime.state?.connectionName ?? runtime.state?.connectionId})\n`);
+    else process.stdout.write(`Runtime: ${runtime.status}${runtime.state?.connectionId === connection.id ? " (this connection)" : ""}${runtime.state?.ready ? " ready" : ""}\n`);
   }
 }
 
 async function add() {
-  const name = argv.shift();
-  if (!name || argv.length) throw usage("Usage: rootbound connection add <name> [--json]");
+  const rawName = argv.shift();
+  if (!rawName || argv.length) throw usage("Usage: rootbound connection add <name>");
+  const name = validateConnectionName(rawName);
   const existingRegistry = await loadConnectionRegistry({ paths });
   if (getConnection(existingRegistry, name)) throw errorCode("CONNECTION_NAME_CONFLICT", `Connection already exists: ${name}`);
   if (json || !process.stdin.isTTY || !process.stdout.isTTY) throw usage("connection add requires an interactive terminal; non-interactive profile creation is not supported yet");
@@ -71,18 +81,17 @@ async function add() {
   const tunnelId = await chooseTunnel(candidates);
   const apiKey = await resolveRuntimeKey();
   const id = createConnectionId();
-  const provisional = { id, name: String(name).trim(), storageKind: "scoped-v1", source: "guided", tunnelId };
+  const provisional = { id, name, storageKind: "scoped-v1", source: "guided", tunnelId };
   const connectionPaths = resolveConnectionPaths({ paths, connection: provisional });
-  let managed = null;
   try {
-    managed = await writeManagedTunnelSetup({ tunnelId, apiKey, packageRoot, paths: connectionPaths });
+    const managed = await writeManagedTunnelSetup({ tunnelId, apiKey, packageRoot, paths: connectionPaths });
     process.stdout.write("Validating tunnel configuration...\n");
     await validateManagedTunnel({ profilePath: managed.profilePath, cwd: packageRoot });
     const result = await addConnection({ paths, id, name, tunnelId, storageKind: "scoped-v1", source: "guided" });
     process.stdout.write(`✓ Connection "${result.connection.name}" saved (${tunnelId})\n`);
     if (result.registry.activeConnectionId !== result.connection.id) process.stdout.write(`Switch with:\n  rootbound connection switch ${result.connection.name}\n`);
   } catch (error) {
-    if (managed) await rollbackManagedTunnelSetup({ paths: connectionPaths }).catch(() => {});
+    await rollbackManagedTunnelSetup({ paths: connectionPaths }).catch(() => {});
     throw error;
   }
 }
@@ -94,16 +103,16 @@ async function switchConnection() {
   const previous = getActiveConnection(registry);
   const target = getConnection(registry, selector);
   if (!target) throw errorCode("CONNECTION_NOT_FOUND", `No connection matches: ${selector}`);
-  if (target.id === previous?.id) {
-    const runtime = await runtimeStatus(paths);
-    return outputSwitch({ target, runtime, alreadyActive: true });
+  const initialRuntime = await runtimeStatus(paths);
+  if (target.id === previous?.id && (!initialRuntime.running || initialRuntime.state?.connectionId === target.id || !initialRuntime.state?.connectionId)) {
+    return outputSwitch({ target, runtime: initialRuntime, alreadyActive: true });
   }
   const targetPaths = resolveConnectionPaths({ paths, connection: target });
   const tunnel = tunnelConfigStatus({ paths: targetPaths });
   if (!tunnel.configured) throw errorCode("TUNNEL_NOT_CONFIGURED", `Connection "${target.name}" has no tunnel configuration.`);
   if (targetPaths.tunnelManagedProfilePath && tunnel.tunnelId) await validateManagedTunnel({ profilePath: targetPaths.tunnelManagedProfilePath, cwd: packageRoot });
 
-  const runtime = await runtimeStatus(paths);
+  const runtime = initialRuntime;
   if (!runtime.running) {
     const changed = await setActiveConnection({ paths, selector: target.id });
     return outputSwitch({ target: changed.connection, runtime: await runtimeStatus(paths), tunnel });
