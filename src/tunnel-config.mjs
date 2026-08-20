@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { inspectSensitiveArgv, redactArgv } from "./secret-boundaries.mjs";
 import { ensureRootboundStateDirs, resolveRootboundPaths } from "./state-paths.mjs";
@@ -12,7 +12,8 @@ const CREDENTIAL_QUERY = /[?&](?:token|key|api_key|apikey|auth|authorization|sig
 
 export function resolveTunnelLaunch({ env = process.env, packageRoot, projectRoot = null, paths = resolveRootboundPaths({ env }) } = {}) {
   if (!packageRoot) throw new Error("resolveTunnelLaunch requires packageRoot");
-  const source = loadTunnelTemplate({ env, paths });
+  const effectivePaths = effectiveTunnelPaths(paths);
+  const source = loadTunnelTemplate({ env, paths: effectivePaths });
   const replacements = new Map([
     ["{node}", process.execPath],
     ["{packageRoot}", packageRoot],
@@ -21,25 +22,28 @@ export function resolveTunnelLaunch({ env = process.env, packageRoot, projectRoo
   ]);
   const expanded = source.argv.map((value) => expandValue(value, { env, replacements }));
   if (expanded.some((value) => value === "")) throw tunnelError("TUNNEL_PROJECT_REQUIRED", "Tunnel argv uses {projectRoot}, but no project root was supplied.", ["Start/connect with a project root."]);
-  return { command: expanded[0], args: expanded.slice(1), argv: expanded, source: source.source };
+  return { command: expanded[0], args: expanded.slice(1), argv: expanded, source: source.source, connectionId: effectivePaths.connectionId ?? null };
 }
 
 export async function saveTunnelConfig({ argv, paths = resolveRootboundPaths() } = {}) {
   validateTunnelArgvTemplate(argv);
   await ensureRootboundStateDirs(paths);
+  const effectivePaths = effectiveTunnelPaths(paths);
+  await mkdir(path.dirname(effectivePaths.tunnelConfigPath), { recursive: true, mode: 0o700 });
   const payload = { schemaVersion: SCHEMA_VERSION, argv: [...argv], updatedAt: Date.now() };
-  const temp = `${paths.tunnelConfigPath}.${process.pid}.tmp`;
+  const temp = `${effectivePaths.tunnelConfigPath}.${process.pid}.tmp`;
   await writeFile(temp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
-  await rename(temp, paths.tunnelConfigPath);
-  return { configured: true, path: paths.tunnelConfigPath, argv: redactTemplateArgv(argv), envPlaceholders: envNames(argv) };
+  await rename(temp, effectivePaths.tunnelConfigPath);
+  return { configured: true, path: effectivePaths.tunnelConfigPath, argv: redactTemplateArgv(argv), envPlaceholders: envNames(argv), connectionId: effectivePaths.connectionId ?? null };
 }
 
 export async function clearTunnelConfig({ paths = resolveRootboundPaths() } = {}) {
+  const effectivePaths = effectiveTunnelPaths(paths);
   try {
-    await unlink(paths.tunnelConfigPath);
-    return { configured: false, cleared: true, path: paths.tunnelConfigPath };
+    await unlink(effectivePaths.tunnelConfigPath);
+    return { configured: false, cleared: true, path: effectivePaths.tunnelConfigPath, connectionId: effectivePaths.connectionId ?? null };
   } catch (error) {
-    if (error?.code === "ENOENT") return { configured: false, cleared: false, path: paths.tunnelConfigPath };
+    if (error?.code === "ENOENT") return { configured: false, cleared: false, path: effectivePaths.tunnelConfigPath, connectionId: effectivePaths.connectionId ?? null };
     throw error;
   }
 }
@@ -49,20 +53,43 @@ export function tunnelConfigStatus({ paths = resolveRootboundPaths(), env = proc
     const argv = parseArgvJson(env.ROOTBOUND_TUNNEL_ARGV_JSON, "ROOTBOUND_TUNNEL_ARGV_JSON");
     return { configured: true, source: "environment", path: null, argv: redactTemplateArgv(argv), envPlaceholders: envNames(argv) };
   }
+  const effectivePaths = effectiveTunnelPaths(paths);
   try {
-    const payload = readPersistent(paths.tunnelConfigPath);
+    const payload = readPersistent(effectivePaths.tunnelConfigPath);
     return {
       configured: true,
       source: "persistent",
-      path: paths.tunnelConfigPath,
+      path: effectivePaths.tunnelConfigPath,
       argv: redactTemplateArgv(payload.argv),
       envPlaceholders: envNames(payload.argv),
-      tunnelId: managedTunnelId(payload.argv, paths),
+      tunnelId: managedTunnelId(payload.argv, effectivePaths),
+      connectionId: effectivePaths.connectionId ?? null,
     };
   } catch (error) {
-    if (error?.code === "ENOENT") return { configured: false, source: null, path: paths.tunnelConfigPath, argv: null, envPlaceholders: [] };
+    if (error?.code === "ENOENT") return { configured: false, source: null, path: effectivePaths.tunnelConfigPath, argv: null, envPlaceholders: [], connectionId: effectivePaths.connectionId ?? null };
     throw error;
   }
+}
+
+function effectiveTunnelPaths(paths) {
+  if (!paths || paths.connectionId || !paths.connectionRegistryPath || !paths.connectionsDir) return paths;
+  let registry;
+  try { registry = JSON.parse(readFileSync(paths.connectionRegistryPath, "utf8")); }
+  catch (error) { if (error?.code === "ENOENT") return paths; throw tunnelError("CONNECTION_REGISTRY_INVALID", `Invalid connection registry: ${paths.connectionRegistryPath}`); }
+  const active = Array.isArray(registry?.connections) ? registry.connections.find((entry) => entry?.id === registry.activeConnectionId) : null;
+  if (!active) return paths;
+  if (active.storageKind === "legacy-global") return { ...paths, connectionId: active.id };
+  if (active.storageKind !== "scoped-v1" || !/^connection_[0-9a-f]{24}$/.test(active.id)) throw tunnelError("CONNECTION_REGISTRY_INVALID", "Active connection has invalid storage metadata.");
+  const connectionDir = path.join(paths.connectionsDir, active.id);
+  return {
+    ...paths,
+    connectionId: active.id,
+    connectionDir,
+    tunnelConfigPath: path.join(connectionDir, "tunnel.json"),
+    tunnelManagedProfilePath: path.join(connectionDir, "tunnel-client.yaml"),
+    tunnelSecretPath: path.join(connectionDir, "tunnel-runtime.key"),
+    tunnelHealthUrlPath: path.join(paths.runtimeDir, `tunnel-health-${active.id}.url`),
+  };
 }
 
 function managedTunnelId(argv, paths) {
@@ -73,7 +100,7 @@ function managedTunnelId(argv, paths) {
   if (requestedProfile !== managedProfile) return null;
   try {
     const profile = readFileSync(managedProfile, "utf8");
-    return profile.match(/\btunnel_id\s*:\s*["']?(tunnel_[a-z0-9]{32})["']?/)?.[1] ?? null;
+    return profile.match(/\btunnel_id\s*:\s*["']?(tunnel_[0-9a-f]{32})["']?/)?.[1] ?? null;
   } catch {
     return null;
   }
@@ -114,8 +141,8 @@ function loadTunnelTemplate({ env, paths }) {
     if (error?.code === "ENOENT") {
       throw tunnelError(
         "TUNNEL_NOT_CONFIGURED",
-        "Secure MCP Tunnel is not configured. Configure it once with `rootbound tunnel configure ...` or set ROOTBOUND_TUNNEL_ARGV_JSON for a temporary override.",
-        ["Run `rootbound tunnel configure --argv-json '<json argv>'` using {env:VARIABLE} placeholders for credentials."]
+        "Secure MCP Tunnel is not configured for the active connection. Run `rootbound connect .` or configure this connection first.",
+        ["Run `rootbound connection current` to inspect the active connection."]
       );
     }
     throw error;
