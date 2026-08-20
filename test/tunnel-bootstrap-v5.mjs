@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   buildStdioCommand,
   discoverTunnelCandidates,
+  managedTunnelEnvironment,
   rollbackManagedTunnelSetup,
   validateRuntimeKey,
   validateTunnelId,
@@ -32,9 +33,19 @@ assert.equal(discovered[0].source, "environment");
 assert.match(discovered[1].source, /^profile:/);
 
 assert.equal(validateTunnelId(tunnelA), true);
+assert.equal(validateTunnelId("tunnel_gggggggggggggggggggggggggggggggg"), false);
+assert.equal(validateTunnelId("tunnel_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), false);
 assert.equal(validateTunnelId("tunnel_short"), false);
 assert.equal(validateRuntimeKey("sk_test-runtime_key-123"), true);
-assert.equal(validateRuntimeKey("bad key with spaces"), false);
+assert.equal(validateRuntimeKey("opaque runtime key with spaces"), true);
+assert.equal(validateRuntimeKey("bad\nkey"), false);
+assert.equal(validateRuntimeKey(""), false);
+
+const sanitized = managedTunnelEnvironment({ CONTROL_PLANE_TUNNEL_ID: tunnelB, CONTROL_PLANE_API_KEY: "secret", OPENAI_API_KEY: "other", KEEP_ME: "yes" });
+assert.equal(sanitized.CONTROL_PLANE_TUNNEL_ID, undefined);
+assert.equal(sanitized.CONTROL_PLANE_API_KEY, undefined);
+assert.equal(sanitized.OPENAI_API_KEY, undefined);
+assert.equal(sanitized.KEEP_ME, "yes");
 
 const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(root, "Rootbound State") }, home });
 const secret = "sk_test-runtime_key-123";
@@ -52,6 +63,7 @@ const setup = await writeManagedTunnelSetup({
 
 assert.equal(setup.configured, true);
 assert.equal(setup.tunnelId, tunnelA);
+assert.equal(setup.healthUrlPath, paths.tunnelHealthUrlPath);
 assert.equal(setup.mcpCommand, `'${nodePath}' '${path.join(packageRoot, "scripts", "launch.mjs")}' stdio`);
 
 const secretText = await readFile(paths.tunnelSecretPath, "utf8");
@@ -65,6 +77,8 @@ const profile = await readFile(paths.tunnelManagedProfilePath, "utf8");
 assert.match(profile, new RegExp(tunnelA));
 assert.match(profile, /base_url:\s+"https:\/\/api\.openai\.com"/);
 assert.match(profile, /api_key:\s+"file:/);
+assert.match(profile, /listen_addr:\s+"127\.0\.0\.1:0"/);
+assert.match(profile, /url_file:/);
 assert.match(profile, /format: json/);
 assert.match(profile, /channel: main/);
 assert.match(profile, /launch\.mjs/);
