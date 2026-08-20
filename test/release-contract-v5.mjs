@@ -19,6 +19,8 @@ const upgradeScript = await readFile(path.join(root, "scripts", "upgrade.mjs"), 
 const tunnelBootstrap = await readFile(path.join(root, "src", "tunnel-bootstrap.mjs"), "utf8");
 const tunnelCli = await readFile(path.join(root, "scripts", "tunnel-config-cli.mjs"), "utf8");
 const connectionCli = await readFile(path.join(root, "scripts", "connection-cli.mjs"), "utf8");
+const doctor = await readFile(path.join(root, "scripts", "doctor.mjs"), "utf8");
+const logsCli = await readFile(path.join(root, "scripts", "logs-cli.mjs"), "utf8");
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const methodRegistry = JSON.parse(await readFile(path.join(root, "config", "toolbox-method-registry.json"), "utf8"));
 
@@ -41,14 +43,17 @@ assert.doesNotMatch(workflow, /^\s*push\s*:/m, "V5 CI must remain manual-only du
 assert.doesNotMatch(workflow, /^\s*pull_request\s*:/m, "V5 CI must remain manual-only during stabilization");
 assert.match(workflow, /node scripts\/validate-v5-syntax\.mjs/);
 assert.match(workflow, /node scripts\/check-lock-root\.mjs/);
-await access(path.join(root, "scripts", "validate-v5-syntax.mjs"));
-await access(path.join(root, "scripts", "validate-v5.mjs"));
-await access(path.join(root, "scripts", "check-lock-root.mjs"));
-await access(path.join(root, "src", "tunnel-bootstrap.mjs"));
-await access(path.join(root, "src", "connection-registry.mjs"));
-await access(path.join(root, "src", "connection-paths.mjs"));
-await access(path.join(root, "src", "runtime-mutation-lock.mjs"));
-await access(path.join(root, "scripts", "connection-cli.mjs"));
+for (const relative of [
+  "scripts/validate-v5-syntax.mjs",
+  "scripts/validate-v5.mjs",
+  "scripts/check-lock-root.mjs",
+  "src/tunnel-bootstrap.mjs",
+  "src/connection-registry.mjs",
+  "src/connection-paths.mjs",
+  "src/runtime-mutation-lock.mjs",
+  "scripts/connection-cli.mjs",
+  "scripts/logs-cli.mjs",
+]) await access(path.join(root, relative));
 
 assert.equal(packageJson.engines?.node, ">=22.13.0");
 assert.equal(packageJson.bin?.rootbound, "bin/rootbound-entry.mjs");
@@ -60,15 +65,20 @@ assert.equal(packageJson.bugs?.url, "https://github.com/LeoMbm/Rootbound/issues"
 assert.equal(packageJson.scripts?.["check:syntax"], "node scripts/validate-v5-syntax.mjs");
 assert.equal(packageJson.scripts?.["validate:v5"], "node scripts/validate-v5.mjs");
 assert.match(packageJson.scripts?.["validate:release"] ?? "", /check:lock:strict/);
-assert.match(packageJson.scripts?.["test:v5"] ?? "", /tunnel-bootstrap-v5\.mjs/, "test:v5 must cover guided tunnel bootstrap");
-assert.match(packageJson.scripts?.["test:v5"] ?? "", /runtime-mutation-lock-v5\.mjs/, "test:v5 must serialize runtime mutations");
-assert.match(packageJson.scripts?.["test:v5"] ?? "", /runtime-readiness-v5\.mjs/, "test:v5 must require scoped tunnel readiness");
-assert.match(packageJson.scripts?.["test:v5"] ?? "", /connection-registry-v5\.mjs/, "test:v5 must cover connection registry durability");
-assert.match(packageJson.scripts?.["test:v5"] ?? "", /connection-tunnel-isolation-v5\.mjs/, "test:v5 must cover connection tunnel isolation");
-assert.match(packageJson.scripts?.["test:v5"] ?? "", /connection-switch-v5\.mjs/, "test:v5 must cover connection switch rollback");
-assert.match(packageJson.scripts?.["test:v5"] ?? "", /rescue-continuity-v5\.mjs/, "test:v5 must cover quota-rescue continuity");
-assert.match(packageJson.scripts?.["test:v5"] ?? "", /release-contract-v5\.mjs/, "test:v5 must include the release contract guard");
+for (const [pattern, label] of [
+  [/tunnel-bootstrap-v5\.mjs/, "guided tunnel bootstrap"],
+  [/runtime-mutation-lock-v5\.mjs/, "runtime mutation serialization"],
+  [/runtime-readiness-v5\.mjs/, "scoped tunnel readiness"],
+  [/connection-registry-v5\.mjs/, "connection registry durability"],
+  [/connection-tunnel-isolation-v5\.mjs/, "connection tunnel isolation"],
+  [/connection-switch-v5\.mjs/, "connection switch rollback"],
+  [/connection-lifecycle-v5\.mjs/, "connection repair/remove lifecycle"],
+  [/logs-cli-v5\.mjs/, "unambiguous log follow UX"],
+  [/rescue-continuity-v5\.mjs/, "quota-rescue continuity"],
+  [/release-contract-v5\.mjs/, "release contract guard"],
+]) assert.match(packageJson.scripts?.["test:v5"] ?? "", pattern, `test:v5 must cover ${label}`);
 assert.ok(packageJson.files?.includes("docs/plans/rootbound-v5.md"), "V5 plan must be packaged because README links to it");
+assert.ok(packageJson.files?.includes("docs/multi-connection.md"), "multi-connection docs must be packaged");
 
 assert.match(installSh, /for entry in[^\n]*\bdocs\b/);
 assert.match(installSh, /bin\/rootbound-stdio\.sh/);
@@ -86,15 +96,25 @@ assert.match(uninstallPs1, /stop --force --json/);
 assert.match(rootboundEntry, /rootbound project remove/);
 assert.match(rootboundEntry, /rootbound trust remove/);
 assert.match(rootboundEntry, /rootbound connection list/);
+assert.match(rootboundEntry, /rootbound connection repair/);
+assert.match(rootboundEntry, /rootbound connection remove/);
+assert.match(rootboundEntry, /--new-only/);
 assert.match(rootboundEntry, /connection-cli\.mjs/);
+assert.match(rootboundEntry, /logs-cli\.mjs/);
 assert.match(rootboundEntry, /withRuntimeMutationLock/);
 assert.match(connectionCli, /CONNECTION_SWITCH_FAILED_RESTORED/);
+assert.match(connectionCli, /CONNECTION_REPAIR_FAILED_RESTORED/);
+assert.match(connectionCli, /removeConnection/);
 assert.match(connectionCli, /validateManagedTunnel/);
+assert.match(doctor, /connection-registry/);
+assert.match(doctor, /tunnel-secret-permissions/);
+assert.match(doctor, /tunnel-client-doctor/);
+assert.match(doctor, /runtime-connection/);
+assert.match(doctor, /tunnel-readiness/);
+assert.match(logsCli, /previous log tail/);
+assert.match(logsCli, /following new entries from now/);
 
-const selfUpgrade = spawnSync(process.execPath, [path.join(root, "scripts", "upgrade.mjs"), "--from", root, "--json"], {
-  cwd: root,
-  encoding: "utf8",
-});
+const selfUpgrade = spawnSync(process.execPath, [path.join(root, "scripts", "upgrade.mjs"), "--from", root, "--json"], { cwd: root, encoding: "utf8" });
 assert.equal(selfUpgrade.status, 1, "upgrade --from the running checkout must fail closed");
 const selfUpgradeResult = JSON.parse(selfUpgrade.stdout);
 assert.equal(selfUpgradeResult.ok, false);
@@ -126,6 +146,7 @@ assert.match(tunnelBootstrap, /"doctor", "--profile-file"/);
 assert.match(tunnelBootstrap, /url_file:/);
 assert.match(tunnelCli, /Normal users should run:/);
 assert.match(tunnelCli, /rootbound connect \./);
+assert.match(tunnelCli, /Refusing to reconfigure tunnel/);
 
 assert.match(security, /Rootbound V5 public surface/);
 assert.match(security, /32 public tools/);
