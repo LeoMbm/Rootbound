@@ -100,32 +100,33 @@ async function switchConnection() {
   const selector = argv.shift();
   if (!selector || argv.length) throw usage("Usage: rootbound connection switch <name-or-id> [--json]");
   const registry = await loadConnectionRegistry({ paths });
-  const previous = getActiveConnection(registry);
+  const active = getActiveConnection(registry);
   const target = getConnection(registry, selector);
   if (!target) throw errorCode("CONNECTION_NOT_FOUND", `No connection matches: ${selector}`);
-  const initialRuntime = await runtimeStatus(paths);
-  if (target.id === previous?.id && (!initialRuntime.running || initialRuntime.state?.connectionId === target.id || !initialRuntime.state?.connectionId)) {
-    return outputSwitch({ target, runtime: initialRuntime, alreadyActive: true });
-  }
   const targetPaths = resolveConnectionPaths({ paths, connection: target });
   const tunnel = tunnelConfigStatus({ paths: targetPaths });
   if (!tunnel.configured) throw errorCode("TUNNEL_NOT_CONFIGURED", `Connection "${target.name}" has no tunnel configuration.`);
   if (targetPaths.tunnelManagedProfilePath && tunnel.tunnelId) await validateManagedTunnel({ profilePath: targetPaths.tunnelManagedProfilePath, cwd: packageRoot });
 
-  const runtime = initialRuntime;
+  const runtime = await runtimeStatus(paths);
+  if (target.id === active?.id && (!runtime.running || runtime.state?.connectionId === target.id || !runtime.state?.connectionId)) {
+    return outputSwitch({ target, runtime, tunnel, alreadyActive: true });
+  }
   if (!runtime.running) {
     const changed = await setActiveConnection({ paths, selector: target.id });
     return outputSwitch({ target: changed.connection, runtime: await runtimeStatus(paths), tunnel });
   }
   if (!runtime.state?.projectRef || !runtime.state?.projectRoot) throw errorCode("RUNTIME_STATE_INVALID", "Running Rootbound runtime is missing its project identity; stop it before switching connections.");
 
-  const previousTuple = { connection: previous, projectRef: runtime.state.projectRef, projectRoot: runtime.state.projectRoot };
+  const runtimeConnection = runtime.state?.connectionId ? getConnection(registry, runtime.state.connectionId) : null;
+  const previousConnection = runtimeConnection ?? active;
+  const previousTuple = { connection: previousConnection, projectRef: runtime.state.projectRef, projectRoot: runtime.state.projectRoot };
   await stopForSwitch();
   try {
     const started = await launchSupervisor({ projectRef: previousTuple.projectRef, projectRoot: previousTuple.projectRoot, connectionId: target.id });
     if (started.state?.connectionId !== target.id || started.state?.ready !== true) throw new Error("Target connection runtime did not report ready state.");
     const changed = await setActiveConnection({ paths, selector: target.id });
-    return outputSwitch({ target: changed.connection, runtime: started, tunnel, switchedFrom: previous?.name ?? null });
+    return outputSwitch({ target: changed.connection, runtime: started, tunnel, switchedFrom: previousConnection?.name ?? runtime.state?.connectionName ?? null });
   } catch (error) {
     await stopRuntime(paths, { force: true }).catch(() => {});
     let restored = false;
