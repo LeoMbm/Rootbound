@@ -76,10 +76,16 @@ function effectiveTunnelPaths(paths) {
   let registry;
   try { registry = JSON.parse(readFileSync(paths.connectionRegistryPath, "utf8")); }
   catch (error) { if (error?.code === "ENOENT") return paths; throw tunnelError("CONNECTION_REGISTRY_INVALID", `Invalid connection registry: ${paths.connectionRegistryPath}`); }
-  const active = Array.isArray(registry?.connections) ? registry.connections.find((entry) => entry?.id === registry.activeConnectionId) : null;
-  if (!active) return paths;
+  if (!registry || registry.schemaVersion !== 1 || !Array.isArray(registry.connections)) throw tunnelError("CONNECTION_REGISTRY_INVALID", "Connection registry has an unsupported schema.");
+  if (registry.activeConnectionId == null) {
+    if (registry.connections.length === 0) return paths;
+    throw tunnelError("CONNECTION_REGISTRY_INVALID", "Connection registry has configured connections but no active connection.");
+  }
+  const active = registry.connections.find((entry) => entry?.id === registry.activeConnectionId);
+  if (!active) throw tunnelError("CONNECTION_REGISTRY_INVALID", "Active connection does not exist in the registry.");
+  if (!/^connection_[0-9a-f]{24}$/.test(active.id)) throw tunnelError("CONNECTION_REGISTRY_INVALID", "Active connection has an invalid id.");
   if (active.storageKind === "legacy-global") return { ...paths, connectionId: active.id };
-  if (active.storageKind !== "scoped-v1" || !/^connection_[0-9a-f]{24}$/.test(active.id)) throw tunnelError("CONNECTION_REGISTRY_INVALID", "Active connection has invalid storage metadata.");
+  if (active.storageKind !== "scoped-v1") throw tunnelError("CONNECTION_REGISTRY_INVALID", "Active connection has invalid storage metadata.");
   const connectionDir = path.join(paths.connectionsDir, active.id);
   return {
     ...paths,
@@ -101,32 +107,17 @@ function managedTunnelId(argv, paths) {
   try {
     const profile = readFileSync(managedProfile, "utf8");
     return profile.match(/\btunnel_id\s*:\s*["']?(tunnel_[0-9a-f]{32})["']?/)?.[1] ?? null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 export function validateTunnelArgvTemplate(argv) {
-  if (!Array.isArray(argv) || argv.length < 1 || !argv.every((value) => typeof value === "string" && value.length > 0)) {
-    throw tunnelError("TUNNEL_CONFIG_INVALID", "Tunnel argv must be a non-empty array of non-empty strings.");
-  }
+  if (!Array.isArray(argv) || argv.length < 1 || !argv.every((value) => typeof value === "string" && value.length > 0)) throw tunnelError("TUNNEL_CONFIG_INVALID", "Tunnel argv must be a non-empty array of non-empty strings.");
   for (const value of argv) {
-    if (CREDENTIAL_QUERY.test(value)) {
-      throw tunnelError("TUNNEL_SECRET_PERSISTENCE_BLOCKED", "Tunnel configuration cannot persist credentials inside URL query parameters.", ["Pass credentials through an environment variable supported by the tunnel client."]);
-    }
-    if (/^\{[^}]+\}$/.test(value) && !KNOWN_PLACEHOLDERS.has(value) && !ENV_PLACEHOLDER.test(value)) {
-      throw tunnelError("TUNNEL_PLACEHOLDER_INVALID", `Unknown tunnel placeholder: ${value}`);
-    }
+    if (CREDENTIAL_QUERY.test(value)) throw tunnelError("TUNNEL_SECRET_PERSISTENCE_BLOCKED", "Tunnel configuration cannot persist credentials inside URL query parameters.", ["Pass credentials through an environment variable supported by the tunnel client."]);
+    if (/^\{[^}]+\}$/.test(value) && !KNOWN_PLACEHOLDERS.has(value) && !ENV_PLACEHOLDER.test(value)) throw tunnelError("TUNNEL_PLACEHOLDER_INVALID", `Unknown tunnel placeholder: ${value}`);
   }
   const unsafe = inspectSensitiveArgv(argv).filter((finding) => !ENV_PLACEHOLDER.test(argv[finding.index] ?? ""));
-  if (unsafe.length) {
-    throw tunnelError(
-      "TUNNEL_SECRET_PERSISTENCE_BLOCKED",
-      "Tunnel configuration appears to contain a literal credential. Persistent tunnel config stores only non-secret argv; use {env:VARIABLE} for secret arguments.",
-      ["Replace the credential argument with a placeholder such as {env:TUNNEL_TOKEN} and export that variable locally."],
-      { redactedArgv: redactTemplateArgv(argv), sensitiveArgumentCount: unsafe.length }
-    );
-  }
+  if (unsafe.length) throw tunnelError("TUNNEL_SECRET_PERSISTENCE_BLOCKED", "Tunnel configuration appears to contain a literal credential. Persistent tunnel config stores only non-secret argv; use {env:VARIABLE} for secret arguments.", ["Replace the credential argument with a placeholder such as {env:TUNNEL_TOKEN} and export that variable locally."], { redactedArgv: redactTemplateArgv(argv), sensitiveArgumentCount: unsafe.length });
   return argv;
 }
 
@@ -138,13 +129,7 @@ function loadTunnelTemplate({ env, paths }) {
     validateTunnelArgvTemplate(payload.argv);
     return { source: "persistent", argv: payload.argv };
   } catch (error) {
-    if (error?.code === "ENOENT") {
-      throw tunnelError(
-        "TUNNEL_NOT_CONFIGURED",
-        "Secure MCP Tunnel is not configured for the active connection. Run `rootbound connect .` or configure this connection first.",
-        ["Run `rootbound connection current` to inspect the active connection."]
-      );
-    }
+    if (error?.code === "ENOENT") throw tunnelError("TUNNEL_NOT_CONFIGURED", "Secure MCP Tunnel is not configured for the active connection. Run `rootbound connect .` or configure this connection first.", ["Run `rootbound connection current` to inspect the active connection."]);
     throw error;
   }
 }
@@ -152,10 +137,7 @@ function loadTunnelTemplate({ env, paths }) {
 function readPersistent(configPath) {
   let payload;
   try { payload = JSON.parse(readFileSync(configPath, "utf8")); }
-  catch (error) {
-    if (error?.code === "ENOENT") throw error;
-    throw tunnelError("TUNNEL_CONFIG_INVALID", `Invalid persistent tunnel config: ${configPath}`);
-  }
+  catch (error) { if (error?.code === "ENOENT") throw error; throw tunnelError("TUNNEL_CONFIG_INVALID", `Invalid persistent tunnel config: ${configPath}`); }
   if (payload?.schemaVersion !== SCHEMA_VERSION || !Array.isArray(payload?.argv)) throw tunnelError("TUNNEL_CONFIG_INVALID", `Unsupported persistent tunnel config schema: ${configPath}`);
   return payload;
 }
@@ -180,18 +162,6 @@ function parseArgvJson(raw, label) {
   return argv;
 }
 
-function envNames(argv) {
-  return [...new Set(argv.flatMap((value) => {
-    const match = String(value).match(ENV_PLACEHOLDER);
-    return match ? [match[1]] : [];
-  }))];
-}
-
-function redactTemplateArgv(argv) {
-  const redacted = redactArgv(argv);
-  return redacted.map((value, index) => ENV_PLACEHOLDER.test(argv[index] ?? "") ? argv[index] : value);
-}
-
-function tunnelError(code, message, nextActions = [], details = null) {
-  return new RootboundToolError(message, { code, category: code.includes("SECRET") ? "safety" : "configuration", retryable: false, nextActions, details });
-}
+function envNames(argv) { return [...new Set(argv.flatMap((value) => { const match = String(value).match(ENV_PLACEHOLDER); return match ? [match[1]] : []; }))]; }
+function redactTemplateArgv(argv) { const redacted = redactArgv(argv); return redacted.map((value, index) => ENV_PLACEHOLDER.test(argv[index] ?? "") ? argv[index] : value); }
+function tunnelError(code, message, nextActions = [], details = null) { return new RootboundToolError(message, { code, category: code.includes("SECRET") ? "safety" : "configuration", retryable: false, nextActions, details }); }
