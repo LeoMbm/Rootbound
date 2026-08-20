@@ -10,14 +10,28 @@ const NAME_PATTERN = /^[^\u0000-\u001f\u007f]{1,48}$/;
 export async function loadConnectionRegistry({ paths, initializeLegacy = true, now = Date.now } = {}) {
   if (!paths?.connectionRegistryPath) throw new Error("connection registry requires Rootbound paths");
   await ensureRootboundStateDirs(paths);
-  try { return await readRegistry(paths); }
-  catch (error) {
+  try {
+    const registry = await readRegistry(paths);
+    if (!initializeLegacy || registry.connections.length > 0 || !await fileExists(paths.tunnelConfigPath)) return registry;
+    return withRegistryLock(paths, async () => {
+      const current = await readRegistry(paths);
+      if (current.connections.length > 0 || !await fileExists(paths.tunnelConfigPath)) return current;
+      const reconciled = await buildInitialRegistry(paths, now);
+      await writeRegistryUnlocked(paths, reconciled, process.platform);
+      return reconciled;
+    });
+  } catch (error) {
     if (error?.code !== "ENOENT") throw error;
     if (!initializeLegacy) return null;
   }
   return withRegistryLock(paths, async () => {
-    try { return await readRegistry(paths); }
-    catch (error) { if (error?.code !== "ENOENT") throw error; }
+    try {
+      const current = await readRegistry(paths);
+      if (current.connections.length > 0 || !await fileExists(paths.tunnelConfigPath)) return current;
+      const reconciled = await buildInitialRegistry(paths, now);
+      await writeRegistryUnlocked(paths, reconciled, process.platform);
+      return reconciled;
+    } catch (error) { if (error?.code !== "ENOENT") throw error; }
     const registry = await buildInitialRegistry(paths, now);
     await writeRegistryUnlocked(paths, registry, process.platform);
     return registry;
@@ -81,8 +95,15 @@ export async function setActiveConnection({ paths, selector, now = Date.now } = 
 }
 
 async function readOrInitializeRegistryUnlocked(paths, now) {
-  try { return await readRegistry(paths); }
-  catch (error) { if (error?.code !== "ENOENT") throw error; }
+  try {
+    const current = await readRegistry(paths);
+    if (current.connections.length === 0 && await fileExists(paths.tunnelConfigPath)) {
+      const reconciled = await buildInitialRegistry(paths, now);
+      await writeRegistryUnlocked(paths, reconciled, process.platform);
+      return reconciled;
+    }
+    return current;
+  } catch (error) { if (error?.code !== "ENOENT") throw error; }
   const registry = await buildInitialRegistry(paths, now);
   await writeRegistryUnlocked(paths, registry, process.platform);
   return registry;
