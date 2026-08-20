@@ -21,11 +21,17 @@ const tunnelCli = await readFile(path.join(root, "scripts", "tunnel-config-cli.m
 const connectionCli = await readFile(path.join(root, "scripts", "connection-cli.mjs"), "utf8");
 const doctor = await readFile(path.join(root, "scripts", "doctor.mjs"), "utf8");
 const logsCli = await readFile(path.join(root, "scripts", "logs-cli.mjs"), "utf8");
+const publicRuntime = await readFile(path.join(root, "src", "public-runtime.mjs"), "utf8");
+const rescueTools = await readFile(path.join(root, "src", "rescue-tools.mjs"), "utf8");
+const durableRescue = await readFile(path.join(root, "src", "durable-rescue.mjs"), "utf8");
+const rescueAutopilot = await readFile(path.join(root, "src", "rescue-autopilot.mjs"), "utf8");
+const continuityManifest = await readFile(path.join(root, "src", "continuity-manifest.mjs"), "utf8");
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const methodRegistry = JSON.parse(await readFile(path.join(root, "config", "toolbox-method-registry.json"), "utf8"));
 
 assert.equal(PUBLIC_SURFACE_VERSION, "rootbound-public-preview-v5");
 assert.equal(new Set(PUBLIC_TOOL_NAMES).size, PUBLIC_TOOL_NAMES.length, "public tool names must be unique");
+assert.equal(PUBLIC_TOOL_NAMES.length, 32, "continuity runtime additions must not silently expand the public MCP surface");
 assert.ok(PUBLIC_TOOL_NAMES.includes("codex.workspace_open"));
 assert.ok(PUBLIC_TOOL_NAMES.includes("codex.command_poll"));
 assert.ok(PUBLIC_TOOL_NAMES.includes("codex.edit_undo"));
@@ -51,6 +57,10 @@ for (const relative of [
   "src/connection-registry.mjs",
   "src/connection-paths.mjs",
   "src/runtime-mutation-lock.mjs",
+  "src/durable-rescue.mjs",
+  "src/rescue-persistence.mjs",
+  "src/rescue-autopilot.mjs",
+  "src/continuity-manifest.mjs",
   "scripts/connection-cli.mjs",
   "scripts/logs-cli.mjs",
 ]) await access(path.join(root, relative));
@@ -75,6 +85,9 @@ for (const [pattern, label] of [
   [/connection-lifecycle-v5\.mjs/, "connection repair/remove lifecycle"],
   [/logs-cli-v5\.mjs/, "unambiguous log follow UX"],
   [/rescue-continuity-v5\.mjs/, "quota-rescue continuity"],
+  [/durable-rescue-v5\.mjs/, "cross-chat durable rescue reattachment"],
+  [/continuity-manifest-v5\.mjs/, "hashed verified continuity manifests"],
+  [/rescue-autopilot-v5\.mjs/, "quota autopilot pre-arming and disarming"],
   [/release-contract-v5\.mjs/, "release contract guard"],
 ]) assert.match(packageJson.scripts?.["test:v5"] ?? "", pattern, `test:v5 must cover ${label}`);
 assert.ok(packageJson.files?.includes("docs/plans/rootbound-v5.md"), "V5 plan must be packaged because README links to it");
@@ -113,6 +126,25 @@ assert.match(doctor, /runtime-connection/);
 assert.match(doctor, /tunnel-readiness/);
 assert.match(logsCli, /previous log tail/);
 assert.match(logsCli, /following new entries from now/);
+
+assert.match(publicRuntime, /createDurableRescueManager/);
+assert.match(publicRuntime, /createRescueAutopilot/);
+assert.match(publicRuntime, /ROOTBOUND_RESCUE_ARM_PERCENT/);
+assert.match(publicRuntime, /ROOTBOUND_RESCUE_POLL_MS/);
+assert.match(durableRescue, /DURABLE_RESCUE_DRIFT_DETECTED/);
+assert.match(durableRescue, /DURABLE_RESCUE_THREAD_CONFLICT/);
+assert.match(rescueAutopilot, /account|quotaSnapshot/);
+assert.match(rescueAutopilot, /rescue\.autopilot\.armed/);
+assert.match(rescueAutopilot, /rescue\.autopilot\.disarmed/);
+assert.match(rescueAutopilot, /fingerprintHash/);
+assert.match(continuityManifest, /rootbound\.continuity\.v1/);
+assert.match(continuityManifest, /verified: false/);
+assert.match(continuityManifest, /algorithm: "sha256"/);
+assert.match(rescueTools, /selectionSource = "durable_rescue"/);
+assert.match(rescueTools, /selectionSource = "autopilot"/);
+assert.match(rescueTools, /buildContinuityManifest/);
+assert.match(rescueTools, /persistContinuityManifest/);
+assert.match(rescueTools, /modelTurnStarted: false/);
 
 const selfUpgrade = spawnSync(process.execPath, [path.join(root, "scripts", "upgrade.mjs"), "--from", root, "--json"], { cwd: root, encoding: "utf8" });
 assert.equal(selfUpgrade.status, 1, "upgrade --from the running checkout must fail closed");
