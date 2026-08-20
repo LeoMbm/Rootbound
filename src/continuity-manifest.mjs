@@ -68,8 +68,24 @@ export function buildContinuityManifest({
   };
 }
 
+export function verifyContinuityManifest(manifest) {
+  if (!manifest || manifest.schema !== MANIFEST_SCHEMA || manifest.integrity?.algorithm !== "sha256" || typeof manifest.integrity?.hash !== "string") {
+    return { ok: false, reason: "invalid_manifest_shape", expectedHash: null, actualHash: null };
+  }
+  const { integrity, ...payload } = manifest;
+  const actualHash = sha256(canonicalJson(payload));
+  return {
+    ok: actualHash === integrity.hash,
+    reason: actualHash === integrity.hash ? null : "hash_mismatch",
+    expectedHash: integrity.hash,
+    actualHash,
+  };
+}
+
 export function persistContinuityManifest({ store, manifest, projectRef, bindingRef, throughSeq = null, createdAt = Date.now() } = {}) {
   if (!store?.addCheckpoint) throw new Error("persistContinuityManifest requires state store checkpoint support");
+  const verification = verifyContinuityManifest(manifest);
+  if (!verification.ok) throw new Error(`refusing to persist invalid continuity manifest: ${verification.reason}`);
   const checkpointId = `manifest_${randomUUID()}`;
   store.addCheckpoint({
     checkpointId,
@@ -79,12 +95,13 @@ export function persistContinuityManifest({ store, manifest, projectRef, binding
     createdAt,
     payload: { kind: "continuity_manifest", manifest },
   });
-  return { checkpointId, manifestHash: manifest?.integrity?.hash ?? null };
+  return { checkpointId, manifestHash: manifest.integrity.hash };
 }
 
 export function manifestInjectionFooter(manifest) {
-  const hash = manifest?.integrity?.hash;
-  if (!hash) throw new Error("manifest injection footer requires manifest hash");
+  const verification = verifyContinuityManifest(manifest);
+  if (!verification.ok) throw new Error(`manifest injection footer requires a valid manifest: ${verification.reason}`);
+  const hash = manifest.integrity.hash;
   const baseline = manifest.verified?.baseline ?? {};
   const result = manifest.verified?.result ?? {};
   return [
