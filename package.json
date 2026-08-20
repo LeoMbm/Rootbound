@@ -64,6 +64,7 @@
     "bin/rootbound-uninstall.sh",
     "docs/plans/rootbound-v5.md",
     "docs/multi-connection.md",
+    "docs/continuity-runtime.md",
     "npm-shrinkwrap.json",
     "README.md",
     "README.zh-CN.md",
