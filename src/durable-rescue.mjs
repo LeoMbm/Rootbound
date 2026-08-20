@@ -48,14 +48,14 @@ export function createDurableRescueManager({ base, store, now = () => Date.now()
       replaceActiveProjectRescues(store, project.projectRef, { exceptRescueRef: primary.rescueRef, touchedAt: now() });
       const updated = store.upsertRescueSession({
         ...primary,
-        sessionKey: sessionKey ?? primary.sessionKey,
+        sessionKey,
         touchedAt: now(),
       });
       store.recordEvent({
         projectRef: project.projectRef,
         bindingRef: updated.bindingRef,
         kind: "rescue.reattached",
-        payload: { rescueRef: updated.rescueRef, threadId: updated.threadId },
+        payload: { rescueRef: updated.rescueRef, threadId: updated.threadId, implicitSessionAvailable: Boolean(sessionKey) },
         createdAt: now(),
       });
       return { ...updated, reattached: true, baselineFingerprint: current };
