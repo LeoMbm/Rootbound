@@ -86,7 +86,7 @@ export function createRescueAutopilot({
     } catch (error) {
       const project = projectForCwd(store, defaultCwd);
       const safeMessage = safeErrorMessage(error?.message ?? String(error));
-      if (project) {
+      if (project && !closed) {
         store.recordEvent({
           projectRef: project.projectRef,
           kind: ERROR_EVENT,
@@ -107,10 +107,11 @@ export function createRescueAutopilot({
     void evaluate("startup");
   }
 
-  function close() {
+  async function close() {
     closed = true;
     if (timer) clearInterval(timer);
     timer = null;
+    while (inFlight) await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
   function candidateFor({ projectRef, fingerprintHash } = {}) {
