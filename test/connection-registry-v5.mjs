@@ -43,4 +43,14 @@ const persisted = JSON.parse(await readFile(paths.connectionRegistryPath, "utf8"
 assert.equal(persisted.connections.length, 2);
 assert.equal(JSON.stringify(persisted).includes("api_key"), false);
 
+const lateRoot = await mkdtemp(path.join(os.tmpdir(), "rootbound-connections-late-"));
+const latePaths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(lateRoot, "state") } });
+const empty = await loadConnectionRegistry({ paths: latePaths, now: () => 40 });
+assert.equal(empty.connections.length, 0, "listing connections before first connect may create an empty registry");
+await writeFile(latePaths.tunnelConfigPath, `${JSON.stringify({ schemaVersion: 1, argv: ["tunnel-client", "run"] })}\n`, "utf8");
+const reconciled = await loadConnectionRegistry({ paths: latePaths, now: () => 50 });
+assert.equal(reconciled.connections.length, 1, "later legacy tunnel creation must be reconciled into the registry");
+assert.equal(reconciled.connections[0].name, "default");
+assert.equal(reconciled.activeConnectionId, reconciled.connections[0].id);
+
 console.log("connection-registry-v5: ok");
