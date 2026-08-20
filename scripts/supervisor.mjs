@@ -29,8 +29,9 @@ if (!connection) throw new Error("No active Rootbound connection; run `rootbound
 const connectionPaths = resolveConnectionPaths({ paths, connection });
 const runtimeId = `runtime_${randomUUID()}`;
 const restartLimit = parseBoundedInt(process.env.ROOTBOUND_TUNNEL_RESTART_LIMIT ?? "3", 0, 20, "ROOTBOUND_TUNNEL_RESTART_LIMIT");
-const launch = resolveTunnelLaunch({ packageRoot, projectRoot, paths: connectionPaths });
-const childBaseEnv = connection.storageKind === "scoped-v1" ? managedTunnelEnvironment(process.env) : process.env;
+const launchEnv = requestedConnection ? explicitConnectionEnvironment(process.env) : process.env;
+const launch = resolveTunnelLaunch({ env: launchEnv, packageRoot, projectRoot, paths: connectionPaths });
+const childBaseEnv = connection.storageKind === "scoped-v1" ? managedTunnelEnvironment(launchEnv) : launchEnv;
 const logHandle = await open(paths.logPath, "a", 0o600);
 let child = null;
 let stopping = false;
@@ -158,6 +159,11 @@ async function shutdown(signal) {
   process.exit(0);
 }
 
+function explicitConnectionEnvironment(env) {
+  const clean = { ...env };
+  delete clean.ROOTBOUND_TUNNEL_ARGV_JSON;
+  return clean;
+}
 function log(message) { logHandle.write(`${new Date().toISOString()} [${runtimeId}] ${message}\n`); }
 function parseBoundedInt(value, min, max, label) {
   const parsed = Number.parseInt(value, 10);
