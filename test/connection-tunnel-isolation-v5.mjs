@@ -22,6 +22,11 @@ let status = tunnelConfigStatus({ paths, env: {} });
 assert.equal(status.connectionId, a.connection.id);
 assert.equal(status.argv[0], "alpha-client");
 
+const pollutedEnv = { ROOTBOUND_TUNNEL_ARGV_JSON: JSON.stringify(["wrong-client", "--stdio"]) };
+const explicitStatus = tunnelConfigStatus({ paths: aPaths, env: pollutedEnv });
+assert.equal(explicitStatus.source, "persistent", "an explicit connection must ignore ROOTBOUND_TUNNEL_ARGV_JSON");
+assert.equal(explicitStatus.argv[0], "alpha-client");
+
 await setActiveConnection({ paths, selector: b.connection.id });
 status = tunnelConfigStatus({ paths, env: {} });
 assert.equal(status.connectionId, b.connection.id);
