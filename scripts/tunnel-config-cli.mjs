@@ -1,5 +1,6 @@
 import process from "node:process";
 import { getActiveConnection, loadConnectionRegistry } from "../src/connection-registry.mjs";
+import { resolveConnectionPaths } from "../src/connection-paths.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { runtimeStatus } from "../src/runtime-state.mjs";
 import { rollbackManagedTunnelSetup } from "../src/tunnel-bootstrap.mjs";
@@ -42,15 +43,16 @@ async function clear(argv) {
   const paths = resolveRootboundPaths();
   const registry = await loadConnectionRegistry({ paths });
   const active = getActiveConnection(registry);
+  const targetPaths = active ? resolveConnectionPaths({ paths, connection: active }) : paths;
   const runtime = await runtimeStatus(paths);
   if (runtime.running && active && (runtime.state?.connectionId === active.id || (!runtime.state?.connectionId && active.storageKind === "legacy-global"))) {
     const error = new Error(`Refusing to clear tunnel configuration for active connection "${active.name}" while Rootbound is running. Switch connections or run rootbound stop first.`);
     error.code = "CONNECTION_IN_USE";
     throw error;
   }
-  const before = tunnelConfigStatus({ paths });
-  await rollbackManagedTunnelSetup({ paths });
-  const after = tunnelConfigStatus({ paths });
+  const before = tunnelConfigStatus({ paths: targetPaths });
+  await rollbackManagedTunnelSetup({ paths: targetPaths });
+  const after = tunnelConfigStatus({ paths: targetPaths });
   emit({
     ok: true,
     action: "clear",
