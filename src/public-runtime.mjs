@@ -3,10 +3,12 @@ import { ACCEPTED_CODEX_VERSIONS, CodexAuthorityExecutor } from "./codex-authori
 import { CodexBrowserReaderExecutor } from "./browser-reader-executor.mjs";
 import { resolveCodexExecutable } from "./codex-bin.mjs";
 import { createCommandManager } from "./command-manager.mjs";
+import { createDurableRescueManager } from "./durable-rescue.mjs";
 import { readJsonFile } from "./json-file.mjs";
 import { createPersistentContinuityState } from "./persistent-continuity-state.mjs";
 import { CodexPublicContextExecutor } from "./public-context-executor.mjs";
 import { createPublicServerFactory } from "./public-server-factory.mjs";
+import { createRescueAutopilot } from "./rescue-autopilot.mjs";
 import { createRescueSessionManager } from "./rescue-continuity.mjs";
 import { withRootboundPermissionOverrides } from "./rootbound-permission-profile.mjs";
 import { resolveRootboundPaths } from "./state-paths.mjs";
@@ -16,6 +18,16 @@ import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from
 function envString(env, name, fallback = null) {
   const value = env?.[name];
   return typeof value === "string" && value.length ? value : fallback;
+}
+
+function envInteger(env, name, fallback, min, max) {
+  const raw = envString(env, name, null);
+  if (raw === null) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || String(parsed) !== raw || parsed < min || parsed > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  }
+  return parsed;
 }
 
 export async function createPublicRuntime({ env = process.env } = {}) {
@@ -43,10 +55,14 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     throw new Error("ROOTBOUND_CONFIG_OVERRIDES_FILE must contain { overrides: [\"key=value\", ...] }");
   }
   const configOverrides = withRootboundPermissionOverrides(configuredOverrides, { profileOverride });
+  const rescueAutopilotEnabled = envString(env, "ROOTBOUND_RESCUE_AUTOPILOT", "1") !== "0";
+  const rescueAutopilotThreshold = envInteger(env, "ROOTBOUND_RESCUE_ARM_PERCENT", 85, 50, 100);
+  const rescueAutopilotIntervalMs = envInteger(env, "ROOTBOUND_RESCUE_POLL_MS", 60_000, 10_000, 3_600_000);
 
   let publicContext = null;
   let stateStore = null;
   let commandManager = null;
+  let rescueAutopilot = null;
   let closed = false;
 
   try {
@@ -67,7 +83,8 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     stateStore = await openStateStore({ paths: resolveRootboundPaths({ env }) });
 
     const continuityState = createPersistentContinuityState({ store: stateStore });
-    const rescueManager = createRescueSessionManager({ store: stateStore, authorityExecutor, continuityState });
+    const baseRescueManager = createRescueSessionManager({ store: stateStore, authorityExecutor, continuityState });
+    const rescueManager = createDurableRescueManager({ base: baseRescueManager, store: stateStore });
     commandManager = createCommandManager({
       store: stateStore,
       continuityState,
@@ -79,6 +96,20 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       env,
     });
     const browserReader = new CodexBrowserReaderExecutor({ context: publicContext, defaultCwd });
+
+    if (rescueAutopilotEnabled) {
+      rescueAutopilot = createRescueAutopilot({
+        publicContext,
+        store: stateStore,
+        rescueManager,
+        authorityExecutor,
+        defaultCwd,
+        thresholdPercent: rescueAutopilotThreshold,
+        intervalMs: rescueAutopilotIntervalMs,
+      });
+      rescueAutopilot.start();
+    }
+
     const createServer = createPublicServerFactory({
       executor: authorityExecutor,
       authorityExecutor,
@@ -86,6 +117,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       browserReader,
       continuityState,
       rescueManager,
+      rescueAutopilot,
       commandManager,
       stateStore,
       maxConcurrent: 1,
@@ -94,6 +126,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     async function close() {
       if (closed) return;
       closed = true;
+      rescueAutopilot?.close();
       try { await commandManager?.close(); }
       finally {
         try { await publicContext?.close(); }
@@ -110,8 +143,10 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       defaultCwd,
       authorityValidation,
       modelLane: "chatgpt-only",
+      rescueAutopilot: rescueAutopilot ? { enabled: true, thresholdPercent: rescueAutopilotThreshold, intervalMs: rescueAutopilotIntervalMs } : { enabled: false },
     };
   } catch (error) {
+    rescueAutopilot?.close();
     await commandManager?.close().catch(() => {});
     await publicContext?.close().catch(() => {});
     try { stateStore?.close(); } catch {}
