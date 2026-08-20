@@ -43,8 +43,9 @@ export function createRescueAutopilot({
       const exhausted = quota?.codex?.availability === "exhausted" || quota?.codex?.exhausted === true;
       const shouldArm = exhausted || (Number.isFinite(usedPercent) && usedPercent >= thresholdPercent);
       if (!shouldArm) {
-        const previous = latestProjectEvent(store, project.projectRef, ARMED_EVENT);
-        if (previous && lastState.status === "armed") {
+        const armed = latestProjectEvent(store, project.projectRef, ARMED_EVENT);
+        const disarmed = latestProjectEvent(store, project.projectRef, DISARMED_EVENT);
+        if (armed && (!disarmed || disarmed.eventId < armed.eventId)) {
           store.recordEvent({
             projectRef: project.projectRef,
             kind: DISARMED_EVENT,
@@ -59,7 +60,8 @@ export function createRescueAutopilot({
       const resetAt = quota?.codex?.resetsAt ?? null;
       const armKey = `${fingerprint.fingerprintHash}:${resetAt ?? "none"}`;
       const previous = latestProjectEvent(store, project.projectRef, ARMED_EVENT);
-      if (previous?.payload?.armKey === armKey) {
+      const disarmed = latestProjectEvent(store, project.projectRef, DISARMED_EVENT);
+      if (previous?.payload?.armKey === armKey && (!disarmed || disarmed.eventId < previous.eventId)) {
         return setState({ status: "armed", projectRef: project.projectRef, threadId: previous.payload.threadId ?? null, usedPercent, thresholdPercent, reused: true, evaluatedAt: now() });
       }
 
@@ -83,15 +85,16 @@ export function createRescueAutopilot({
       return setState({ status: "armed", projectRef: project.projectRef, threadId: selection.thread.id, usedPercent, thresholdPercent, reused: false, evaluatedAt: now() });
     } catch (error) {
       const project = projectForCwd(store, defaultCwd);
+      const safeMessage = safeErrorMessage(error?.message ?? String(error));
       if (project) {
         store.recordEvent({
           projectRef: project.projectRef,
           kind: ERROR_EVENT,
-          payload: { name: error?.name ?? "Error", message: bounded(error?.message ?? String(error), 2_000), trigger },
+          payload: { name: error?.name ?? "Error", message: safeMessage, trigger },
           createdAt: now(),
         });
       }
-      return setState({ status: "error", error: bounded(error?.message ?? String(error), 2_000), evaluatedAt: now() });
+      return setState({ status: "error", error: safeMessage, evaluatedAt: now() });
     } finally {
       inFlight = false;
     }
@@ -111,15 +114,17 @@ export function createRescueAutopilot({
   }
 
   function candidateFor({ projectRef, fingerprintHash } = {}) {
-    const event = latestProjectEvent(store, projectRef, ARMED_EVENT);
-    if (!event?.payload?.threadId || !fingerprintHash) return null;
-    if (event.payload.fingerprintHash !== fingerprintHash) return null;
+    const armed = latestProjectEvent(store, projectRef, ARMED_EVENT);
+    const disarmed = latestProjectEvent(store, projectRef, DISARMED_EVENT);
+    if (!armed?.payload?.threadId || !fingerprintHash) return null;
+    if (disarmed && disarmed.eventId > armed.eventId) return null;
+    if (armed.payload.fingerprintHash !== fingerprintHash) return null;
     return {
-      threadId: event.payload.threadId,
-      match: event.payload.match ?? null,
-      armedAt: event.createdAt,
-      quota: event.payload.quota ?? null,
-      thresholdPercent: event.payload.thresholdPercent ?? thresholdPercent,
+      threadId: armed.payload.threadId,
+      match: armed.payload.match ?? null,
+      armedAt: armed.createdAt,
+      quota: armed.payload.quota ?? null,
+      thresholdPercent: armed.payload.thresholdPercent ?? thresholdPercent,
     };
   }
 
@@ -155,6 +160,12 @@ function compactQuota(quota, usedPercent) {
 function isWithin(root, target) {
   const relative = path.relative(path.resolve(root), path.resolve(target));
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+function safeErrorMessage(value) {
+  return bounded(value, 2_000)
+    .replace(/\bBearer\s+[^\s]+/gi, "Bearer <redacted>")
+    .replace(/([?&](?:token|key|api_key|apikey|auth|authorization|secret)=)[^&\s"']+/gi, "$1<redacted>");
 }
 
 function bounded(value, max) {
