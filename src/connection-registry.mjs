@@ -96,6 +96,20 @@ export async function setActiveConnection({ paths, selector, now = Date.now } = 
   });
 }
 
+export async function removeConnection({ paths, selector } = {}) {
+  await ensureRootboundStateDirs(paths);
+  return withRegistryLock(paths, async () => {
+    const registry = await readOrInitializeRegistryUnlocked(paths, Date.now);
+    const connection = getConnection(registry, selector);
+    if (!connection) throw registryError("CONNECTION_NOT_FOUND", `No connection matches: ${selector}`);
+    const connections = registry.connections.filter((entry) => entry.id !== connection.id);
+    const activeConnectionId = registry.activeConnectionId === connection.id ? (connections[0]?.id ?? null) : registry.activeConnectionId;
+    const next = validateRegistry({ ...registry, activeConnectionId, connections });
+    await writeRegistryUnlocked(paths, next, process.platform);
+    return { registry: next, connection, activeConnectionId };
+  });
+}
+
 async function readOrInitializeRegistryUnlocked(paths, now) {
   try {
     const current = await readRegistry(paths);
