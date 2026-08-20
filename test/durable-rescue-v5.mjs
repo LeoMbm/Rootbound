@@ -59,6 +59,18 @@ try {
   assert.equal(freshStarts, 0);
   assert.equal(store.getRescueSession(reattached.rescueRef).sessionKey, "mcp:new-chat");
 
+  const remoteReattached = await durable.start({
+    sessionKey: null,
+    project,
+    thread: { id: "thread_a" },
+    bindingRef: binding.bindingRef,
+    match: { confidence: "exact" },
+    quota: null,
+  });
+  assert.equal(remoteReattached.rescueRef, reattached.rescueRef);
+  assert.equal(remoteReattached.sessionKey, null, "remote reattach must revoke a previous implicit ChatGPT session scope");
+  assert.equal(store.getRescueSession(reattached.rescueRef).sessionKey, null);
+
   currentFingerprint = fingerprint(project.root, "hash-drift");
   await assert.rejects(
     () => durable.start({ sessionKey: "mcp:third-chat", project, thread: { id: "thread_a" }, bindingRef: binding.bindingRef }),
