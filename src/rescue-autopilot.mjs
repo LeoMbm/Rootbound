@@ -6,6 +6,7 @@ import { selectContinuationThread } from "./rescue-tools.mjs";
 const ARMED_EVENT = "rescue.autopilot.armed";
 const DISARMED_EVENT = "rescue.autopilot.disarmed";
 const ERROR_EVENT = "rescue.autopilot.error";
+const ERROR_EVENT_DEDUPE_MS = 15 * 60_000;
 
 export function createRescueAutopilot({
   publicContext,
@@ -41,7 +42,18 @@ export function createRescueAutopilot({
 
       const quota = await publicContext.quotaSnapshot();
       const usedPercent = highestUsedPercent(quota);
-      const exhausted = quota?.codex?.availability === "exhausted" || quota?.codex?.exhausted === true;
+      const availability = quota?.codex?.availability ?? "unknown";
+      const exhausted = availability === "exhausted" || quota?.codex?.exhausted === true;
+      const quotaKnown = exhausted || availability === "available" || Number.isFinite(usedPercent);
+      if (!quotaKnown) {
+        return setState({
+          status: "quota_unknown",
+          projectRef: project.projectRef,
+          preservedCandidate: Boolean(candidateFor({ projectRef: project.projectRef, fingerprintHash: latestArmedFingerprint(store, project.projectRef) })),
+          evaluatedAt: now(),
+        });
+      }
+
       const shouldArm = exhausted || (Number.isFinite(usedPercent) && usedPercent >= thresholdPercent);
       if (!shouldArm) {
         const armed = latestProjectEvent(store, project.projectRef, ARMED_EVENT);
@@ -88,7 +100,7 @@ export function createRescueAutopilot({
     } catch (error) {
       const project = projectForCwd(store, defaultCwd);
       const safeMessage = safeErrorMessage(error?.message ?? String(error));
-      if (project && !closed) {
+      if (project && !closed && shouldRecordError(store, project.projectRef, error?.name ?? "Error", safeMessage, now())) {
         store.recordEvent({
           projectRef: project.projectRef,
           kind: ERROR_EVENT,
@@ -143,6 +155,17 @@ function projectForCwd(store, cwd) {
   const candidates = store.listProjects().filter((project) => isWithin(project.root, target));
   candidates.sort((a, b) => b.root.length - a.root.length);
   return candidates[0] ?? null;
+}
+
+function latestArmedFingerprint(store, projectRef) {
+  return latestProjectEvent(store, projectRef, ARMED_EVENT)?.payload?.fingerprintHash ?? null;
+}
+
+function shouldRecordError(store, projectRef, name, message, at) {
+  const previous = latestProjectEvent(store, projectRef, ERROR_EVENT);
+  if (!previous) return true;
+  if (previous.payload?.name !== name || previous.payload?.message !== message) return true;
+  return at - previous.createdAt >= ERROR_EVENT_DEDUPE_MS;
 }
 
 function highestUsedPercent(quota) {
