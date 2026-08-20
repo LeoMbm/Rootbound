@@ -6,6 +6,7 @@ import { isProcessAlive } from "./runtime-state.mjs";
 
 const SCHEMA_VERSION = 1;
 const NAME_PATTERN = /^[^\u0000-\u001f\u007f]{1,48}$/;
+const TUNNEL_ID_PATTERN = /^tunnel_[0-9a-f]{32}$/;
 
 export async function loadConnectionRegistry({ paths, initializeLegacy = true, now = Date.now } = {}) {
   if (!paths?.connectionRegistryPath) throw new Error("connection registry requires Rootbound paths");
@@ -72,6 +73,7 @@ export async function addConnection({ paths, id = null, name, storageKind = "sco
     if (getConnection(registry, safeName)) throw registryError("CONNECTION_NAME_CONFLICT", `Connection already exists: ${safeName}`);
     const connectionId = id ?? createConnectionId();
     if (!/^connection_[0-9a-f]{24}$/.test(connectionId) || getConnection(registry, connectionId)) throw registryError("CONNECTION_ID_INVALID", "Connection id is invalid or already exists.");
+    if (tunnelId !== null && !TUNNEL_ID_PATTERN.test(tunnelId)) throw registryError("CONNECTION_TUNNEL_ID_INVALID", "Connection tunnel id must be tunnel_ followed by 32 lowercase hexadecimal characters.");
     const timestamp = now();
     const connection = { id: connectionId, name: safeName, storageKind, source, tunnelId, createdAt: timestamp, updatedAt: timestamp, lastUsedAt: null };
     const next = validateRegistry({ ...registry, connections: [...registry.connections, connection], activeConnectionId: registry.activeConnectionId ?? (makeActive || registry.connections.length === 0 ? connection.id : null) });
@@ -153,6 +155,7 @@ function validateRegistry(value) {
     const name = validateConnectionName(entry.name); const lower = name.toLowerCase();
     if (names.has(lower) || ids.has(entry.id)) throw registryError("CONNECTION_REGISTRY_INVALID", "Connection registry contains duplicate connections.");
     if (!new Set(["legacy-global", "scoped-v1"]).has(entry.storageKind)) throw registryError("CONNECTION_REGISTRY_INVALID", "Connection registry contains an invalid storage kind.");
+    if (entry.tunnelId !== null && entry.tunnelId !== undefined && !TUNNEL_ID_PATTERN.test(entry.tunnelId)) throw registryError("CONNECTION_REGISTRY_INVALID", "Connection registry contains an invalid tunnel id.");
     names.add(lower); ids.add(entry.id);
   }
   if (value.activeConnectionId !== null && value.activeConnectionId !== undefined && !ids.has(value.activeConnectionId)) throw registryError("CONNECTION_REGISTRY_INVALID", "Active connection does not exist in the registry.");
