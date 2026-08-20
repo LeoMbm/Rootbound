@@ -37,11 +37,10 @@ let child = null;
 let stopping = false;
 let restarts = 0;
 
-log(`supervisor start pid=${process.pid} project=${projectRef ?? "none"} connection=${connection.id} tunnel=${connection.tunnelId ?? "unknown"} tunnelSource=${launch.source ?? "unknown"}`);
-await startChild();
-
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
+log(`supervisor start pid=${process.pid} project=${projectRef ?? "none"} connection=${connection.id} tunnel=${connection.tunnelId ?? "unknown"} tunnelSource=${launch.source ?? "unknown"}`);
+await startChild();
 
 async function startChild() {
   const startedAt = Date.now();
@@ -65,9 +64,13 @@ async function startChild() {
     child.once("exit", (code, signal) => { clearTimeout(timer); reject(new Error(`tunnel exited during startup: code=${code} signal=${signal}`)); });
   });
 
-  await writeRuntimeState(paths, runtimeValue({ status: "starting", ready: false, startedAt }));
-  const readiness = await waitForTunnelReadiness({ healthUrlPath: connectionPaths.tunnelHealthUrlPath, timeoutMs: 10_000 });
-  if (!readiness.ok && connection.storageKind !== "legacy-global") {
+  const requiresReadiness = connection.storageKind === "scoped-v1";
+  if (!requiresReadiness) await writeRuntimeState(paths, runtimeValue({ status: "starting", ready: false, startedAt }));
+  const readiness = await waitForTunnelReadiness({
+    healthUrlPath: connectionPaths.tunnelHealthUrlPath,
+    timeoutMs: requiresReadiness ? 4_000 : 10_000,
+  });
+  if (!readiness.ok && requiresReadiness) {
     try { child.kill("SIGTERM"); } catch {}
     throw new Error(`Tunnel did not become ready: ${readiness.error}`);
   }
@@ -104,6 +107,7 @@ async function waitForTunnelReadiness({ healthUrlPath, timeoutMs }) {
   const deadline = Date.now() + timeoutMs;
   let lastError = "health URL not published";
   while (Date.now() < deadline) {
+    if (stopping) return { ok: false, error: "supervisor is stopping" };
     if (!child || child.exitCode !== null || child.signalCode !== null) return { ok: false, error: "tunnel exited before readiness" };
     try {
       const base = (await readFile(healthUrlPath, "utf8")).trim().replace(/\/$/, "");
