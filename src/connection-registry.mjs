@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, open, readFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { ensureRootboundStateDirs } from "./state-paths.mjs";
 import { isProcessAlive } from "./runtime-state.mjs";
@@ -72,12 +72,14 @@ export function getActiveConnection(registry) {
   return registry?.activeConnectionId ? registry.connections.find((entry) => entry.id === registry.activeConnectionId) ?? null : null;
 }
 
-export async function addConnection({ paths, name, storageKind = "scoped-v1", source = "guided", tunnelId = null, makeActive = false, now = Date.now } = {}) {
+export async function addConnection({ paths, id = null, name, storageKind = "scoped-v1", source = "guided", tunnelId = null, makeActive = false, now = Date.now } = {}) {
   const registry = await loadConnectionRegistry({ paths });
   const safeName = validateConnectionName(name);
   if (getConnection(registry, safeName)) throw registryError("CONNECTION_NAME_CONFLICT", `Connection already exists: ${safeName}`);
+  const connectionId = id ?? createConnectionId();
+  if (!/^connection_[0-9a-f]{24}$/.test(connectionId) || getConnection(registry, connectionId)) throw registryError("CONNECTION_ID_INVALID", "Connection id is invalid or already exists.");
   const timestamp = now();
-  const connection = { id: createConnectionId(), name: safeName, storageKind, source, tunnelId, createdAt: timestamp, updatedAt: timestamp, lastUsedAt: null };
+  const connection = { id: connectionId, name: safeName, storageKind, source, tunnelId, createdAt: timestamp, updatedAt: timestamp, lastUsedAt: null };
   const next = { ...registry, connections: [...registry.connections, connection], activeConnectionId: registry.activeConnectionId ?? (makeActive || registry.connections.length === 0 ? connection.id : null) };
   await writeConnectionRegistry({ paths, registry: next });
   return { registry: next, connection };
