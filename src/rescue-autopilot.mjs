@@ -23,6 +23,7 @@ export function createRescueAutopilot({
   if (!Number.isInteger(thresholdPercent) || thresholdPercent < 50 || thresholdPercent > 100) throw new Error("autopilot threshold must be an integer from 50 to 100");
   if (!Number.isInteger(intervalMs) || intervalMs < 10_000) throw new Error("autopilot interval must be at least 10 seconds");
 
+  const candidateMaxAgeMs = Math.max(intervalMs * 2, 120_000);
   let timer = null;
   let inFlight = false;
   let closed = false;
@@ -61,7 +62,8 @@ export function createRescueAutopilot({
       const armKey = `${fingerprint.fingerprintHash}:${resetAt ?? "none"}`;
       const previous = latestProjectEvent(store, project.projectRef, ARMED_EVENT);
       const disarmed = latestProjectEvent(store, project.projectRef, DISARMED_EVENT);
-      if (previous?.payload?.armKey === armKey && (!disarmed || disarmed.eventId < previous.eventId)) {
+      const previousFresh = previous && now() - previous.createdAt <= candidateMaxAgeMs;
+      if (previousFresh && previous?.payload?.armKey === armKey && (!disarmed || disarmed.eventId < previous.eventId)) {
         return setState({ status: "armed", projectRef: project.projectRef, threadId: previous.payload.threadId ?? null, usedPercent, thresholdPercent, reused: true, evaluatedAt: now() });
       }
 
@@ -119,6 +121,7 @@ export function createRescueAutopilot({
     const disarmed = latestProjectEvent(store, projectRef, DISARMED_EVENT);
     if (!armed?.payload?.threadId || !fingerprintHash) return null;
     if (disarmed && disarmed.eventId > armed.eventId) return null;
+    if (now() - armed.createdAt > candidateMaxAgeMs) return null;
     if (armed.payload.fingerprintHash !== fingerprintHash) return null;
     return {
       threadId: armed.payload.threadId,
@@ -132,7 +135,7 @@ export function createRescueAutopilot({
   function status() { return { ...lastState }; }
   function setState(value) { lastState = value; return status(); }
 
-  return { start, close, evaluate, candidateFor, status, thresholdPercent, intervalMs };
+  return { start, close, evaluate, candidateFor, status, thresholdPercent, intervalMs, candidateMaxAgeMs };
 }
 
 function projectForCwd(store, cwd) {
