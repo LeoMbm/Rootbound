@@ -74,7 +74,7 @@ try {
     async exec() { throw new Error("git ancestry lookup should not be needed for exact SHA"); },
   };
 
-  let now = 1000;
+  let clock = 1000;
   const autopilot = createRescueAutopilot({
     publicContext,
     store,
@@ -83,7 +83,7 @@ try {
     defaultCwd: repo,
     thresholdPercent: 85,
     intervalMs: 60_000,
-    now: () => ++now,
+    now: () => ++clock,
   });
 
   const armed = await autopilot.evaluate("test");
@@ -95,7 +95,14 @@ try {
 
   const reused = await autopilot.evaluate("test-repeat");
   assert.equal(reused.status, "armed");
-  assert.equal(reused.reused, true, "same fingerprint/reset window should reuse the arm event");
+  assert.equal(reused.reused, true, "same fresh fingerprint/reset window should reuse the arm event");
+
+  clock += autopilot.candidateMaxAgeMs + 10;
+  assert.equal(autopilot.candidateFor({ projectRef: project.projectRef, fingerprintHash: fingerprint.fingerprintHash }), null, "an old arm must expire instead of pinning a potentially stale thread");
+  const refreshed = await autopilot.evaluate("refresh-stale");
+  assert.equal(refreshed.status, "armed");
+  assert.equal(refreshed.reused, false, "expired arm must re-run thread selection");
+  assert.equal(autopilot.candidateFor({ projectRef: project.projectRef, fingerprintHash: fingerprint.fingerprintHash }).threadId, thread.id);
 
   usedPercent = 20;
   const below = await autopilot.evaluate("quota-reset");
@@ -107,6 +114,7 @@ try {
   assert.equal(rearmed.status, "armed");
   assert.equal(autopilot.candidateFor({ projectRef: project.projectRef, fingerprintHash: fingerprint.fingerprintHash }).threadId, thread.id);
 
+  await autopilot.close();
   console.log("rescue-autopilot-v5: ok");
 } finally {
   store.close();
