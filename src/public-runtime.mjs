@@ -126,11 +126,14 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     async function close() {
       if (closed) return;
       closed = true;
-      rescueAutopilot?.close();
+      const autopilotDrain = rescueAutopilot?.close() ?? Promise.resolve();
       try { await commandManager?.close(); }
       finally {
         try { await publicContext?.close(); }
-        finally { stateStore?.close(); }
+        finally {
+          await autopilotDrain.catch(() => {});
+          stateStore?.close();
+        }
       }
     }
 
@@ -146,9 +149,10 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       rescueAutopilot: rescueAutopilot ? { enabled: true, thresholdPercent: rescueAutopilotThreshold, intervalMs: rescueAutopilotIntervalMs } : { enabled: false },
     };
   } catch (error) {
-    rescueAutopilot?.close();
+    const autopilotDrain = rescueAutopilot?.close() ?? Promise.resolve();
     await commandManager?.close().catch(() => {});
     await publicContext?.close().catch(() => {});
+    await autopilotDrain.catch(() => {});
     try { stateStore?.close(); } catch {}
     throw error;
   }
