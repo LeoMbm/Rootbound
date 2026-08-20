@@ -10,6 +10,7 @@ const binDir = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
 const runtimeMutations = new Set(["connect", "start", "stop"]);
+const paths = resolveRootboundPaths();
 
 if (command === "help" || command === "--help" || command === "-h") {
   printHelp();
@@ -25,11 +26,17 @@ if (command === "help" || command === "--help" || command === "-h") {
 } else if (command === "diagnostic" || command === "diagnostics") {
   process.exitCode = await runScript("diagnostic.mjs", args.slice(1));
 } else if (command === "tunnel") {
-  process.exitCode = await runScript("tunnel-config-cli.mjs", args.slice(1));
+  const operation = args[1] ?? "show";
+  process.exitCode = operation === "clear"
+    ? await withRuntimeMutationLock(paths, () => runScript("tunnel-config-cli.mjs", args.slice(1)))
+    : await runScript("tunnel-config-cli.mjs", args.slice(1));
 } else if (command === "connection") {
-  process.exitCode = await runScript("connection-cli.mjs", args.slice(1));
+  const operation = args[1] ?? "list";
+  process.exitCode = operation === "switch"
+    ? await withRuntimeMutationLock(paths, () => runScript("connection-cli.mjs", args.slice(1)))
+    : await runScript("connection-cli.mjs", args.slice(1));
 } else if (runtimeMutations.has(command)) {
-  await withRuntimeMutationLock(resolveRootboundPaths(), () => import("./rootbound.mjs"));
+  await withRuntimeMutationLock(paths, () => import("./rootbound.mjs"));
 } else {
   await import("./rootbound.mjs");
 }
