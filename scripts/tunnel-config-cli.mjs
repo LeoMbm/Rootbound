@@ -1,5 +1,7 @@
 import process from "node:process";
+import { getActiveConnection, loadConnectionRegistry } from "../src/connection-registry.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
+import { runtimeStatus } from "../src/runtime-state.mjs";
 import { rollbackManagedTunnelSetup } from "../src/tunnel-bootstrap.mjs";
 import { saveTunnelConfig, tunnelConfigStatus } from "../src/tunnel-config.mjs";
 
@@ -38,6 +40,14 @@ function show(argv) {
 async function clear(argv) {
   const json = onlyJson(argv);
   const paths = resolveRootboundPaths();
+  const registry = await loadConnectionRegistry({ paths });
+  const active = getActiveConnection(registry);
+  const runtime = await runtimeStatus(paths);
+  if (runtime.running && active && (runtime.state?.connectionId === active.id || (!runtime.state?.connectionId && active.storageKind === "legacy-global"))) {
+    const error = new Error(`Refusing to clear tunnel configuration for active connection "${active.name}" while Rootbound is running. Switch connections or run rootbound stop first.`);
+    error.code = "CONNECTION_IN_USE";
+    throw error;
+  }
   const before = tunnelConfigStatus({ paths });
   await rollbackManagedTunnelSetup({ paths });
   const after = tunnelConfigStatus({ paths });
@@ -46,7 +56,8 @@ async function clear(argv) {
     action: "clear",
     configured: after.configured,
     cleared: before.source === "persistent",
-    path: paths.tunnelConfigPath,
+    path: before.path ?? after.path,
+    connectionId: before.connectionId ?? active?.id ?? null,
     managedArtifactsCleared: true,
     environmentOverrideActive: after.source === "environment",
   }, json);
@@ -97,6 +108,6 @@ function emit(value, json) {
   }
 }
 function printHelp() {
-  process.stdout.write(`Rootbound tunnel configuration (advanced)\n\nNormal users should run:\n  rootbound connect .\n\nAdvanced/manual usage:\n  rootbound tunnel configure --argv-json '["tunnel-client", "run", "--profile", "my-profile"]'\n  rootbound tunnel configure -- tunnel-client run --profile my-profile\n  rootbound tunnel show [--json]\n  rootbound tunnel clear [--json]\n\nPersistent manual config refuses literal credentials. The guided connect wizard keeps its runtime key outside argv/tunnel.json.\n`);
+  process.stdout.write(`Rootbound tunnel configuration (advanced)\n\nNormal users should run:\n  rootbound connect .\n\nAdvanced/manual usage:\n  rootbound tunnel configure --argv-json '["tunnel-client", "run", "--profile", "my-profile"]'\n  rootbound tunnel configure -- tunnel-client run --profile my-profile\n  rootbound tunnel show [--json]\n  rootbound tunnel clear [--json]\n\nTunnel commands operate on the active Rootbound connection. Clearing the tunnel used by a running runtime is refused. Persistent manual config refuses literal credentials. The guided connect wizard keeps its runtime key outside argv/tunnel.json.\n`);
 }
 function usage(message) { const error = new Error(message); error.usage = true; return error; }
