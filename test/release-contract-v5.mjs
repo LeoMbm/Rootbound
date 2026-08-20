@@ -18,6 +18,7 @@ const rootboundEntry = await readFile(path.join(root, "bin", "rootbound-entry.mj
 const upgradeScript = await readFile(path.join(root, "scripts", "upgrade.mjs"), "utf8");
 const tunnelBootstrap = await readFile(path.join(root, "src", "tunnel-bootstrap.mjs"), "utf8");
 const tunnelCli = await readFile(path.join(root, "scripts", "tunnel-config-cli.mjs"), "utf8");
+const connectionCli = await readFile(path.join(root, "scripts", "connection-cli.mjs"), "utf8");
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const methodRegistry = JSON.parse(await readFile(path.join(root, "config", "toolbox-method-registry.json"), "utf8"));
 
@@ -32,9 +33,7 @@ assert.equal(PUBLIC_TOOL_NAMES.some((name) => name.startsWith("codex.agent_")), 
 assert.equal(methodRegistry.defaultAction, "deny");
 for (const [method, entry] of Object.entries(methodRegistry.remoteAllowlist ?? {})) {
   assert.equal(entry.classification, "model-free", `${method} must remain model-free`);
-  for (const tool of entry.bridgeTools ?? []) {
-    assert.ok(PUBLIC_TOOL_NAMES.includes(tool), `${method} registry references non-public bridge tool ${tool}`);
-  }
+  for (const tool of entry.bridgeTools ?? []) assert.ok(PUBLIC_TOOL_NAMES.includes(tool), `${method} registry references non-public bridge tool ${tool}`);
 }
 
 assert.match(workflow, /workflow_dispatch\s*:/);
@@ -46,6 +45,9 @@ await access(path.join(root, "scripts", "validate-v5-syntax.mjs"));
 await access(path.join(root, "scripts", "validate-v5.mjs"));
 await access(path.join(root, "scripts", "check-lock-root.mjs"));
 await access(path.join(root, "src", "tunnel-bootstrap.mjs"));
+await access(path.join(root, "src", "connection-registry.mjs"));
+await access(path.join(root, "src", "connection-paths.mjs"));
+await access(path.join(root, "scripts", "connection-cli.mjs"));
 
 assert.equal(packageJson.engines?.node, ">=22.13.0");
 assert.equal(packageJson.bin?.rootbound, "bin/rootbound-entry.mjs");
@@ -58,6 +60,8 @@ assert.equal(packageJson.scripts?.["check:syntax"], "node scripts/validate-v5-sy
 assert.equal(packageJson.scripts?.["validate:v5"], "node scripts/validate-v5.mjs");
 assert.match(packageJson.scripts?.["validate:release"] ?? "", /check:lock:strict/);
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /tunnel-bootstrap-v5\.mjs/, "test:v5 must cover guided tunnel bootstrap");
+assert.match(packageJson.scripts?.["test:v5"] ?? "", /connection-registry-v5\.mjs/, "test:v5 must cover connection registry durability");
+assert.match(packageJson.scripts?.["test:v5"] ?? "", /connection-tunnel-isolation-v5\.mjs/, "test:v5 must cover connection tunnel isolation");
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /rescue-continuity-v5\.mjs/, "test:v5 must cover quota-rescue continuity");
 assert.match(packageJson.scripts?.["test:v5"] ?? "", /release-contract-v5\.mjs/, "test:v5 must include the release contract guard");
 assert.ok(packageJson.files?.includes("docs/plans/rootbound-v5.md"), "V5 plan must be packaged because README links to it");
@@ -77,6 +81,10 @@ assert.match(uninstallSh, /stop --force --json/);
 assert.match(uninstallPs1, /stop --force --json/);
 assert.match(rootboundEntry, /rootbound project remove/);
 assert.match(rootboundEntry, /rootbound trust remove/);
+assert.match(rootboundEntry, /rootbound connection list/);
+assert.match(rootboundEntry, /connection-cli\.mjs/);
+assert.match(connectionCli, /CONNECTION_SWITCH_FAILED_RESTORED/);
+assert.match(connectionCli, /validateManagedTunnel/);
 
 const selfUpgrade = spawnSync(process.execPath, [path.join(root, "scripts", "upgrade.mjs"), "--from", root, "--json"], {
   cwd: root,
@@ -110,6 +118,7 @@ assert.match(tunnelBootstrap, /writeManagedTunnelSetup/);
 assert.match(tunnelBootstrap, /api_key:/);
 assert.match(tunnelBootstrap, /file:\$\{paths\.tunnelSecretPath\}/);
 assert.match(tunnelBootstrap, /"doctor", "--profile-file"/);
+assert.match(tunnelBootstrap, /url_file:/);
 assert.match(tunnelCli, /Normal users should run:/);
 assert.match(tunnelCli, /rootbound connect \./);
 
