@@ -4,6 +4,7 @@ export function resolveConnectionPaths({ paths, connection } = {}) {
   if (!paths || !connection?.id || !connection?.storageKind) throw new Error("resolveConnectionPaths requires Rootbound paths and a connection");
   if (connection.storageKind === "legacy-global") {
     return Object.freeze({
+      ...paths,
       connectionId: connection.id,
       connectionDir: paths.stateDir,
       tunnelConfigPath: paths.tunnelConfigPath,
@@ -15,6 +16,7 @@ export function resolveConnectionPaths({ paths, connection } = {}) {
   if (connection.storageKind !== "scoped-v1") throw new Error(`Unsupported connection storage kind: ${connection.storageKind}`);
   const connectionDir = path.join(paths.connectionsDir, connection.id);
   return Object.freeze({
+    ...paths,
     connectionId: connection.id,
     connectionDir,
     tunnelConfigPath: path.join(connectionDir, "tunnel.json"),
