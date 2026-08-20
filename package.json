@@ -63,6 +63,7 @@
     "bin/rootbound-stdio.sh",
     "bin/rootbound-uninstall.sh",
     "docs/plans/rootbound-v5.md",
+    "docs/multi-connection.md",
     "npm-shrinkwrap.json",
     "README.md",
     "README.zh-CN.md",
