@@ -17,12 +17,20 @@ const projectRoot = process.env.ROOTBOUND_PROJECT_ROOT || null;
 const projectRef = process.env.ROOTBOUND_PROJECT_REF || null;
 const registry = await loadConnectionRegistry({ paths });
 const requestedConnection = process.env.ROOTBOUND_CONNECTION_ID ? getConnection(registry, process.env.ROOTBOUND_CONNECTION_ID) : null;
-const connection = requestedConnection ?? getActiveConnection(registry);
+const persistentConnection = requestedConnection ?? getActiveConnection(registry);
+const connection = persistentConnection ?? (process.env.ROOTBOUND_TUNNEL_ARGV_JSON ? {
+  id: "connection_environment",
+  name: "environment",
+  storageKind: "legacy-global",
+  source: "environment",
+  tunnelId: null,
+} : null);
 if (!connection) throw new Error("No active Rootbound connection; run `rootbound connect .` first.");
 const connectionPaths = resolveConnectionPaths({ paths, connection });
 const runtimeId = `runtime_${randomUUID()}`;
 const restartLimit = parseBoundedInt(process.env.ROOTBOUND_TUNNEL_RESTART_LIMIT ?? "3", 0, 20, "ROOTBOUND_TUNNEL_RESTART_LIMIT");
 const launch = resolveTunnelLaunch({ packageRoot, projectRoot, paths: connectionPaths });
+const childBaseEnv = connection.storageKind === "scoped-v1" ? managedTunnelEnvironment(process.env) : process.env;
 const logHandle = await open(paths.logPath, "a", 0o600);
 let child = null;
 let stopping = false;
@@ -40,7 +48,7 @@ async function startChild() {
   child = spawn(launch.command, launch.args, {
     cwd: projectRoot ?? packageRoot,
     env: {
-      ...managedTunnelEnvironment(process.env),
+      ...childBaseEnv,
       ROOTBOUND_STDIO_NODE: process.execPath,
       ROOTBOUND_STDIO_SCRIPT: path.join(packageRoot, "scripts", "launch.mjs"),
       ROOTBOUND_CONNECTION_ID: connection.id,
