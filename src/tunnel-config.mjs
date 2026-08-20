@@ -49,11 +49,11 @@ export async function clearTunnelConfig({ paths = resolveRootboundPaths() } = {}
 }
 
 export function tunnelConfigStatus({ paths = resolveRootboundPaths(), env = process.env } = {}) {
-  if (typeof env.ROOTBOUND_TUNNEL_ARGV_JSON === "string" && env.ROOTBOUND_TUNNEL_ARGV_JSON.trim()) {
+  const effectivePaths = effectiveTunnelPaths(paths);
+  if (!effectivePaths?.connectionId && typeof env.ROOTBOUND_TUNNEL_ARGV_JSON === "string" && env.ROOTBOUND_TUNNEL_ARGV_JSON.trim()) {
     const argv = parseArgvJson(env.ROOTBOUND_TUNNEL_ARGV_JSON, "ROOTBOUND_TUNNEL_ARGV_JSON");
     return { configured: true, source: "environment", path: null, argv: redactTemplateArgv(argv), envPlaceholders: envNames(argv) };
   }
-  const effectivePaths = effectiveTunnelPaths(paths);
   try {
     const payload = readPersistent(effectivePaths.tunnelConfigPath);
     return {
@@ -131,7 +131,7 @@ export function validateTunnelArgvTemplate(argv) {
 }
 
 function loadTunnelTemplate({ env, paths }) {
-  const raw = env.ROOTBOUND_TUNNEL_ARGV_JSON;
+  const raw = !paths?.connectionId ? env.ROOTBOUND_TUNNEL_ARGV_JSON : null;
   if (typeof raw === "string" && raw.trim()) return { source: "environment", argv: parseArgvJson(raw, "ROOTBOUND_TUNNEL_ARGV_JSON") };
   try {
     const payload = readPersistent(paths.tunnelConfigPath);
