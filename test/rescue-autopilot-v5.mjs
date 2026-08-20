@@ -47,8 +47,17 @@ try {
   };
 
   let usedPercent = 90;
+  let quotaUnknown = false;
   const publicContext = {
     async quotaSnapshot() {
+      if (quotaUnknown) {
+        return {
+          status: "partial",
+          observedAt: "2026-08-21T00:00:00.000Z",
+          codex: { availability: "unknown", exhausted: false, resetsAt: null, limits: [] },
+          rateLimits: { status: "unavailable", method: "account/rateLimits/read" },
+        };
+      }
       return {
         status: "ok",
         observedAt: "2026-08-21T00:00:00.000Z",
@@ -96,6 +105,12 @@ try {
   const reused = await autopilot.evaluate("test-repeat");
   assert.equal(reused.status, "armed");
   assert.equal(reused.reused, true, "same fresh fingerprint/reset window should reuse the arm event");
+
+  quotaUnknown = true;
+  const unknown = await autopilot.evaluate("auth-transient");
+  assert.equal(unknown.status, "quota_unknown");
+  assert.ok(autopilot.candidateFor({ projectRef: project.projectRef, fingerprintHash: fingerprint.fingerprintHash }), "unknown quota must not disarm a previously valid candidate");
+  quotaUnknown = false;
 
   clock += autopilot.candidateMaxAgeMs + 10;
   assert.equal(autopilot.candidateFor({ projectRef: project.projectRef, fingerprintHash: fingerprint.fingerprintHash }), null, "an old arm must expire instead of pinning a potentially stale thread");
