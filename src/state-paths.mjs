@@ -17,7 +17,7 @@ export function resolveRootboundPaths({ env = process.env, platform = process.pl
   if (!root && platform === "darwin") root = path.join(home, "Library", "Application Support", "Rootbound");
   if (!root) {
     const xdgState = typeof env.XDG_STATE_HOME === "string" && env.XDG_STATE_HOME.trim()
-      ? env.XDG_STATE_HOME.trim()
+      ? path.resolve(env.XDG_STATE_HOME.trim())
       : path.join(home, ".local", "state");
     root = path.join(xdgState, "rootbound");
   }
@@ -32,11 +32,16 @@ export function resolveRootboundPaths({ env = process.env, platform = process.pl
     stateDir,
     dbPath: path.join(stateDir, "rootbound.sqlite3"),
     permissionConsentPath: path.join(stateDir, "permission-consent.json"),
+    connectionRegistryPath: path.join(stateDir, "connection-registry.json"),
+    connectionRegistryLockPath: path.join(stateDir, "connection-registry.lock"),
+    connectionsDir: path.join(stateDir, "connections"),
     tunnelConfigPath: path.join(stateDir, "tunnel.json"),
     tunnelManagedProfilePath: path.join(stateDir, "tunnel-client.yaml"),
     tunnelSecretPath: path.join(stateDir, "tunnel-runtime.key"),
+    tunnelHealthUrlPath: path.join(runtimeDir, "tunnel-health.url"),
     runtimeDir,
     runtimeStatePath: path.join(runtimeDir, "runtime.json"),
+    runtimeMutationLockPath: path.join(runtimeDir, "mutation.lock"),
     logsDir,
     logPath: path.join(logsDir, "rootbound.log"),
     backupsDir,
@@ -44,7 +49,7 @@ export function resolveRootboundPaths({ env = process.env, platform = process.pl
 }
 
 export async function ensureRootboundStateDirs(paths) {
-  for (const dir of [paths.stateDir, paths.runtimeDir, paths.logsDir, paths.backupsDir]) {
+  for (const dir of [paths.stateDir, paths.connectionsDir, paths.runtimeDir, paths.logsDir, paths.backupsDir]) {
     await mkdir(dir, { recursive: true, mode: 0o700 });
   }
   return paths;
