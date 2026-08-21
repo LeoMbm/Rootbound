@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "verifiedCodexVersion": "0.148.0-alpha.15",
-  "additionalAcceptedCodexVersions": ["0.148.0-alpha.9"],
-  "verifiedAt": "2026-08-18",
+  "verifiedCodexVersion": "0.149.0-alpha.4",
+  "additionalAcceptedCodexVersions": ["0.148.0-alpha.15", "0.148.0-alpha.9"],
+  "verifiedAt": "2026-08-21",
   "defaultAction": "deny",
   "remoteAllowlist": {
     "command/exec": {
@@ -21,7 +21,7 @@
         "codex.git_diff"
       ],
       "evidence": [
-        "Codex 0.148.0-alpha.15 App Server documentation describes command/exec as running one command without starting a thread/turn.",
+        "Codex 0.149.0-alpha.4 passed Rootbound's local compatibility probe on Apple Silicon macOS on 2026-08-21: App Server initialize, config/read, permissionProfile/list, exact-root read-only authority, command/exec with permissionProfile, thread/start read-only projection, and account/rateLimits/read all succeeded without a model turn.",
         "The accepted App Server implementation supports processId plus streamed stdout/stderr deltas on the same connection.",
         "Rootbound rejects model-turn/token-usage notifications observed during model-free command execution."
       ]
