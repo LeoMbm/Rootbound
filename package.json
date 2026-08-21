@@ -23,6 +23,7 @@
     "start:stdio": "node scripts/launch.mjs stdio",
     "start:http": "node scripts/launch.mjs http",
     "doctor": "node scripts/doctor.mjs",
+    "probe:codex": "node scripts/probe-codex-compat.mjs",
     "self-test": "node scripts/self-test.mjs",
     "check:syntax": "node scripts/validate-v5-syntax.mjs",
     "check:lock": "node scripts/check-lock-root.mjs",
