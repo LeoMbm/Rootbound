@@ -101,6 +101,13 @@ if (codexResolution?.path && codexProbe?.ok) {
 }
 
 const failedCoreChecks = checks.filter((check) => check.required && !check.ok);
+if (requestedCwd && !projectContext) {
+  const prerequisite = checks.find((check) => !check.ok && ["codex-executable", "codex-version-gate", "codex-app-server"].includes(check.name)) ?? failedCoreChecks[0] ?? null;
+  const detail = prerequisite
+    ? `${prerequisite.name}: ${prerequisite.detail}${prerequisite.action ? `; ${prerequisite.action}` : ""}`
+    : "project authority was not reached";
+  projectContext = { ok: false, error: sanitizeText(`Project authority was not checked because a prerequisite failed: ${detail}`) };
+}
 const status = failedCoreChecks.length ? "error" : warnings.length || (requestedCwd && !projectContext?.ok) ? "partial" : "ok";
 const result = {
   status,
@@ -108,7 +115,7 @@ const result = {
   host: { platform: process.platform, arch: process.arch, node: process.version },
   connection: connectionContext,
   codex: { resolutionSource: codexResolution?.source ?? null, executable: codexResolution?.path ? redactHomePath(codexResolution.path) : null, version: codexProbe?.versionText ?? null, appServer },
-  project: requestedCwd ? projectContext ?? { ok: false, error: "project context was not checked" } : { status: "not_requested" },
+  project: requestedCwd ? projectContext : { status: "not_requested" },
   checks,
   warnings: dedupeWarnings(warnings),
   notes: [
