@@ -1,6 +1,7 @@
 import path from "node:path";
 import { createRequire } from "node:module";
 import { createContinuityIdempotency } from "./continuity-idempotency.mjs";
+import { buildContinuityManifest, manifestInjectionFooter, persistContinuityManifest } from "./continuity-manifest.mjs";
 import { registerProject, resolveProjectRoot } from "./project-registry.mjs";
 import { buildContinuityCheckpoint } from "./thread-history-tools.mjs";
 import { publicFingerprint } from "./rescue-continuity.mjs";
@@ -14,19 +15,47 @@ const rescueRefSchema = z.string().regex(/^rescue_[0-9a-f-]{36}$/i).optional();
 const lineSchema = z.string().min(1).max(8_192);
 const idempotencyKeySchema = z.string().min(8).max(256).regex(/^[A-Za-z0-9._:-]+$/).optional();
 
-export function registerRescueTools(server, { context, authorityExecutor, continuityState, stateStore, rescueManager, getSessionKey }) {
+export function registerRescueTools(server, { context, authorityExecutor, continuityState, stateStore, rescueManager, rescueAutopilot = null, getSessionKey }) {
   if (!server || !context || !authorityExecutor || !continuityState || !stateStore || !rescueManager || !getSessionKey) return;
   const idempotency = createContinuityIdempotency({ store: stateStore });
 
   server.registerTool("codex.continuity_resume", {
     title: "Resume Interrupted Codex Work",
-    description: "Find the best matching persisted Codex session for the authorized workspace, verify repository/branch/SHA continuity, create or reuse a durable continuity binding, and open a Rootbound rescue session for ChatGPT. This reads history and current worktree state without starting a Codex model turn.",
+    description: "Reattach a verified durable rescue when possible, otherwise consume a revalidated quota-autopilot candidate or find the best matching persisted Codex session for the authorized workspace. This reads history and current worktree state without starting a Codex model turn.",
     inputSchema: z.object({ cwd: cwdSchema, threadId: threadIdSchema }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (input, ctx) => typedToolResponse(async () => {
     const project = await resolveAuthorizedProject({ cwd: input.cwd, authorityExecutor, stateStore });
     const fingerprint = await rescueManager.captureFingerprint(project.root);
-    const selection = await selectContinuationThread({ context, authorityExecutor, project, fingerprint, threadId: input.threadId });
+    let selection = null;
+    let selectionSource = "search";
+
+    if (!input.threadId) {
+      const active = rescueManager.activeForProject?.(project.projectRef) ?? null;
+      if (active?.threadId) {
+        selection = await selectContinuationThread({ context, authorityExecutor, project, fingerprint, threadId: active.threadId });
+        selectionSource = "durable_rescue";
+      }
+    }
+
+    if (!selection && !input.threadId && rescueAutopilot) {
+      const armed = rescueAutopilot.candidateFor({ projectRef: project.projectRef, fingerprintHash: fingerprint.fingerprintHash });
+      if (armed?.threadId) {
+        try {
+          const candidate = await selectContinuationThread({ context, authorityExecutor, project, fingerprint, threadId: armed.threadId });
+          if (candidate.match?.confidence !== "not_found" && candidate.match?.repository !== "mismatch") {
+            selection = candidate;
+            selectionSource = "autopilot";
+          }
+        } catch {}
+      }
+    }
+
+    if (!selection) {
+      selection = await selectContinuationThread({ context, authorityExecutor, project, fingerprint, threadId: input.threadId });
+      selectionSource = input.threadId ? "explicit_thread" : "search";
+    }
+
     if (selection.status === "not_found") {
       return { status: "not_found", project: publicProject(project), match: selection.match, worktree: publicFingerprint(fingerprint), modelTurnStarted: false };
     }
@@ -47,6 +76,9 @@ export function registerRescueTools(server, { context, authorityExecutor, contin
         reason: quota?.codex?.availability === "exhausted" ? "codex_quota_exhausted" : "codex_interruption_or_manual_handoff",
         codexAvailability: quota?.codex?.availability ?? "unknown",
         resetsAt: quota?.codex?.resetsAt ?? null,
+        durable: true,
+        reattached: rescue.reattached === true,
+        selectionSource,
       },
       project: publicProject(project),
       thread: publicThread(thread),
@@ -55,6 +87,7 @@ export function registerRescueTools(server, { context, authorityExecutor, contin
       handoff: projectBoundedHistory(recent),
       worktree: publicFingerprint(rescue.baselineFingerprint),
       quota,
+      autopilot: rescueAutopilot ? { enabled: true, candidateUsed: selectionSource === "autopilot", state: rescueAutopilot.status() } : { enabled: false },
       bindingReused: binding.reused === true,
       modelTurnStarted: false,
     };
@@ -67,11 +100,15 @@ export function registerRescueTools(server, { context, authorityExecutor, contin
     description: "Read the current Codex/ChatGPT rate-limit snapshot through Codex App Server without starting a Codex model turn. Quota state is advisory and never gates Rootbound continuity.",
     inputSchema: z.object({}).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-  }, async () => typedToolResponse(async () => ({ ...await safeQuota(context), modelTurnStarted: false }), { operation: "quota_status" }));
+  }, async () => typedToolResponse(async () => ({
+    ...await safeQuota(context),
+    autopilot: rescueAutopilot ? { enabled: true, ...rescueAutopilot.status() } : { enabled: false, status: "disabled" },
+    modelTurnStarted: false,
+  }), { operation: "quota_status" }));
 
   server.registerTool("codex.continuity_handoff", {
     title: "Hand Rescue Work Back To Codex",
-    description: "Verify the active rescue worktree, build a bounded delta checkpoint, inject it into the original persisted Codex thread without starting a model turn, and close the rescue session as handed off.",
+    description: "Verify the active rescue worktree, create a hashed Rootbound continuity manifest, inject a bounded delta checkpoint into the original persisted Codex thread without starting a model turn, and close the rescue session as handed off.",
     inputSchema: z.object({
       rescueRef: rescueRefSchema,
       summary: z.string().min(1).max(30_000),
@@ -101,18 +138,64 @@ export function registerRescueTools(server, { context, authorityExecutor, contin
     const request = { rescueRef: rescue.rescueRef, summary: input.summary, decisions: input.decisions, remainingWork: input.remainingWork };
     const idem = idempotency.begin({ operation: "handoff", key: input.idempotencyKey, request, bindingRef: rescue.bindingRef });
     if (idem.mode === "replay") return { ...idem.result, idempotencyReplayed: true };
-    const text = buildContinuityCheckpoint({ summary: input.summary, decisions: input.decisions, remainingWork: input.remainingWork, journal: pending.journal });
-    const injected = await context.injectContinuity({ threadId: rescue.threadId, text });
-    const binding = continuityState.acknowledgeCheckpoint(rescue.bindingRef, pending.throughSeq);
-    const fingerprint = await rescueManager.captureFingerprint(project.root);
+
+    const baseText = buildContinuityCheckpoint({ summary: input.summary, decisions: input.decisions, remainingWork: input.remainingWork, journal: pending.journal });
+    const currentRescue = stateStore.getRescueSession(rescue.rescueRef);
+    const fingerprint = await rescueManager.assertNoDrift(currentRescue);
     const commits = await commitsSinceBaseline({ authorityExecutor, cwd: project.root, baselineHead: rescue.baselineGit?.head, currentHead: fingerprint.head });
     const quota = await safeQuota(context);
+    const mutations = stateStore.listRescueMutations(rescue.rescueRef);
+    const manifest = buildContinuityManifest({
+      rescue: currentRescue,
+      project,
+      finalFingerprint: fingerprint,
+      commits,
+      journal: pending.journal,
+      mutations,
+      summary: input.summary,
+      decisions: input.decisions,
+      remainingWork: input.remainingWork,
+      quota,
+      checkpointText: baseText,
+    });
+    const text = `${baseText.trimEnd()}${manifestInjectionFooter(manifest)}\n`;
+    const injected = await context.injectContinuity({ threadId: rescue.threadId, text });
+    const binding = continuityState.acknowledgeCheckpoint(rescue.bindingRef, pending.throughSeq);
+    const persistedManifest = persistContinuityManifest({
+      store: stateStore,
+      manifest,
+      projectRef: project.projectRef,
+      bindingRef: rescue.bindingRef,
+      throughSeq: pending.throughSeq,
+    });
+    stateStore.recordEvent({
+      projectRef: project.projectRef,
+      bindingRef: rescue.bindingRef,
+      kind: "rescue.manifest.created",
+      payload: { rescueRef: rescue.rescueRef, checkpointId: persistedManifest.checkpointId, manifestHash: persistedManifest.manifestHash },
+    });
     const ended = rescueManager.handoffComplete(stateStore.getRescueSession(rescue.rescueRef), quota);
     const result = {
       ...injected,
       status: "handoff_ready",
       rescue: rescueManager.publicSession(ended),
-      checkpoint: { threadId: rescue.threadId, journalEntriesIncluded: pending.journal.length, injectedChars: text.length, bindingCheckpointCount: binding.checkpointCount },
+      checkpoint: {
+        threadId: rescue.threadId,
+        journalEntriesIncluded: pending.journal.length,
+        injectedChars: text.length,
+        bindingCheckpointCount: binding.checkpointCount,
+        manifestCheckpointId: persistedManifest.checkpointId,
+      },
+      manifest: {
+        schema: manifest.schema,
+        hash: manifest.integrity.hash,
+        algorithm: manifest.integrity.algorithm,
+        baseline: manifest.verified.baseline,
+        result: manifest.verified.result,
+        verifiedMutationCount: manifest.verified.mutations.length,
+        verifiedActivityCount: manifest.verified.activity.length,
+        commitCount: manifest.verified.commits.length,
+      },
       activity: pending.journal.slice(0, 200),
       worktree: publicFingerprint(fingerprint),
       commits,

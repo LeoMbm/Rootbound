@@ -1,5 +1,8 @@
 import process from "node:process";
+import { getActiveConnection, loadConnectionRegistry } from "../src/connection-registry.mjs";
+import { resolveConnectionPaths } from "../src/connection-paths.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
+import { runtimeStatus } from "../src/runtime-state.mjs";
 import { rollbackManagedTunnelSetup } from "../src/tunnel-bootstrap.mjs";
 import { saveTunnelConfig, tunnelConfigStatus } from "../src/tunnel-config.mjs";
 
@@ -27,7 +30,13 @@ try {
 
 async function configure(argv) {
   const parsed = parseConfigure(argv);
-  const result = await saveTunnelConfig({ argv: parsed.argv });
+  const { paths, active, targetPaths, runtime } = await activeContext();
+  if (runtime.running && active && runtimeUses(runtime, active)) {
+    const error = new Error(`Refusing to reconfigure tunnel for active connection "${active.name}" while Rootbound is running. Switch connections or run rootbound stop first.`);
+    error.code = "CONNECTION_IN_USE";
+    throw error;
+  }
+  const result = await saveTunnelConfig({ argv: parsed.argv, paths: targetPaths });
   emit({ ok: true, action: "configured", source: "persistent", ...result }, parsed.json);
 }
 function show(argv) {
@@ -37,47 +46,45 @@ function show(argv) {
 }
 async function clear(argv) {
   const json = onlyJson(argv);
-  const paths = resolveRootboundPaths();
-  const before = tunnelConfigStatus({ paths });
-  await rollbackManagedTunnelSetup({ paths });
-  const after = tunnelConfigStatus({ paths });
-  emit({
-    ok: true,
-    action: "clear",
-    configured: after.configured,
-    cleared: before.source === "persistent",
-    path: paths.tunnelConfigPath,
-    managedArtifactsCleared: true,
-    environmentOverrideActive: after.source === "environment",
-  }, json);
+  const { active, targetPaths, runtime } = await activeContext();
+  if (runtime.running && active && runtimeUses(runtime, active)) {
+    const error = new Error(`Refusing to clear tunnel configuration for active connection "${active.name}" while Rootbound is running. Switch connections or run rootbound stop first.`);
+    error.code = "CONNECTION_IN_USE";
+    throw error;
+  }
+  const before = tunnelConfigStatus({ paths: targetPaths });
+  await rollbackManagedTunnelSetup({ paths: targetPaths });
+  const after = tunnelConfigStatus({ paths: targetPaths });
+  emit({ ok: true, action: "clear", configured: after.configured, cleared: before.source === "persistent", path: before.path ?? after.path, connectionId: before.connectionId ?? active?.id ?? null, managedArtifactsCleared: true, environmentOverrideActive: after.source === "environment" }, json);
 }
 
+async function activeContext() {
+  const paths = resolveRootboundPaths();
+  const registry = await loadConnectionRegistry({ paths });
+  const active = getActiveConnection(registry);
+  const targetPaths = active ? resolveConnectionPaths({ paths, connection: active }) : paths;
+  const runtime = await runtimeStatus(paths);
+  return { paths, registry, active, targetPaths, runtime };
+}
+function runtimeUses(runtime, connection) { return runtime.state?.connectionId === connection.id || (!runtime.state?.connectionId && connection.storageKind === "legacy-global"); }
+
 function parseConfigure(argv) {
-  let json = false;
-  let rawJson = null;
-  let separator = -1;
+  let json = false; let rawJson = null; let separator = -1;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--json") json = true;
-    else if (arg === "--argv-json") {
-      if (!argv[index + 1]) throw usage("--argv-json requires a JSON argv array");
-      rawJson = argv[++index];
-    } else if (arg === "--") { separator = index; break; }
+    else if (arg === "--argv-json") { if (!argv[index + 1]) throw usage("--argv-json requires a JSON argv array"); rawJson = argv[++index]; }
+    else if (arg === "--") { separator = index; break; }
     else throw usage(`Unknown tunnel configure option: ${arg}`);
   }
   if (rawJson !== null && separator >= 0) throw usage("Use either --argv-json or -- <argv...>, not both");
   let commandArgv;
-  if (rawJson !== null) {
-    try { commandArgv = JSON.parse(rawJson); }
-    catch { throw usage("--argv-json must be valid JSON"); }
-  } else if (separator >= 0) commandArgv = argv.slice(separator + 1);
+  if (rawJson !== null) { try { commandArgv = JSON.parse(rawJson); } catch { throw usage("--argv-json must be valid JSON"); } }
+  else if (separator >= 0) commandArgv = argv.slice(separator + 1);
   else throw usage("tunnel configure requires --argv-json <json> or -- <argv...>");
   return { argv: commandArgv, json };
 }
-function onlyJson(argv) {
-  for (const arg of argv) if (arg !== "--json") throw usage(`Unknown option: ${arg}`);
-  return argv.includes("--json");
-}
+function onlyJson(argv) { for (const arg of argv) if (arg !== "--json") throw usage(`Unknown option: ${arg}`); return argv.includes("--json"); }
 function emit(value, json) {
   if (json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   else if (value.action === "configured") {
@@ -96,7 +103,5 @@ function emit(value, json) {
     if (value.environmentOverrideActive) process.stdout.write("Note: ROOTBOUND_TUNNEL_ARGV_JSON is still active in the environment.\n");
   }
 }
-function printHelp() {
-  process.stdout.write(`Rootbound tunnel configuration (advanced)\n\nNormal users should run:\n  rootbound connect .\n\nAdvanced/manual usage:\n  rootbound tunnel configure --argv-json '["tunnel-client", "run", "--profile", "my-profile"]'\n  rootbound tunnel configure -- tunnel-client run --profile my-profile\n  rootbound tunnel show [--json]\n  rootbound tunnel clear [--json]\n\nPersistent manual config refuses literal credentials. The guided connect wizard keeps its runtime key outside argv/tunnel.json.\n`);
-}
+function printHelp() { process.stdout.write(`Rootbound tunnel configuration (advanced)\n\nNormal users should run:\n  rootbound connect .\n\nAdvanced/manual usage:\n  rootbound tunnel configure --argv-json '["tunnel-client", "run", "--profile", "my-profile"]'\n  rootbound tunnel configure -- tunnel-client run --profile my-profile\n  rootbound tunnel show [--json]\n  rootbound tunnel clear [--json]\n\nTunnel commands operate on the active Rootbound connection. Reconfiguring or clearing a tunnel used by a running runtime is refused. Persistent manual config refuses literal credentials. The guided connect wizard keeps its runtime key outside argv/tunnel.json.\n`); }
 function usage(message) { const error = new Error(message); error.usage = true; return error; }

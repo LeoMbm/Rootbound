@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmod, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -7,8 +7,7 @@ import { ensureRootboundStateDirs } from "./state-paths.mjs";
 import { clearTunnelConfig, saveTunnelConfig } from "./tunnel-config.mjs";
 
 const execFileAsync = promisify(execFile);
-const TUNNEL_ID_PATTERN = /^tunnel_[a-z0-9]{32}$/;
-const API_KEY_PATTERN = /^[0-9A-Za-z_-]+$/;
+const TUNNEL_ID_PATTERN = /^tunnel_[0-9a-f]{32}$/;
 
 export const TUNNEL_SETUP_URLS = Object.freeze({
   tunnels: "https://platform.openai.com/settings/organization/tunnels",
@@ -21,7 +20,7 @@ export function validateTunnelId(value) {
 }
 
 export function validateRuntimeKey(value) {
-  return typeof value === "string" && value.length > 0 && value.trim() === value && API_KEY_PATTERN.test(value);
+  return typeof value === "string" && value.length > 0 && value.length <= 8192 && value.trim() === value && !/[\u0000\r\n]/.test(value);
 }
 
 export async function discoverTunnelCandidates({ env = process.env, home = os.homedir(), profileDirs = null } = {}) {
@@ -47,7 +46,7 @@ export async function discoverTunnelCandidates({ env = process.env, home = os.ho
       let text;
       try { text = await readFile(profilePath, "utf8"); }
       catch { continue; }
-      const pattern = /\btunnel_id\s*:\s*["']?(tunnel_[a-z0-9]{32})["']?/g;
+      const pattern = /\btunnel_id\s*:\s*["']?(tunnel_[0-9a-f]{32})["']?/g;
       for (const match of text.matchAll(pattern)) add(match[1], `profile:${entry.name}`, profilePath);
     }
   }
@@ -80,12 +79,14 @@ export async function writeManagedTunnelSetup({
   tunnelClientCommand = "tunnel-client",
   platform = process.platform,
 } = {}) {
-  if (!validateTunnelId(tunnelId)) throw new Error("Invalid OpenAI tunnel id; expected tunnel_ followed by 32 lowercase letters/digits.");
+  if (!validateTunnelId(tunnelId)) throw new Error("Invalid OpenAI tunnel id; expected tunnel_ followed by 32 lowercase hexadecimal characters.");
   if (!validateRuntimeKey(apiKey)) throw new Error("Invalid runtime API key format.");
   if (!packageRoot) throw new Error("writeManagedTunnelSetup requires packageRoot");
   if (!paths?.tunnelManagedProfilePath || !paths?.tunnelSecretPath) throw new Error("writeManagedTunnelSetup requires Rootbound state paths");
 
-  await ensureRootboundStateDirs(paths);
+  if (paths.stateDir) await ensureRootboundStateDirs(paths);
+  await mkdir(path.dirname(paths.tunnelSecretPath), { recursive: true, mode: 0o700 });
+  if (paths.tunnelHealthUrlPath) await unlink(paths.tunnelHealthUrlPath).catch((error) => { if (error?.code !== "ENOENT") throw error; });
   await writePrivateFile(paths.tunnelSecretPath, apiKey, { platform });
 
   const mcpCommand = buildStdioCommand({ nodePath, packageRoot });
@@ -97,6 +98,7 @@ export async function writeManagedTunnelSetup({
     `  api_key: ${yamlString(`file:${paths.tunnelSecretPath}`)}`,
     "health:",
     `  listen_addr: ${yamlString("127.0.0.1:0")}`,
+    ...(paths.tunnelHealthUrlPath ? [`  url_file: ${yamlString(paths.tunnelHealthUrlPath)}`] : []),
     "admin_ui:",
     "  open_browser: false",
     "log:",
@@ -120,6 +122,7 @@ export async function writeManagedTunnelSetup({
     tunnelId,
     profilePath: paths.tunnelManagedProfilePath,
     secretPath: paths.tunnelSecretPath,
+    healthUrlPath: paths.tunnelHealthUrlPath ?? null,
     mcpCommand,
     tunnel: saved,
   };
@@ -136,7 +139,7 @@ export async function validateManagedTunnel({
   try {
     const { stdout = "", stderr = "" } = await execFileAsync(command, ["doctor", "--profile-file", profilePath], {
       cwd,
-      env,
+      env: managedTunnelEnvironment(env),
       timeout: timeoutMs,
       windowsHide: true,
       maxBuffer: 1024 * 1024,
@@ -153,10 +156,16 @@ export async function validateManagedTunnel({
 export async function rollbackManagedTunnelSetup({ paths } = {}) {
   if (!paths) return;
   await clearTunnelConfig({ paths }).catch(() => {});
-  for (const target of [paths.tunnelManagedProfilePath, paths.tunnelSecretPath]) {
+  for (const target of [paths.tunnelManagedProfilePath, paths.tunnelSecretPath, paths.tunnelHealthUrlPath]) {
     if (!target) continue;
     await unlink(target).catch((error) => { if (error?.code !== "ENOENT") throw error; });
   }
+}
+
+export function managedTunnelEnvironment(env = process.env) {
+  const safe = { ...env };
+  for (const name of ["CONTROL_PLANE_TUNNEL_ID", "CONTROL_PLANE_API_KEY", "OPENAI_API_KEY", "TUNNEL_ID", "TUNNEL_API_KEY"]) delete safe[name];
+  return safe;
 }
 
 export function buildStdioCommand({ nodePath = "node", packageRoot } = {}) {
@@ -211,10 +220,7 @@ function quoteCommandArg(value) {
   return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-function yamlString(value) {
-  return JSON.stringify(String(value));
-}
-
+function yamlString(value) { return JSON.stringify(String(value)); }
 function cleanToolOutput(value) {
   const text = String(value ?? "").trim().replaceAll(/\u001b\[[0-9;]*m/g, "");
   if (!text) return "no details returned";

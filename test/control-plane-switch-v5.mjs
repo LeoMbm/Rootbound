@@ -52,6 +52,9 @@ try {
   assert.equal(first.project.projectRef, projectARef);
   assert.equal(first.runtime.status, "running");
   assert.equal(first.runtime.state.projectRef, projectARef);
+  assert.equal(first.runtime.state.connectionId, "connection_environment");
+  assert.equal(first.runtime.state.connectionName, "environment");
+  assert.equal(first.runtime.state.tunnelSource, "environment", "environment-only advanced mode must survive synthetic connection routing");
   const firstSupervisorPid = first.runtime.state.supervisorPid;
 
   const second = JSON.parse((await runCli(["start", projectB, "--json"])).stdout);
@@ -59,6 +62,8 @@ try {
   assert.equal(second.project.projectRef, projectBRef);
   assert.equal(second.runtime.status, "running");
   assert.equal(second.runtime.state.projectRef, projectBRef);
+  assert.equal(second.runtime.state.connectionId, "connection_environment");
+  assert.equal(second.runtime.state.tunnelSource, "environment");
   assert.equal(second.runtime.switched, true);
   assert.equal(second.runtime.switchedFromProjectRef, projectARef);
   assert.equal(second.runtime.switchedFromProjectRoot, projectA);
@@ -67,6 +72,8 @@ try {
   const status = JSON.parse((await runCli(["status", "--json"])).stdout);
   assert.equal(status.runtime.running, true);
   assert.equal(status.runtime.state.projectRef, projectBRef);
+  assert.equal(status.runtime.state.connectionId, "connection_environment");
+  assert.equal(status.runtime.state.tunnelSource, "environment");
   assert.equal(status.projects.length, 2);
 } finally {
   await runCli(["stop", "--force", "--json"], { allowedExitCodes: [0, 1] }).catch(() => {});
