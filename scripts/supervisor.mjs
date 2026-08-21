@@ -26,7 +26,8 @@ const connection = persistentConnection ?? (process.env.ROOTBOUND_TUNNEL_ARGV_JS
   tunnelId: null,
 } : null);
 if (!connection) throw new Error("No active Rootbound connection; run `rootbound connect .` first.");
-const connectionPaths = resolveConnectionPaths({ paths, connection });
+const environmentOnlyConnection = connection.source === "environment" && !persistentConnection;
+const connectionPaths = environmentOnlyConnection ? paths : resolveConnectionPaths({ paths, connection });
 const runtimeId = `runtime_${randomUUID()}`;
 const restartLimit = parseBoundedInt(process.env.ROOTBOUND_TUNNEL_RESTART_LIMIT ?? "3", 0, 20, "ROOTBOUND_TUNNEL_RESTART_LIMIT");
 const launchEnv = requestedConnection ? explicitConnectionEnvironment(process.env) : process.env;
