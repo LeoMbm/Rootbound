@@ -10,7 +10,7 @@ import { ToolwirePermissionError } from "./codex-permission-executor.mjs";
 const execFileAsync = promisify(execFile);
 const SUPPORTED_ACCESS = new Set(["inherit", "readOnly"]);
 const WINDOWS_ACCEPTED_CODEX_VERSIONS = Object.freeze(["0.147.0", "0.147.0-alpha.6.6"]);
-const MAC_ACCEPTED_CODEX_VERSIONS = Object.freeze(["0.148.0-alpha.15", "0.148.0-alpha.9"]);
+const MAC_ACCEPTED_CODEX_VERSIONS = Object.freeze(["0.149.0-alpha.4", "0.148.0-alpha.15", "0.148.0-alpha.9"]);
 export function acceptedCodexVersionsFor({ platform = process.platform, arch = process.arch } = {}) {
   if (platform === "win32") return WINDOWS_ACCEPTED_CODEX_VERSIONS;
   if (platform === "darwin" && arch === "arm64") return MAC_ACCEPTED_CODEX_VERSIONS;
