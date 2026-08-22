@@ -2,6 +2,7 @@ import path from "node:path";
 import { ACCEPTED_CODEX_VERSIONS, CodexAuthorityExecutor } from "./codex-authority-executor.mjs";
 import { CodexBrowserReaderExecutor } from "./browser-reader-executor.mjs";
 import { resolveCodexExecutable } from "./codex-bin.mjs";
+import { resolveCompatibleCodexRuntime } from "./codex-compatibility.mjs";
 import { createCommandManager } from "./command-manager.mjs";
 import { createDurableRescueManager } from "./durable-rescue.mjs";
 import { readJsonFile } from "./json-file.mjs";
@@ -36,15 +37,6 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     throw new Error("Rootbound Technical Preview currently supports Windows and Apple Silicon macOS only");
   }
 
-  const probeVersion = !supportedPlatform && env.ROOTBOUND_ALLOW_NONWINDOWS_PROBE === "1"
-    ? envString(env, "ROOTBOUND_PROBE_CODEX_VERSION", null)
-    : null;
-  const acceptedCodexVersions = probeVersion
-    ? [...new Set([...ACCEPTED_CODEX_VERSIONS, probeVersion])]
-    : ACCEPTED_CODEX_VERSIONS;
-  const codexResolution = await resolveCodexExecutable({ env, acceptedVersions: acceptedCodexVersions });
-  const codexBin = codexResolution.path;
-
   const defaultCwd = envString(env, "ROOTBOUND_DEFAULT_CWD", process.cwd());
   const profileOverride = envString(env, "ROOTBOUND_PROFILE", null);
   const configOverridesFile = envString(env, "ROOTBOUND_CONFIG_OVERRIDES_FILE", null);
@@ -55,6 +47,52 @@ export async function createPublicRuntime({ env = process.env } = {}) {
     throw new Error("ROOTBOUND_CONFIG_OVERRIDES_FILE must contain { overrides: [\"key=value\", ...] }");
   }
   const configOverrides = withRootboundPermissionOverrides(configuredOverrides, { profileOverride });
+
+  let codexResolution;
+  let authorityExecutor;
+  let authorityValidation;
+  let codexCompatibility = null;
+
+  if (process.platform === "darwin" && process.arch === "arm64") {
+    const compatible = await resolveCompatibleCodexRuntime({
+      env,
+      cwd: defaultCwd,
+      profileOverride,
+      configOverrides,
+      maxTimeoutMs: 120_000,
+      outputBytesCap: 1_048_576,
+    });
+    codexResolution = compatible.resolution;
+    authorityExecutor = compatible.executor;
+    authorityValidation = compatible.validation;
+    codexCompatibility = {
+      version: compatible.version,
+      knownAcceptedVersion: compatible.knownAcceptedVersion,
+      acceptanceSource: compatible.acceptanceSource,
+      modelTurnStarted: false,
+    };
+  } else {
+    const probeVersion = !supportedPlatform && env.ROOTBOUND_ALLOW_NONWINDOWS_PROBE === "1"
+      ? envString(env, "ROOTBOUND_PROBE_CODEX_VERSION", null)
+      : null;
+    const acceptedCodexVersions = probeVersion
+      ? [...new Set([...ACCEPTED_CODEX_VERSIONS, probeVersion])]
+      : ACCEPTED_CODEX_VERSIONS;
+    codexResolution = await resolveCodexExecutable({ env, acceptedVersions: acceptedCodexVersions });
+    authorityExecutor = new CodexAuthorityExecutor({
+      codexBin: codexResolution.path,
+      defaultCwd,
+      profileOverride,
+      configOverrides,
+      maxTimeoutMs: 120_000,
+      watchdogGraceMs: 5_000,
+      outputBytesCap: 1_048_576,
+      acceptedCodexVersions,
+    });
+    authorityValidation = await authorityExecutor.validate();
+  }
+
+  const codexBin = codexResolution.path;
   const rescueAutopilotEnabled = envString(env, "ROOTBOUND_RESCUE_AUTOPILOT", "1") !== "0";
   const rescueAutopilotThreshold = envInteger(env, "ROOTBOUND_RESCUE_ARM_PERCENT", 85, 50, 100);
   const rescueAutopilotIntervalMs = envInteger(env, "ROOTBOUND_RESCUE_POLL_MS", 60_000, 10_000, 3_600_000);
@@ -66,18 +104,6 @@ export async function createPublicRuntime({ env = process.env } = {}) {
   let closed = false;
 
   try {
-    const authorityExecutor = new CodexAuthorityExecutor({
-      codexBin,
-      defaultCwd,
-      profileOverride,
-      configOverrides,
-      maxTimeoutMs: 120_000,
-      watchdogGraceMs: 5_000,
-      outputBytesCap: 1_048_576,
-      acceptedCodexVersions,
-    });
-    const authorityValidation = await authorityExecutor.validate();
-
     publicContext = new CodexPublicContextExecutor({ codexBin, defaultCwd, configOverrides });
     await publicContext.start();
     stateStore = await openStateStore({ paths: resolveRootboundPaths({ env }) });
@@ -145,6 +171,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       toolNames: PUBLIC_TOOL_NAMES,
       defaultCwd,
       authorityValidation,
+      codexCompatibility,
       modelLane: "chatgpt-only",
       rescueAutopilot: rescueAutopilot ? { enabled: true, thresholdPercent: rescueAutopilotThreshold, intervalMs: rescueAutopilotIntervalMs } : { enabled: false },
     };
