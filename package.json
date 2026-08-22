@@ -1,6 +1,6 @@
 {
   "name": "rootbound",
-  "version": "0.1.0-preview.1",
+  "version": "0.1.0-preview.2",
   "private": true,
   "license": "Apache-2.0",
   "description": "Apple Silicon macOS Technical Preview: let ChatGPT do local coding work through verified model-free Codex App Server primitives.",
