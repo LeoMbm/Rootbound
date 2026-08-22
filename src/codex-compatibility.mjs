@@ -7,6 +7,10 @@ export function parseCodexVersion(text) {
   return String(text ?? "").match(/codex-cli\s+([^\s]+)/i)?.[1] ?? null;
 }
 
+export function canCapabilityProbeUnknownCodex({ platform = process.platform, arch = process.arch } = {}) {
+  return platform === "darwin" && arch === "arm64";
+}
+
 export async function resolveCompatibleCodexRuntime({
   env = process.env,
   cwd,
@@ -28,6 +32,14 @@ export async function resolveCompatibleCodexRuntime({
   }
 
   const known = acceptedVersions.includes(version);
+  if (!known && !canCapabilityProbeUnknownCodex()) {
+    throw new Error(
+      `unsupported Codex CLI version for Rootbound direct-profile authority: ${version}. ` +
+      `Accepted versions: ${acceptedVersions.join(", ")}. ` +
+      "Automatic capability verification for unknown builds is currently limited to Apple Silicon macOS."
+    );
+  }
+
   const processAcceptedVersions = known
     ? [...acceptedVersions]
     : [...new Set([...acceptedVersions, version])];
