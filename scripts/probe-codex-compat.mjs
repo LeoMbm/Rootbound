@@ -1,59 +1,37 @@
 #!/usr/bin/env node
 import path from "node:path";
 import process from "node:process";
-import { CodexAuthorityExecutor } from "../src/codex-authority-executor.mjs";
-import { resolveCodexExecutable, probeCodexExecutable } from "../src/codex-bin.mjs";
+import { resolveCompatibleCodexRuntime } from "../src/codex-compatibility.mjs";
 import { CodexPublicContextExecutor } from "../src/public-context-executor.mjs";
 import { ROOTBOUND_PERMISSION_PROFILE, withRootboundPermissionOverrides } from "../src/rootbound-permission-profile.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const cwd = path.resolve(args.cwd ?? process.cwd());
-const result = {
-  ok: false,
-  cwd,
-  codex: null,
-  checks: [],
-};
-
+const result = { ok: false, cwd, codex: null, checks: [] };
 let publicContext = null;
-try {
-  const resolution = await resolveCodexExecutable({ acceptedVersions: null });
-  const probe = await probeCodexExecutable(resolution.path, { cwd });
-  const version = parseCodexVersion(probe.versionText);
-  if (!probe.ok || !version) throw new Error(`Unable to probe Codex version: ${probe.versionText ?? probe.error ?? "unknown"}`);
-  result.codex = { path: resolution.path, source: resolution.source, version };
-  pass("codex-executable", `${version} via ${resolution.source}`);
 
+try {
   const configOverrides = withRootboundPermissionOverrides([], { profileOverride: ROOTBOUND_PERMISSION_PROFILE });
-  const authority = new CodexAuthorityExecutor({
-    codexBin: resolution.path,
-    defaultCwd: cwd,
+  const compatible = await resolveCompatibleCodexRuntime({
+    cwd,
     profileOverride: ROOTBOUND_PERMISSION_PROFILE,
     configOverrides,
-    acceptedCodexVersions: [version],
     maxTimeoutMs: 30_000,
+    outputBytesCap: 64 * 1024,
   });
 
-  const validated = await authority.validate();
-  pass("authority-validate", `allowed profiles: ${(validated.allowedProfiles ?? []).join(", ")}`);
-
-  const resolved = await authority.resolveAuthority({ cwd, access: "readOnly", timeoutMs: 10_000 });
-  if (resolved.permissionProfile !== ":read-only") throw new Error(`Expected read-only downscope, got ${resolved.permissionProfile}`);
-  if (path.resolve(resolved.trustedAncestor ?? "") !== cwd) throw new Error(`Expected exact trusted root ${cwd}, got ${resolved.trustedAncestor ?? "none"}`);
-  pass("authority-readonly", `${resolved.permissionProfile}; source=${resolved.authoritySource}`);
-
-  const command = await authority.exec({
-    command: [process.execPath, "-e", "process.stdout.write('rootbound-codex-compat-ok')"],
-    cwd,
-    access: "readOnly",
-    timeoutMs: 10_000,
-  });
-  if (command.exitCode !== 0 || command.stdout !== "rootbound-codex-compat-ok") {
-    throw new Error(`command/exec probe failed: exit=${command.exitCode} stdout=${JSON.stringify(command.stdout)} stderr=${JSON.stringify(command.stderr)}`);
-  }
+  result.codex = {
+    path: compatible.resolution.path,
+    source: compatible.resolution.source,
+    version: compatible.version,
+    acceptanceSource: compatible.acceptanceSource,
+  };
+  pass("codex-executable", `${compatible.version} via ${compatible.resolution.source}`);
+  pass("authority-validate", `allowed profiles: ${(compatible.validation.allowedProfiles ?? []).join(", ")}`);
+  pass("authority-readonly", `${compatible.authority.permissionProfile}; source=${compatible.authority.authoritySource}`);
   pass("command-exec-permission-profile", "model-free read-only command succeeded");
 
-  publicContext = new CodexPublicContextExecutor({ codexBin: resolution.path, defaultCwd: cwd, configOverrides });
+  publicContext = new CodexPublicContextExecutor({ codexBin: compatible.resolution.path, defaultCwd: cwd, configOverrides });
   await publicContext.start();
   const project = await publicContext.projectContext({ cwd });
   if (project.modelTurnStarted !== false) throw new Error("project context unexpectedly started a model turn");
@@ -77,7 +55,7 @@ try {
 if (args.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 else {
   process.stdout.write(`Rootbound Codex compatibility probe: ${result.ok ? "PASS" : "FAIL"}\n`);
-  if (result.codex) process.stdout.write(`Codex: ${result.codex.version} (${result.codex.source})\n`);
+  if (result.codex) process.stdout.write(`Codex: ${result.codex.version} (${result.codex.source}; ${result.codex.acceptanceSource})\n`);
   for (const check of result.checks) process.stdout.write(`${check.status.toUpperCase()} ${check.name}: ${check.detail}\n`);
   if (result.error) process.stdout.write(`Error: ${result.error}\n`);
 }
@@ -88,7 +66,6 @@ function warn(name, detail) { result.checks.push({ name, status: "warn", detail 
 function fail(name, detail) { result.checks.push({ name, status: "fail", detail }); }
 function message(error) { return error instanceof Error ? error.message : String(error); }
 function formatProfile(value) { return typeof value === "string" ? value : value?.id ?? "null"; }
-function parseCodexVersion(text) { return String(text ?? "").match(/codex-cli\s+([^\s]+)/i)?.[1] ?? null; }
 function parseArgs(argv) {
   const out = { cwd: null, json: false };
   for (let i = 0; i < argv.length; i += 1) {

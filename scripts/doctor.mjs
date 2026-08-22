@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { CodexAppServerClient } from "../src/codex-app-server-client.mjs";
 import { ACCEPTED_CODEX_VERSIONS, CodexAuthorityExecutor } from "../src/codex-authority-executor.mjs";
 import { probeCodexExecutable, redactHomePath, resolveCodexExecutable } from "../src/codex-bin.mjs";
+import { parseCodexVersion, resolveCompatibleCodexRuntime } from "../src/codex-compatibility.mjs";
 import { getActiveConnection, loadConnectionRegistry } from "../src/connection-registry.mjs";
 import { resolveConnectionPaths } from "../src/connection-paths.mjs";
 import { readJsonFile } from "../src/json-file.mjs";
@@ -36,9 +37,11 @@ let codexResolution = null;
 let codexProbe = null;
 let appServer = null;
 let projectContext = null;
+let codexCompatibility = null;
 let connectionContext = { status: "not_configured" };
 
 const supportedPlatform = process.platform === "win32" || (process.platform === "darwin" && process.arch === "arm64");
+const dynamicMacCompatibility = process.platform === "darwin" && process.arch === "arm64";
 record("platform", supportedPlatform, supportedPlatform ? `${process.platform}/${process.arch}` : `Unsupported platform: ${process.platform}/${process.arch}`);
 const nodeSupported = compareVersion(process.versions.node, "22.13.0") >= 0;
 record("node", nodeSupported, `Node ${process.version}`, nodeSupported ? null : "Node.js >=22.13.0 is required by the V5 SQLite state layer");
@@ -59,13 +62,19 @@ for (const spec of ["@modelcontextprotocol/node", "@modelcontextprotocol/server"
   } catch (error) { record(`dependency:${spec}`, false, "not resolvable", error instanceof Error ? error.message : String(error)); }
 }
 
+let parsedVersion = null;
 try {
-  codexResolution = await resolveCodexExecutable({ acceptedVersions: ACCEPTED_CODEX_VERSIONS });
+  codexResolution = await resolveCodexExecutable({ acceptedVersions: null });
   codexProbe = await probeCodexExecutable(codexResolution.path, { cwd: runtimeCwd });
   record("codex-executable", codexProbe.ok, codexProbe.versionText ?? "Codex version probe failed", codexProbe.error);
-  const parsedVersion = parseCodexVersion(codexProbe.versionText);
-  const versionAccepted = Boolean(parsedVersion && ACCEPTED_CODEX_VERSIONS.includes(parsedVersion));
-  record("codex-version-gate", versionAccepted, parsedVersion ? `Codex CLI ${parsedVersion}` : "Codex CLI version could not be parsed", versionAccepted ? null : `Accepted Codex builds: ${ACCEPTED_CODEX_VERSIONS.join(", ")}`);
+  parsedVersion = parseCodexVersion(codexProbe.versionText);
+  if (!parsedVersion) record("codex-version-gate", false, "Codex CLI version could not be parsed", "Install a Codex build whose --version output includes codex-cli <version>");
+  else if (!requestedCwd && dynamicMacCompatibility && !ACCEPTED_CODEX_VERSIONS.includes(parsedVersion)) {
+    record("codex-version-gate", true, `Codex CLI ${parsedVersion}; compatibility verification deferred until a trusted project is connected`, null, false);
+  } else if (!dynamicMacCompatibility) {
+    const versionAccepted = ACCEPTED_CODEX_VERSIONS.includes(parsedVersion);
+    record("codex-version-gate", versionAccepted, `Codex CLI ${parsedVersion}`, versionAccepted ? null : `Accepted Codex builds: ${ACCEPTED_CODEX_VERSIONS.join(", ")}`);
+  }
 } catch (error) { record("codex-executable", false, "Codex executable resolution failed", error instanceof Error ? error.message : String(error)); }
 
 if (codexResolution?.path && codexProbe?.ok) {
@@ -88,12 +97,32 @@ if (codexResolution?.path && codexProbe?.ok) {
 
   if (requestedCwd) {
     try {
-      const authority = new CodexAuthorityExecutor({ codexBin: codexResolution.path, defaultCwd: requestedCwd, profileOverride, configOverrides, acceptedCodexVersions: ACCEPTED_CODEX_VERSIONS });
-      await authority.validate();
-      const resolved = await authority.resolveAuthority({ cwd: requestedCwd, access: "readOnly" });
+      let resolved;
+      if (dynamicMacCompatibility) {
+        codexCompatibility = await resolveCompatibleCodexRuntime({
+          cwd: requestedCwd,
+          profileOverride,
+          configOverrides,
+          maxTimeoutMs: 30_000,
+          outputBytesCap: 64 * 1024,
+        });
+        resolved = codexCompatibility.authority;
+        record(
+          "codex-version-gate",
+          true,
+          `Codex CLI ${codexCompatibility.version}; ${codexCompatibility.knownAcceptedVersion ? "built-in version policy" : "runtime capability probe passed"}`
+        );
+      } else {
+        const authority = new CodexAuthorityExecutor({ codexBin: codexResolution.path, defaultCwd: requestedCwd, profileOverride, configOverrides, acceptedCodexVersions: ACCEPTED_CODEX_VERSIONS });
+        await authority.validate();
+        resolved = await authority.resolveAuthority({ cwd: requestedCwd, access: "readOnly" });
+      }
       projectContext = { ok: true, cwd: redactHomePath(resolved.effectiveCwd), permissionProfile: resolved.permissionProfile, permissionCeiling: resolved.permissionCeiling, authoritySource: resolved.authoritySource, trustedAncestor: redactHomePath(resolved.trustedAncestor), profileOverride };
       record("project-authority", true, `read-only authority accepted ${redactHomePath(requestedCwd)} as ${resolved.permissionProfile}`);
     } catch (error) {
+      if (dynamicMacCompatibility && parsedVersion) {
+        record("codex-version-gate", false, `Codex CLI ${parsedVersion}; runtime capability probe failed`, error instanceof Error ? error.message : String(error));
+      }
       projectContext = { ok: false, error: sanitizeText(error instanceof Error ? error.message : String(error)) };
       warnings.push({ kind: "project-authority", message: projectContext.error });
     }
@@ -114,13 +143,20 @@ const result = {
   rootbound: { packageVersion: packageJson.version, serverVersion: PUBLIC_SERVER_VERSION, surfaceVersion: PUBLIC_SURFACE_VERSION, publicToolCount: PUBLIC_TOOL_NAMES.length, modelLane: "chatgpt-only", installRoot: redactHomePath(projectRoot) },
   host: { platform: process.platform, arch: process.arch, node: process.version },
   connection: connectionContext,
-  codex: { resolutionSource: codexResolution?.source ?? null, executable: codexResolution?.path ? redactHomePath(codexResolution.path) : null, version: codexProbe?.versionText ?? null, appServer },
+  codex: {
+    resolutionSource: codexResolution?.source ?? null,
+    executable: codexResolution?.path ? redactHomePath(codexResolution.path) : null,
+    version: codexProbe?.versionText ?? null,
+    appServer,
+    compatibility: codexCompatibility ? { source: codexCompatibility.acceptanceSource, knownAcceptedVersion: codexCompatibility.knownAcceptedVersion, modelTurnStarted: false } : null,
+  },
   project: requestedCwd ? projectContext : { status: "not_requested" },
   checks,
   warnings: dedupeWarnings(warnings),
   notes: [
     "The public MCP surface is ChatGPT-only and exposes no Codex model/agent/quota routing tools.",
     "Codex App Server remains the local sandbox, permission, history, and command execution substrate.",
+    "Unknown Apple Silicon macOS Codex builds are accepted only for the current process after the model-free compatibility probe passes; no durable trust is written for future binaries.",
     "Doctor does not start a Codex model turn.",
     "Connection diagnostics validate Rootbound's local tunnel profile; ChatGPT must still select the same tunnel ID in its connector settings.",
     "After a surface upgrade, reconnect ChatGPT to refresh its cached MCP tool snapshot."
@@ -189,7 +225,6 @@ function parseArgs(argv) {
   return parsed;
 }
 function record(name, ok, detail, action = null, required = true) { checks.push({ name, ok: Boolean(ok), required, detail: sanitizeText(detail), ...(action ? { action: sanitizeText(action) } : {}) }); }
-function parseCodexVersion(text) { return String(text ?? "").match(/codex-cli\s+([^\s]+)/i)?.[1] ?? null; }
 function compareVersion(a, b) { const left = String(a).split(".").map((part) => Number.parseInt(part, 10)); const right = String(b).split(".").map((part) => Number.parseInt(part, 10)); for (let i = 0; i < Math.max(left.length, right.length); i += 1) { const delta = (left[i] ?? 0) - (right[i] ?? 0); if (delta !== 0) return delta > 0 ? 1 : -1; } return 0; }
 function isWithin(root, candidate) { const relative = path.relative(path.resolve(root), path.resolve(candidate)); return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)); }
 function sanitizeText(value) { return String(value ?? "").replace(/\u001b\[[0-9;]*m/g, "").replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1<redacted>@").replace(/([?&](?:token|key|api_key|apikey|auth|authorization|sig|signature|secret)=)[^&\s"']+/gi, "$1<redacted>").replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{8,}=*/gi, "Bearer <redacted>"); }

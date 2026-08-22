@@ -6,7 +6,7 @@
 
 **Apple Silicon macOS Technical Preview**
 
-Current preview: **0.1.0-preview.1**
+Current preview: **0.1.0-preview.2**
 
 Windows support is implemented in parts of the codebase but is **not part of this public preview yet**. Real-machine Windows validation is still pending.
 
@@ -20,82 +20,63 @@ Rootbound is useful when you want ChatGPT to inspect, edit, test, commit, and co
 
 ---
 
-## What is new in 0.1.0-preview.1?
+## What is new in 0.1.0-preview.2?
 
-This preview turns Rootbound from a single-tunnel local bridge into a more durable daily-driver runtime.
+`0.1.0-preview.2` is a compatibility hotfix for fast-moving ChatGPT-bundled Codex builds.
 
-### Multiple ChatGPT / OpenAI connections on one Mac
+### Rootbound no longer bricks on every compatible Codex auto-update
 
-Rootbound can persist several tunnel connections and switch between them without clearing your current setup or re-entering every credential.
-
-```sh
-rootbound connection list
-rootbound connection current
-rootbound connection add work
-rootbound connection switch work
-rootbound connection repair work
-rootbound connection remove work
-```
-
-Each scoped connection keeps its tunnel configuration and runtime key isolated. Switching a running connection is transactional: Rootbound validates the target, restarts the same project on it, waits for `/readyz`, and restores the previous runtime if the switch fails.
-
-Rootbound calls these **connections**, not ChatGPT accounts. It does not store ChatGPT emails, ChatGPT OAuth tokens, or Codex OAuth credentials in the connection registry.
-
-See [`docs/multi-connection.md`](docs/multi-connection.md) for the detailed lifecycle and safety model.
-
-### Durable rescue across ChatGPT conversations
-
-If Codex is interrupted or reaches quota:
+Older previews exact-version-gated the bundled Codex executable before Rootbound could inspect what that build actually supported. A compatible ChatGPT auto-update such as:
 
 ```text
-@Rootbound continue
+codex-cli 0.149.0-alpha.4
+        ↓
+codex-cli 0.149.0-alpha.4.1
 ```
 
-Rootbound can start a rescue session tied to the real project, thread, and worktree state.
+could therefore make `rootbound connect .` fail even though the required Codex App Server contract still worked.
 
-If that ChatGPT conversation later disappears, a new ChatGPT conversation can call `@Rootbound continue` again and reattach to the same active rescue when Rootbound can prove that the thread and worktree still match.
+On **Apple Silicon macOS**, Rootbound now separates discovery from trust:
 
-If the project drifted, the thread conflicts, or the state cannot be proven safe, Rootbound fails closed instead of silently attaching to the wrong work.
+```text
+Codex executable discovered
+        ↓
+known verified build?
+   ├─ yes → normal fast path
+   └─ no
+        ↓
+model-free runtime capability probe
+        ↓
+App Server bootstrap + permission profiles
+exact trusted project root
+:read-only downscope
+model-free command/exec marker
+        ↓
+PASS → accept that exact build for this process only
+FAIL → fail closed
+```
 
-### Verified continuity manifests
+Unknown builds are **not** added to a wildcard semver range and are **not** persisted as durable trust. A later binary/version change is probed again. Windows and unsupported platforms remain exact-version/fail-closed for unknown builds.
 
-A handoff back to Codex is no longer only a prose summary.
-
-Rootbound builds a versioned `rootbound.continuity.v1` manifest that separates:
-
-- **verified state** — Git/worktree fingerprints, observed mutations, commits, command/activity evidence;
-- **reported context** — summary, decisions, and remaining work supplied by ChatGPT.
-
-The manifest is canonicalized and SHA-256 verified before persistence/injection. Tampered manifests are rejected.
-
-### Quota rescue Autopilot
-
-Rootbound can watch Codex quota state and pre-arm a likely rescue candidate before the limit is reached.
-
-The pre-arm cache is never authoritative. `@Rootbound continue` still revalidates the candidate thread and worktree before using it. Stale candidates expire, real quota recovery disarms them, and unknown/auth-failed quota reads do not destructively change the current state.
-
-### Better compatibility and diagnostics
-
-Rootbound now includes:
+You can inspect the same compatibility contract manually with:
 
 ```sh
-npm run probe:codex -- --cwd /path/to/project
+npm run probe:codex -- --cwd /path/to/trusted/project
 ```
 
-This probes the installed Codex/App Server build against Rootbound's critical model-free capabilities without starting a Codex model turn.
+`rootbound doctor` reports whether compatibility came from the built-in policy or from the runtime capability probe. Neither path intentionally starts a Codex model turn.
 
-The current Apple Silicon macOS compatibility gate explicitly accepts the locally verified ChatGPT-bundled `codex-cli 0.149.0-alpha.4`. Unknown future builds remain fail-closed until re-accepted.
+### Also included from preview.1
 
-`rootbound doctor` also reports the actual failed prerequisite instead of hiding a Codex/version failure behind a generic project-validation message.
+- multiple isolated ChatGPT/OpenAI tunnel connections with transactional switching;
+- durable rescue reattachment across ChatGPT conversations;
+- SHA-256 verified continuity manifests;
+- quota rescue Autopilot;
+- clearer runtime logs;
+- precise Doctor prerequisite errors;
+- the same **32 public tools** on `rootbound-public-preview-v5`.
 
-### Clearer runtime logs
-
-```sh
-rootbound logs --follow
-rootbound logs --follow --new-only
-```
-
-Follow mode separates historical log tail from entries generated after the command starts, which makes tunnel/runtime debugging much less ambiguous.
+See [`docs/multi-connection.md`](docs/multi-connection.md) and [`docs/continuity-runtime.md`](docs/continuity-runtime.md) for the detailed runtime contracts.
 
 ---
 
@@ -125,10 +106,6 @@ You can ask ChatGPT things like:
 
 ```text
 @Rootbound show me what changed in Git
-```
-
-```text
-@Rootbound inspect this project and explain the architecture
 ```
 
 ```text
@@ -170,40 +147,17 @@ git --version
 node --version
 ```
 
-You need Node.js `v22.13.0` or newer.
-
 Rootbound uses your local Codex installation as the trust and sandbox layer. It does not install or replace Codex for you.
 
-Install the supported OpenAI `tunnel-client` from:
-
-```text
-https://platform.openai.com/settings/organization/tunnels
-```
-
-Then verify:
-
-```sh
-tunnel-client --help
-```
-
 ## 2. Install Rootbound
-
-Clone the repository:
 
 ```sh
 git clone https://github.com/LeoMbm/Rootbound.git
 cd Rootbound
-```
-
-Install on Apple Silicon macOS:
-
-```sh
 sh ./bin/rootbound-install.sh
 ```
 
-The installer checks Node/Codex, installs the app into your user Library, installs production dependencies, and creates a `rootbound` CLI link under `~/.local/bin`.
-
-If the installer updated your `PATH`, close Terminal and open a new Terminal window.
+The installer checks Node/Codex, stages the app under your user Library, installs production dependencies, and creates a `rootbound` CLI link under `~/.local/bin`.
 
 Verify:
 
@@ -217,8 +171,6 @@ Windows support is not part of this public Technical Preview yet. Windows-specif
 
 ## 3. Connect the project you want ChatGPT to work on
 
-Move into your own project first:
-
 ```sh
 cd ~/Documents/Dev/my-app
 rootbound connect .
@@ -227,14 +179,6 @@ rootbound connect .
 This is the **Normal setup: one command**. The **guided one-command** flow handles tunnel setup, exact-root Codex trust, Rootbound's runtime-only permission contract, project registration, validation, and runtime startup.
 
 You may see Node's `SQLite is an experimental feature` warning. That warning by itself does not mean Rootbound failed.
-
-### Tunnel setup
-
-Rootbound detects/reuses an existing compatible tunnel when possible. Otherwise it guides you to create one and asks for its `tunnel_...` ID.
-
-It also asks once for a tunnel Runtime API key. The runtime key is stored in dedicated private local state rather than in `tunnel.json`, SQLite, normal logs, or persistent process argv.
-
-Rootbound validates the tunnel before changing Codex trust.
 
 ### Rootbound local permissions
 
@@ -269,23 +213,15 @@ Runtime: running
 
 ## 4. Add Rootbound to ChatGPT
 
-Open ChatGPT settings and create a custom MCP app/connector using **Connection: Tunnel**.
+Open ChatGPT settings and create a custom MCP app/connector using **Connection: Tunnel**. Select the same tunnel ID Rootbound is currently using.
 
-Select or paste the same `tunnel_...` ID Rootbound is currently using.
-
-For a single connection, inspect it with:
-
-```sh
-rootbound tunnel show
-```
-
-For multiple saved connections, use:
+Inspect the active connection with:
 
 ```sh
 rootbound connection current
 ```
 
-Rootbound can validate its local side, but it cannot reliably inspect which tunnel the ChatGPT UI currently selected. The ChatGPT connector must point to the same tunnel as the active Rootbound connection.
+Rootbound can validate its local side, but it cannot reliably inspect which tunnel the ChatGPT UI currently selected.
 
 ## 5. Test it
 
@@ -293,18 +229,6 @@ From ChatGPT:
 
 ```text
 @Rootbound open my workspace and show me the current Git status
-```
-
-Then:
-
-```text
-@Rootbound find the main entry point of this project and explain it to me
-```
-
-For a write flow:
-
-```text
-@Rootbound update the README, show me the diff, commit it, and push it
 ```
 
 Local health checks:
@@ -328,7 +252,7 @@ cd ~/Documents/Dev/my-app
 rootbound connect .
 ```
 
-Rootbound has one supervised active project runtime at a time. Connecting/starting another registered project switches that runtime.
+Rootbound has one supervised active project runtime at a time. Connecting or starting another registered project switches that runtime.
 
 ```sh
 rootbound start /path/to/project
@@ -336,40 +260,30 @@ rootbound status
 rootbound stop
 ```
 
-## Use several ChatGPT / OpenAI tunnel connections
-
-List them:
+## Multiple tunnel connections
 
 ```sh
 rootbound connection list
 rootbound connection current
-```
-
-Add another:
-
-```sh
 rootbound connection add work
-```
-
-Switch:
-
-```sh
 rootbound connection switch work
-```
-
-Rotate a revoked runtime key without recreating the connection:
-
-```sh
 rootbound connection repair work
-```
-
-Remove a stopped/unused connection:
-
-```sh
 rootbound connection remove work
 ```
 
-If Rootbound is running, a connection switch keeps the actual running project, starts it on the target connection, requires `/readyz`, and restores the previous runtime if the target cannot become ready.
+Each scoped connection keeps its tunnel configuration and runtime key isolated. A running connection switch is transactional: Rootbound validates the target, restarts the same project, requires `/readyz`, and restores the previous runtime if the switch fails.
+
+Rootbound calls these **connections**, not ChatGPT accounts. It does not store ChatGPT emails, ChatGPT OAuth tokens, or Codex OAuth credentials in the connection registry.
+
+## Runtime logs
+
+```sh
+rootbound logs
+rootbound logs --follow
+rootbound logs --follow --new-only
+```
+
+`--new-only` separates historical log tail from entries generated after follow mode begins.
 
 ---
 
@@ -404,10 +318,6 @@ verified checkpoint is injected back into the original Codex thread
 A later ChatGPT conversation can reattach to the same rescue if the saved rescue, original thread, and current worktree still agree.
 
 Rootbound refuses ambiguous thread selection, conflicting drift, unsafe rollback, and tampered manifests.
-
-### Pre-existing dirty work
-
-Uncommitted work that existed before rescue is part of the baseline.
 
 For supported Rootbound mutations, `codex.continuity_rollback` restores only safely snapshotted Rootbound-owned rescue mutations. Rootbound does not implement rescue rollback with `git reset`.
 
@@ -532,6 +442,7 @@ Rootbound is intentionally fail-closed.
 - diagnostics redact credentials, home paths, and sensitive thread information;
 - drift and rollback conflicts stop instead of guessing;
 - continuity manifests are integrity checked;
+- unknown Apple Silicon macOS Codex builds must pass the model-free capability probe before current-process use;
 - no public Rootbound tool silently starts a Codex model turn.
 
 See [`SECURITY.md`](SECURITY.md) for the complete boundary.
@@ -574,8 +485,6 @@ If installation updated your shell profile, open a new Terminal window.
 
 ## Connector exists but calls fail
 
-Check:
-
 ```sh
 rootbound status
 rootbound connection current
@@ -585,23 +494,23 @@ Make sure ChatGPT is using the same tunnel ID as the active Rootbound connection
 
 ## Runtime key was revoked
 
-For a scoped connection:
-
 ```sh
 rootbound connection repair <name>
 ```
 
 Repair validates the replacement before committing it and restores the previous key/config if validation fails.
 
-## Codex auto-updated and Rootbound refuses it
+## Codex auto-updated
 
-Run:
+On Apple Silicon macOS, `rootbound connect .` automatically capability-probes an unknown bundled Codex build before use. A compatible build can proceed for the current process without modifying the built-in allowlist.
+
+For an explicit diagnostic:
 
 ```sh
 npm run probe:codex -- --cwd /path/to/trusted/project
 ```
 
-The probe bypasses only the exact-version allowlist for evaluation; it still exercises the actual Rootbound authority and model-free capability checks. Do not manually widen the production allowlist until that exact build has been verified.
+If the capability probe fails, Rootbound fails closed. Do not manually add wildcard version ranges to the production policy.
 
 ## Project moved or was renamed
 
@@ -651,31 +560,14 @@ rootbound connect . --yes --no-start
 
 # Development and release validation
 
-Install dependencies:
-
 ```sh
 npm ci
-```
-
-Focused suite:
-
-```sh
 npm run test:v5
-```
-
-Full suite:
-
-```sh
 npm test
-```
-
-Release gate:
-
-```sh
 npm run validate:release
 ```
 
-Probe a newly installed Codex build before widening the exact version gate:
+Probe the currently installed Codex build explicitly:
 
 ```sh
 npm run probe:codex -- --cwd /path/to/trusted/project

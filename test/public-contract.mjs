@@ -3,7 +3,6 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ACCEPTED_CODEX_VERSIONS } from "../src/codex-authority-executor.mjs";
 import { resolveCodexExecutable } from "../src/codex-bin.mjs";
 import { PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "../src/surface-contracts.mjs";
 
@@ -12,7 +11,10 @@ const { Client, StreamableHTTPClientTransport } = require("@modelcontextprotocol
 const { StdioClientTransport } = require("@modelcontextprotocol/client/stdio");
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
-const codexBin = (await resolveCodexExecutable({ acceptedVersions: ACCEPTED_CODEX_VERSIONS })).path;
+// The public-contract test owns surface/guard assertions, not Codex build policy.
+// Resolve the real executable regardless of its version and let the spawned
+// Rootbound runtime perform the normal known-version/capability compatibility gate.
+const codexBin = (await resolveCodexExecutable({ acceptedVersions: null })).path;
 const testCwd = process.env.ROOTBOUND_TEST_CWD;
 const stateHome = path.join(projectRoot, "node_modules", `.rootbound-public-contract-${process.pid}`);
 const codexHome = path.join(stateHome, "codex");
