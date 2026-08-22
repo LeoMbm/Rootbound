@@ -1,47 +1,23 @@
 import path from "node:path";
 import process from "node:process";
-import { ACCEPTED_CODEX_VERSIONS, CodexAuthorityExecutor } from "../src/codex-authority-executor.mjs";
-import { resolveCodexExecutable } from "../src/codex-bin.mjs";
+import { resolveCompatibleCodexRuntime } from "../src/codex-compatibility.mjs";
 import { PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "../src/surface-contracts.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const cwd = path.resolve(args.cwd ?? process.cwd());
 const checks = [];
-let resolution = null;
 let executor = null;
 let authority = null;
 
 try {
-  resolution = await resolveCodexExecutable({ acceptedVersions: ACCEPTED_CODEX_VERSIONS });
-  record("codex", true, resolution.version ?? "accepted Codex executable resolved");
+  const compatible = await resolveCompatibleCodexRuntime({ cwd, maxTimeoutMs: 30_000, outputBytesCap: 64 * 1024 });
+  executor = compatible.executor;
+  authority = compatible.authority;
+  record("codex", true, `${compatible.version}; ${compatible.acceptanceSource}`);
+  record("app-server", true, `Codex ${compatible.validation.codexVersion}; App Server authority bootstrap succeeded`);
+  record("authority", true, `${authority.permissionProfile} within ${authority.trustedAncestor ?? cwd}`);
 } catch (error) {
   record("codex", false, error instanceof Error ? error.message : String(error));
-}
-
-if (resolution?.path) {
-  try {
-    executor = new CodexAuthorityExecutor({
-      codexBin: resolution.path,
-      defaultCwd: cwd,
-      acceptedCodexVersions: ACCEPTED_CODEX_VERSIONS,
-      maxTimeoutMs: 30_000,
-      watchdogGraceMs: 5_000,
-      outputBytesCap: 64 * 1024,
-    });
-    const validation = await executor.validate();
-    record("app-server", true, `Codex ${validation.codexVersion}; App Server authority bootstrap succeeded`);
-  } catch (error) {
-    record("app-server", false, error instanceof Error ? error.message : String(error));
-  }
-}
-
-if (executor && checks.at(-1)?.ok) {
-  try {
-    authority = await executor.resolveAuthority({ cwd, access: "readOnly", timeoutMs: 10_000 });
-    record("authority", true, `${authority.permissionProfile} within ${authority.trustedAncestor ?? cwd}`);
-  } catch (error) {
-    record("authority", false, error instanceof Error ? error.message : String(error), error?.code, error?.nextActions);
-  }
 }
 
 if (authority && executor) {
