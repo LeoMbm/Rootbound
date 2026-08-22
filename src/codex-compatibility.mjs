@@ -64,15 +64,17 @@ export async function resolveCompatibleCodexRuntime({
     throw new Error(`Codex compatibility probe expected exact trusted root ${effectiveCwd}, got ${authority.trustedAncestor ?? "none"}`);
   }
 
-  const marker = `rootbound-codex-compat-${process.pid}`;
-  const command = await executor.exec({
-    command: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(marker)})`],
-    cwd: effectiveCwd,
-    access: "readOnly",
-    timeoutMs: 10_000,
-  });
-  if (command.exitCode !== 0 || command.stdout !== marker) {
-    throw new Error(`Codex compatibility command/exec probe failed: exit=${command.exitCode} stdout=${JSON.stringify(command.stdout)} stderr=${JSON.stringify(command.stderr)}`);
+  if (!known) {
+    const marker = `rootbound-codex-compat-${process.pid}`;
+    const command = await executor.exec({
+      command: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(marker)})`],
+      cwd: effectiveCwd,
+      access: "readOnly",
+      timeoutMs: 10_000,
+    });
+    if (command.exitCode !== 0 || command.stdout !== marker) {
+      throw new Error(`Codex compatibility command/exec probe failed: exit=${command.exitCode} stdout=${JSON.stringify(command.stdout)} stderr=${JSON.stringify(command.stderr)}`);
+    }
   }
 
   return {
