@@ -10,7 +10,7 @@ import { assertRuntimeProjectAllowed } from "../src/runtime-project-lifecycle.mj
 import { ensureRootboundStateDirs, resolveRootboundPaths } from "../src/state-paths.mjs";
 import { clearRuntimeState, writeRuntimeState } from "../src/runtime-state.mjs";
 import { resolveTunnelLaunch } from "../src/tunnel-config.mjs";
-import { inspectManagedTunnelProfile, managedTunnelEnvironment } from "../src/tunnel-bootstrap.mjs";
+import { inspectManagedTunnelProfile, managedTunnelEnvironment, probeTunnelClient } from "../src/tunnel-bootstrap.mjs";
 import { readTunnelHealthSnapshot, summarizeTunnelHealth } from "../src/tunnel-health.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -43,6 +43,9 @@ const childBaseEnv = connection.storageKind === "scoped-v1" ? managedTunnelEnvir
 const managedProfile = connection.storageKind === "scoped-v1"
   ? await inspectManagedTunnelProfile({ profilePath: connectionPaths.tunnelManagedProfilePath })
   : { managed: false, transport: null, serverUrl: null };
+const managedTunnelClient = managedProfile.managed
+  ? await probeTunnelClient({ command: launch.command, env: childBaseEnv, cwd: packageRoot })
+  : null;
 const logHandle = await open(paths.logPath, "a", 0o600);
 let child = null;
 let mcpChild = null;
@@ -123,6 +126,7 @@ function runtimeValue(patch = {}) {
     mcpPid: mcpChild?.pid ?? null,
     managedMcpTransport: managedProfile.transport ?? null,
     managedMcpServerUrl: managedProfile.serverUrl ?? null,
+    tunnelClientVersion: managedTunnelClient?.version ?? null,
     startedAt: Date.now(),
     readyAt: null,
     startupReadinessCheckedAt: null,

@@ -104,6 +104,8 @@ assert.match(supervisor, /ROOTBOUND_HEALTH_FAILURE_THRESHOLD/);
 assert.match(supervisor, /healthyLocalProcess/);
 assert.match(supervisor, /restart budget reset/);
 assert.match(supervisor, /managedMcpTransport/);
+assert.match(supervisor, /probeTunnelClient\(\{ command: launch\.command/);
+assert.match(supervisor, /tunnelClientVersion/);
 assert.match(doctor, /tunnel-liveness/);
 assert.match(doctor, /current \/readyz passed/);
 
