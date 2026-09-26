@@ -100,6 +100,8 @@ assert.match(tunnelBootstrap, /127\.0\.0\.1/);
 assert.match(tunnelBootstrap, /transport = "http"/);
 assert.match(tunnelHealth, /health\?details=true/);
 assert.match(tunnelHealth, /health\/mcp/);
+assert.match(tunnelHealth, /evaluateDoctorTunnelHealth/);
+assert.match(doctor, /runtime\.state\?\.startupReady \?\? runtime\.state\?\.ready/);
 assert.match(supervisor, /ROOTBOUND_HEALTH_FAILURE_THRESHOLD/);
 assert.match(supervisor, /healthyLocalProcess/);
 assert.match(supervisor, /restart budget reset/);

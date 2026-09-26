@@ -77,6 +77,58 @@ export function summarizeTunnelHealth(snapshot) {
   };
 }
 
+export function evaluateDoctorTunnelHealth({ storageKind, runtimeRunning, health } = {}) {
+  if (!runtimeRunning) {
+    return {
+      liveness: { ok: true, required: false, detail: "runtime stopped", action: null },
+      readiness: { ok: true, required: false, detail: "runtime stopped", action: null },
+      warning: null,
+    };
+  }
+
+  const legacy = storageKind === "legacy-global";
+  const available = health?.available === true;
+  const live = available && health?.live === true;
+  const ready = available && health?.ready === true;
+  const unavailableDetail = `health unavailable: ${health?.reason ?? "unknown"}`;
+
+  if (legacy) {
+    if (!available) {
+      return {
+        liveness: { ok: true, required: false, detail: `legacy runtime compatibility mode; ${unavailableDetail}`, action: null },
+        readiness: { ok: true, required: false, detail: "legacy runtime compatibility mode", action: null },
+        warning: null,
+      };
+    }
+    return {
+      liveness: {
+        ok: live,
+        required: false,
+        detail: live ? "legacy runtime compatibility mode; current /healthz passed" : "legacy runtime compatibility mode; current /healthz failed",
+        action: live ? null : "Restart or repair the legacy Rootbound runtime",
+      },
+      readiness: { ok: true, required: false, detail: "legacy runtime compatibility mode", action: null },
+      warning: live ? null : "legacy runtime health endpoint is reachable but reports unhealthy",
+    };
+  }
+
+  return {
+    liveness: {
+      ok: live,
+      required: true,
+      detail: available ? (live ? "current /healthz passed" : "current /healthz failed") : unavailableDetail,
+      action: live ? null : "Inspect Rootbound logs and repair the active connection",
+    },
+    readiness: {
+      ok: ready,
+      required: true,
+      detail: available ? (ready ? "current /readyz passed" : "current /readyz failed") : unavailableDetail,
+      action: ready ? null : "Switch or repair the active Rootbound connection",
+    },
+    warning: null,
+  };
+}
+
 function normalizeComponent(value) {
   return {
     status: safeString(value.status),

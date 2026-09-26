@@ -16,7 +16,7 @@ import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "../src/surface-contracts.mjs";
 import { probeTunnelClient, validateManagedTunnel } from "../src/tunnel-bootstrap.mjs";
 import { tunnelConfigStatus } from "../src/tunnel-config.mjs";
-import { readTunnelHealthSnapshot, summarizeTunnelHealth } from "../src/tunnel-health.mjs";
+import { evaluateDoctorTunnelHealth, readTunnelHealthSnapshot, summarizeTunnelHealth } from "../src/tunnel-health.mjs";
 
 const require = createRequire(import.meta.url);
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -237,30 +237,19 @@ async function checkConnections() {
   const drift = runtime.running && Boolean(runtime.state?.connectionId) && runtime.state.connectionId !== active.id;
   record("runtime-connection", !drift, runtime.running ? (drift ? `registry=${active.name}; runtime=${runtime.state?.connectionName ?? runtime.state?.connectionId}` : `runtime uses ${active.name}`) : "runtime stopped", drift ? `Run rootbound connection switch ${active.name}` : null);
   let health = null;
-  if (runtime.running) {
-    health = summarizeTunnelHealth(await readTunnelHealthSnapshot({ healthUrlPath: connectionPaths.tunnelHealthUrlPath }));
-    record(
-      "tunnel-liveness",
-      health.available && health.live,
-      health.available ? (health.live ? "current /healthz passed" : "current /healthz failed") : `health unavailable: ${health.reason}`,
-      health.available && health.live ? null : `Run rootbound logs and rootbound connection repair ${active.name}`
-    );
-    record(
-      "tunnel-readiness",
-      active.storageKind === "legacy-global" ? true : health.available && health.ready,
-      active.storageKind === "legacy-global"
-        ? "legacy runtime compatibility mode"
-        : health.available
-          ? (health.ready ? "current /readyz passed" : "current /readyz failed")
-          : `health unavailable: ${health.reason}`,
-      active.storageKind === "legacy-global" || (health.available && health.ready) ? null : `Run rootbound connection switch ${active.name}`
-    );
-    for (const [name, component] of Object.entries(health.components ?? {})) {
-      if (component?.status === "degraded") warnings.push({ kind: `tunnel-health:${name}`, message: `${name} is degraded (${component.state ?? "unknown"})` });
-    }
-  } else {
-    record("tunnel-liveness", true, "runtime stopped", null, false);
-    record("tunnel-readiness", true, "runtime stopped", null, false);
+  health = runtime.running
+    ? summarizeTunnelHealth(await readTunnelHealthSnapshot({ healthUrlPath: connectionPaths.tunnelHealthUrlPath }))
+    : null;
+  const healthPolicy = evaluateDoctorTunnelHealth({
+    storageKind: active.storageKind,
+    runtimeRunning: runtime.running,
+    health,
+  });
+  record("tunnel-liveness", healthPolicy.liveness.ok, healthPolicy.liveness.detail, healthPolicy.liveness.action, healthPolicy.liveness.required);
+  record("tunnel-readiness", healthPolicy.readiness.ok, healthPolicy.readiness.detail, healthPolicy.readiness.action, healthPolicy.readiness.required);
+  if (healthPolicy.warning) warnings.push({ kind: "tunnel-health:legacy", message: healthPolicy.warning });
+  for (const [name, component] of Object.entries(health?.components ?? {})) {
+    if (component?.status === "degraded") warnings.push({ kind: `tunnel-health:${name}`, message: `${name} is degraded (${component.state ?? "unknown"})` });
   }
   connectionContext = {
     status: tunnel?.configured ? "configured" : "invalid",
@@ -269,7 +258,7 @@ async function checkConnections() {
     tunnelId: tunnel?.tunnelId ?? active.tunnelId ?? null,
     storageKind: active.storageKind,
     runtime: runtime.status,
-    startupReady: runtime.state?.ready ?? false,
+    startupReady: runtime.state?.startupReady ?? runtime.state?.ready ?? false,
     currentHealth: health,
     drift,
   };

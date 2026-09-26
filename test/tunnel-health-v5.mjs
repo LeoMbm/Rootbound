@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readTunnelHealthSnapshot, summarizeTunnelHealth } from "../src/tunnel-health.mjs";
+import { evaluateDoctorTunnelHealth, readTunnelHealthSnapshot, summarizeTunnelHealth } from "../src/tunnel-health.mjs";
 
 const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-tunnel-health-"));
 const runtime = path.join(root, "runtime");
@@ -94,6 +94,47 @@ const networkFailure = await readTunnelHealthSnapshot({
   fetchFn: async () => { throw new Error("offline"); },
 });
 assert.equal(networkFailure.healthDetailsSupported, false);
+
+const legacyWithoutHealth = evaluateDoctorTunnelHealth({
+  storageKind: "legacy-global",
+  runtimeRunning: true,
+  health: summarizeTunnelHealth(missing),
+});
+assert.equal(legacyWithoutHealth.liveness.ok, true);
+assert.equal(legacyWithoutHealth.liveness.required, false);
+assert.match(legacyWithoutHealth.liveness.detail, /legacy runtime compatibility mode/);
+assert.equal(legacyWithoutHealth.readiness.ok, true);
+assert.equal(legacyWithoutHealth.readiness.required, false);
+assert.equal(legacyWithoutHealth.warning, null);
+
+const legacyUnhealthy = evaluateDoctorTunnelHealth({
+  storageKind: "legacy-global",
+  runtimeRunning: true,
+  health: { available: true, live: false, ready: false, components: {} },
+});
+assert.equal(legacyUnhealthy.liveness.ok, false);
+assert.equal(legacyUnhealthy.liveness.required, false);
+assert.match(legacyUnhealthy.warning, /reports unhealthy/);
+
+const scopedWithoutHealth = evaluateDoctorTunnelHealth({
+  storageKind: "scoped-v1",
+  runtimeRunning: true,
+  health: summarizeTunnelHealth(missing),
+});
+assert.equal(scopedWithoutHealth.liveness.ok, false);
+assert.equal(scopedWithoutHealth.liveness.required, true);
+assert.equal(scopedWithoutHealth.readiness.ok, false);
+assert.equal(scopedWithoutHealth.readiness.required, true);
+
+const stoppedPolicy = evaluateDoctorTunnelHealth({
+  storageKind: "scoped-v1",
+  runtimeRunning: false,
+  health: null,
+});
+assert.equal(stoppedPolicy.liveness.ok, true);
+assert.equal(stoppedPolicy.liveness.required, false);
+assert.equal(stoppedPolicy.readiness.ok, true);
+assert.equal(stoppedPolicy.readiness.required, false);
 
 console.log("tunnel-health-v5: ok");
 
