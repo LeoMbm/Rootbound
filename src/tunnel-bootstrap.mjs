@@ -9,6 +9,9 @@ import { clearTunnelConfig, saveTunnelConfig } from "./tunnel-config.mjs";
 const execFileAsync = promisify(execFile);
 const TUNNEL_ID_PATTERN = /^tunnel_[0-9a-f]{32}$/;
 
+export const MINIMUM_TUNNEL_CLIENT_VERSION = "0.0.12";
+export const RECOMMENDED_TUNNEL_CLIENT_VERSION = "0.0.15";
+
 export const TUNNEL_SETUP_URLS = Object.freeze({
   tunnels: "https://platform.openai.com/settings/organization/tunnels",
   runtimeKeys: "https://platform.openai.com/settings/organization/api-keys",
@@ -53,10 +56,45 @@ export async function discoverTunnelCandidates({ env = process.env, home = os.ho
   return candidates;
 }
 
-export async function probeTunnelClient({ command = "tunnel-client", env = process.env, cwd = process.cwd(), timeoutMs = 5000 } = {}) {
+export function parseTunnelClientVersion(value) {
+  const text = String(value ?? "").trim();
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?(?:\s|$)/.exec(text);
+  if (!match) return null;
+  return {
+    version: `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`,
+    parts: [Number(match[1]), Number(match[2]), Number(match[3])],
+  };
+}
+
+export function compareTunnelClientVersions(left, right) {
+  const a = typeof left === "string" ? parseTunnelClientVersion(left)?.parts : left?.parts;
+  const b = typeof right === "string" ? parseTunnelClientVersion(right)?.parts : right?.parts;
+  if (!a || !b) throw new Error("compareTunnelClientVersions requires parseable semantic versions");
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+export async function probeTunnelClient({
+  command = "tunnel-client",
+  env = process.env,
+  cwd = process.cwd(),
+  timeoutMs = 5000,
+  execFileFn = execFileAsync,
+  minimumVersion = MINIMUM_TUNNEL_CLIENT_VERSION,
+  recommendedVersion = RECOMMENDED_TUNNEL_CLIENT_VERSION,
+} = {}) {
+  let stdout = "";
+  let stderr = "";
   try {
-    await execFileAsync(command, ["--help"], { cwd, env, timeout: timeoutMs, windowsHide: true, maxBuffer: 512 * 1024 });
-    return { ok: true, command };
+    ({ stdout = "", stderr = "" } = await execFileFn(command, ["--version"], {
+      cwd,
+      env,
+      timeout: timeoutMs,
+      windowsHide: true,
+      maxBuffer: 512 * 1024,
+    }));
   } catch (error) {
     if (error?.code === "ENOENT") {
       const missing = new Error(`tunnel-client was not found on PATH. Install the supported tunnel-client from ${TUNNEL_SETUP_URLS.tunnels}, then retry.`);
@@ -68,6 +106,28 @@ export async function probeTunnelClient({ command = "tunnel-client", env = proce
     failed.code = "TUNNEL_CLIENT_UNAVAILABLE";
     throw failed;
   }
+
+  const parsed = parseTunnelClientVersion(stdout || stderr);
+  if (!parsed) {
+    const failed = new Error(`tunnel-client version could not be parsed from: ${cleanToolOutput(stdout || stderr)}`);
+    failed.code = "TUNNEL_CLIENT_VERSION_UNPARSEABLE";
+    throw failed;
+  }
+  if (compareTunnelClientVersions(parsed, minimumVersion) < 0) {
+    const failed = new Error(`tunnel-client ${parsed.version} is unsupported; Rootbound requires ${minimumVersion} or newer.`);
+    failed.code = "TUNNEL_CLIENT_VERSION_UNSUPPORTED";
+    failed.version = parsed.version;
+    failed.minimumVersion = minimumVersion;
+    throw failed;
+  }
+  return {
+    ok: true,
+    command,
+    version: parsed.version,
+    minimumVersion,
+    recommendedVersion,
+    recommended: compareTunnelClientVersions(parsed, recommendedVersion) >= 0,
+  };
 }
 
 export async function writeManagedTunnelSetup({

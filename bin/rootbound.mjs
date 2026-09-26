@@ -124,8 +124,9 @@ async function ensureTunnelReadyForConnect(opts, projectRoot) {
   const interactive = !opts.json && !opts.yes && process.stdin.isTTY && process.stdout.isTTY;
   setupLine(opts, "\nRootbound setup");
   setupLine(opts, "Checking ChatGPT tunnel prerequisites...");
-  await probeTunnelClient({ cwd: packageRoot });
-  setupLine(opts, "✓ tunnel-client detected");
+  const tunnelClient = await probeTunnelClient({ cwd: packageRoot });
+  setupLine(opts, `✓ tunnel-client ${tunnelClient.version} detected`);
+  if (!tunnelClient.recommended) setupLine(opts, `! tunnel-client ${tunnelClient.recommendedVersion}+ is recommended`);
 
   const candidates = await discoverTunnelCandidates();
   const tunnelId = await chooseTunnelId({ candidates, interactive, opts });

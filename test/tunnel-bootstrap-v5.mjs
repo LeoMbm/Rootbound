@@ -4,8 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import {
   buildStdioCommand,
+  compareTunnelClientVersions,
   discoverTunnelCandidates,
   managedTunnelEnvironment,
+  MINIMUM_TUNNEL_CLIENT_VERSION,
+  parseTunnelClientVersion,
+  probeTunnelClient,
+  RECOMMENDED_TUNNEL_CLIENT_VERSION,
   rollbackManagedTunnelSetup,
   validateRuntimeKey,
   validateTunnelId,
@@ -40,6 +45,39 @@ assert.equal(validateRuntimeKey("sk_test-runtime_key-123"), true);
 assert.equal(validateRuntimeKey("opaque runtime key with spaces"), true);
 assert.equal(validateRuntimeKey("bad\nkey"), false);
 assert.equal(validateRuntimeKey(""), false);
+
+assert.equal(MINIMUM_TUNNEL_CLIENT_VERSION, "0.0.12");
+assert.equal(RECOMMENDED_TUNNEL_CLIENT_VERSION, "0.0.15");
+assert.deepEqual(parseTunnelClientVersion("0.0.15\n")?.parts, [0, 0, 15]);
+assert.equal(parseTunnelClientVersion("v0.0.15 (git sha: abc)")?.version, "0.0.15");
+assert.equal(parseTunnelClientVersion("tunnel-client 0.0.15"), null);
+assert.equal(compareTunnelClientVersions("0.0.15", "0.0.12"), 1);
+assert.equal(compareTunnelClientVersions("0.0.12", "0.0.12"), 0);
+assert.equal(compareTunnelClientVersions("0.0.11", "0.0.12"), -1);
+
+const supportedProbe = await probeTunnelClient({
+  command: "fake-tunnel-client",
+  execFileFn: async (command, args) => {
+    assert.equal(command, "fake-tunnel-client");
+    assert.deepEqual(args, ["--version"]);
+    return { stdout: "0.0.15\n", stderr: "" };
+  },
+});
+assert.equal(supportedProbe.version, "0.0.15");
+assert.equal(supportedProbe.recommended, true);
+
+const supportedOldProbe = await probeTunnelClient({
+  execFileFn: async () => ({ stdout: "0.0.12\n", stderr: "" }),
+});
+assert.equal(supportedOldProbe.recommended, false);
+await assert.rejects(
+  () => probeTunnelClient({ execFileFn: async () => ({ stdout: "0.0.11\n", stderr: "" }) }),
+  (error) => error?.code === "TUNNEL_CLIENT_VERSION_UNSUPPORTED" && error?.minimumVersion === "0.0.12"
+);
+await assert.rejects(
+  () => probeTunnelClient({ execFileFn: async () => ({ stdout: "unknown\n", stderr: "" }) }),
+  (error) => error?.code === "TUNNEL_CLIENT_VERSION_UNPARSEABLE"
+);
 
 const sanitized = managedTunnelEnvironment({ CONTROL_PLANE_TUNNEL_ID: tunnelB, CONTROL_PLANE_API_KEY: "secret", OPENAI_API_KEY: "other", KEEP_ME: "yes" });
 assert.equal(sanitized.CONTROL_PLANE_TUNNEL_ID, undefined);

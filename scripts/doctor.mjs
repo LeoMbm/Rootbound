@@ -14,7 +14,7 @@ import { withRootboundPermissionOverrides } from "../src/rootbound-permission-pr
 import { runtimeStatus } from "../src/runtime-state.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "../src/surface-contracts.mjs";
-import { validateManagedTunnel } from "../src/tunnel-bootstrap.mjs";
+import { probeTunnelClient, validateManagedTunnel } from "../src/tunnel-bootstrap.mjs";
 import { tunnelConfigStatus } from "../src/tunnel-config.mjs";
 
 const require = createRequire(import.meta.url);
@@ -39,6 +39,7 @@ let appServer = null;
 let projectContext = null;
 let codexCompatibility = null;
 let connectionContext = { status: "not_configured" };
+let tunnelClientProbe = null;
 
 const supportedPlatform = process.platform === "win32" || (process.platform === "darwin" && process.arch === "arm64");
 const dynamicMacCompatibility = process.platform === "darwin" && process.arch === "arm64";
@@ -52,6 +53,25 @@ const versionedSurface = /^rootbound-public-preview-v\d+$/.test(PUBLIC_SURFACE_V
 const expectedSurface = versionedSurface && uniqueToolNames && PUBLIC_TOOL_NAMES.length > 0;
 record("public-surface", expectedSurface && forbiddenModelTools.length === 0, `${PUBLIC_SURFACE_VERSION}; ${PUBLIC_TOOL_NAMES.length} tools; modelLane=chatgpt-only`, forbiddenModelTools.length ? `Forbidden Codex model tools exposed: ${forbiddenModelTools.join(", ")}` : !versionedSurface ? "Public surface version is not a supported versioned Rootbound preview identifier" : !uniqueToolNames ? "Public tool list contains duplicate names" : "Expected a non-empty unique ChatGPT-only public surface");
 record("surface-compatibility", expectedSurface, expectedSurface ? `${PUBLIC_SURFACE_VERSION} contract is internally consistent (${PUBLIC_TOOL_NAMES.length} tools)` : "Surface contract is stale or incomplete", expectedSurface ? null : "Restart/reconnect the Rootbound MCP connection after upgrading so ChatGPT refreshes its cached tool snapshot");
+
+try {
+  tunnelClientProbe = await probeTunnelClient({ cwd: projectRoot });
+  record(
+    "tunnel-client-version",
+    true,
+    `tunnel-client ${tunnelClientProbe.version}; minimum ${tunnelClientProbe.minimumVersion}; recommended ${tunnelClientProbe.recommendedVersion}+`,
+    null,
+    true
+  );
+  if (!tunnelClientProbe.recommended) {
+    warnings.push({
+      kind: "tunnel-client-version",
+      message: `tunnel-client ${tunnelClientProbe.version} is supported, but ${tunnelClientProbe.recommendedVersion}+ is recommended.`,
+    });
+  }
+} catch (error) {
+  record("tunnel-client-version", false, message(error), "Upgrade tunnel-client, then rerun rootbound doctor", true);
+}
 
 await checkConnections();
 
@@ -144,6 +164,12 @@ const result = {
   rootbound: { packageVersion: packageJson.version, serverVersion: PUBLIC_SERVER_VERSION, surfaceVersion: PUBLIC_SURFACE_VERSION, publicToolCount: PUBLIC_TOOL_NAMES.length, modelLane: "chatgpt-only", installRoot: redactHomePath(projectRoot) },
   host: { platform: process.platform, arch: process.arch, node: process.version },
   connection: connectionContext,
+  tunnelClient: tunnelClientProbe ? {
+    version: tunnelClientProbe.version,
+    minimumVersion: tunnelClientProbe.minimumVersion,
+    recommendedVersion: tunnelClientProbe.recommendedVersion,
+    recommended: tunnelClientProbe.recommended,
+  } : null,
   codex: {
     resolutionSource: codexResolution?.source ?? null,
     executable: codexResolution?.path ? redactHomePath(codexResolution.path) : null,

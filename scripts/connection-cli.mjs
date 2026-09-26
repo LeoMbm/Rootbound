@@ -78,8 +78,9 @@ async function add() {
   if (json || !process.stdin.isTTY || !process.stdout.isTTY) throw usage("connection add requires an interactive terminal; non-interactive profile creation is not supported yet");
 
   process.stdout.write(`\nRootbound connection setup\nConnection: ${name}\n`);
-  await probeTunnelClient({ cwd: packageRoot });
-  process.stdout.write("✓ tunnel-client detected\n");
+  const tunnelClient = await probeTunnelClient({ cwd: packageRoot });
+  process.stdout.write(`✓ tunnel-client ${tunnelClient.version} detected\n`);
+  if (!tunnelClient.recommended) process.stdout.write(`! tunnel-client ${tunnelClient.recommendedVersion}+ is recommended\n`);
   const candidates = await discoverTunnelCandidates();
   const tunnelId = await chooseTunnel(candidates);
   const apiKey = await resolveRuntimeKey();
