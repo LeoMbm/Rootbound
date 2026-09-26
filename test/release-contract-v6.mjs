@@ -23,6 +23,7 @@ const commandWorker = await readFile(path.join(root, "scripts", "command-worker.
 const doctor = await readFile(path.join(root, "scripts", "doctor.mjs"), "utf8");
 const tunnelBootstrap = await readFile(path.join(root, "src", "tunnel-bootstrap.mjs"), "utf8");
 const tunnelHealth = await readFile(path.join(root, "src", "tunnel-health.mjs"), "utf8");
+const installer = await readFile(path.join(root, "scripts", "install.sh"), "utf8");
 
 assert.equal(packageJson.version, "0.1.0-preview.3");
 assert.equal(shrinkwrap.version, packageJson.version);
@@ -110,6 +111,9 @@ assert.match(supervisor, /probeTunnelClient\(\{ command: launch\.command/);
 assert.match(supervisor, /tunnelClientVersion/);
 assert.match(doctor, /tunnel-liveness/);
 assert.match(doctor, /current \/readyz passed/);
+assert.match(installer, /doctor_failure_summary/);
+assert.match(installer, /Staging doctor failed: \$STAGE_FAILURE/);
+assert.match(installer, /Installed doctor failed: \$INSTALLED_FAILURE/);
 
 assert.match(projectToolScopeGuard, /codex\.command_exec/);
 assert.match(projectToolScopeGuard, /codex\.git_status/);

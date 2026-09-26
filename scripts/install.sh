@@ -68,6 +68,24 @@ json_field() {
   ' "$field"
 }
 
+doctor_failure_summary() {
+  node_bin=$1
+  "$node_bin" -e '
+    let text = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => { text += chunk; });
+    process.stdin.on("end", () => {
+      let value;
+      try { value = JSON.parse(text); } catch { process.exit(3); }
+      const failures = Array.isArray(value?.checks)
+        ? value.checks.filter((check) => check?.required && check?.ok === false).slice(0, 4)
+        : [];
+      if (!failures.length) process.exit(3);
+      process.stdout.write(failures.map((check) => String(check.name) + ": " + String(check.detail ?? "failed")).join("; "));
+    });
+  '
+}
+
 emit_failure() {
   message=$1
   if [ "$JSON" -eq 1 ]; then
@@ -186,9 +204,17 @@ if ! (cd "$STAGE_DIR" && "$NPM" ci --omit=dev --ignore-scripts --no-audit --no-f
   fail "npm production dependency install failed in staging."
 fi
 
-if ! STAGE_DOCTOR=$(cd "$STAGE_DIR" && CODEX_BIN="$CODEX_BIN_RESOLVED" "$NODE" scripts/doctor.mjs --json); then fail "Staging doctor failed."; fi
+if STAGE_DOCTOR=$(cd "$STAGE_DIR" && CODEX_BIN="$CODEX_BIN_RESOLVED" "$NODE" scripts/doctor.mjs --json); then
+  :
+else
+  STAGE_FAILURE=$(printf '%s' "$STAGE_DOCTOR" | doctor_failure_summary "$NODE" 2>/dev/null || true)
+  if [ -n "$STAGE_FAILURE" ]; then fail "Staging doctor failed: $STAGE_FAILURE"; else fail "Staging doctor failed."; fi
+fi
 STAGE_STATUS=$(printf '%s' "$STAGE_DOCTOR" | json_field status "$NODE" 2>/dev/null || true)
-[ "$STAGE_STATUS" != "error" ] || fail "Staging doctor returned error."
+if [ "$STAGE_STATUS" = "error" ]; then
+  STAGE_FAILURE=$(printf '%s' "$STAGE_DOCTOR" | doctor_failure_summary "$NODE" 2>/dev/null || true)
+  if [ -n "$STAGE_FAILURE" ]; then fail "Staging doctor returned error: $STAGE_FAILURE"; else fail "Staging doctor returned error."; fi
+fi
 
 if [ -e "$INSTALL_DIR" ]; then
   [ ! -e "$INSTALL_DIR/.git" ] || fail "Refusing to replace a Git checkout: $INSTALL_DIR"
@@ -204,11 +230,25 @@ if ! mv "$STAGE_DIR" "$INSTALL_DIR"; then fail "Unable to activate staged instal
 STAGE_DIR=""
 INSTALLED=1
 
-if ! INSTALLED_DOCTOR=$(cd "$INSTALL_DIR" && CODEX_BIN="$CODEX_BIN_RESOLVED" "$NODE" scripts/doctor.mjs --json); then
-  fail "Installed doctor failed; previous install was restored when available."
+if INSTALLED_DOCTOR=$(cd "$INSTALL_DIR" && CODEX_BIN="$CODEX_BIN_RESOLVED" "$NODE" scripts/doctor.mjs --json); then
+  :
+else
+  INSTALLED_FAILURE=$(printf '%s' "$INSTALLED_DOCTOR" | doctor_failure_summary "$NODE" 2>/dev/null || true)
+  if [ -n "$INSTALLED_FAILURE" ]; then
+    fail "Installed doctor failed: $INSTALLED_FAILURE; previous install was restored when available."
+  else
+    fail "Installed doctor failed; previous install was restored when available."
+  fi
 fi
 INSTALLED_STATUS=$(printf '%s' "$INSTALLED_DOCTOR" | json_field status "$NODE" 2>/dev/null || true)
-[ "$INSTALLED_STATUS" != "error" ] || fail "Installed doctor returned error; previous install was restored when available."
+if [ "$INSTALLED_STATUS" = "error" ]; then
+  INSTALLED_FAILURE=$(printf '%s' "$INSTALLED_DOCTOR" | doctor_failure_summary "$NODE" 2>/dev/null || true)
+  if [ -n "$INSTALLED_FAILURE" ]; then
+    fail "Installed doctor returned error: $INSTALLED_FAILURE; previous install was restored when available."
+  else
+    fail "Installed doctor returned error; previous install was restored when available."
+  fi
+fi
 
 configure_cli
 
