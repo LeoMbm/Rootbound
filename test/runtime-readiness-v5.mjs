@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { addConnection } from "../src/connection-registry.mjs";
@@ -18,9 +19,18 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 const home = process.env.ROOTBOUND_HOME;
 const id = process.env.ROOTBOUND_CONNECTION_ID;
+if (process.env.FAKE_START_COUNT_PATH) {
+  let count = 0;
+  try { count = Number.parseInt(readFileSync(process.env.FAKE_START_COUNT_PATH, "utf8"), 10) || 0; } catch {}
+  writeFileSync(process.env.FAKE_START_COUNT_PATH, String(count + 1));
+}
 const server = http.createServer((req, res) => {
   if (req.url === "/readyz") { res.statusCode = process.env.FAKE_READY === "1" ? 200 : 503; res.end("ready"); return; }
-  if (req.url === "/healthz") { res.statusCode = 200; res.end("alive"); return; }
+  if (req.url === "/healthz") {
+    res.statusCode = process.env.FAKE_HEALTH_FAIL_PATH && existsSync(process.env.FAKE_HEALTH_FAIL_PATH) ? 503 : 200;
+    res.end(res.statusCode === 200 ? "alive" : "unhealthy");
+    return;
+  }
   res.statusCode = 404; res.end("not found");
 });
 server.listen(0, "127.0.0.1", async () => {
@@ -34,6 +44,7 @@ setInterval(() => {}, 1000);
 `, "utf8");
 
 await readyCase();
+await watchdogRecoveryCase();
 await notReadyCase();
 console.log("runtime-readiness-v5: ok");
 
@@ -59,6 +70,45 @@ async function readyCase() {
   }
 }
 
+async function watchdogRecoveryCase() {
+  const home = path.join(root, "watchdog-recovery");
+  const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: home } });
+  const added = await addConnection({ paths, name: "watchdog-recovery", tunnelId: "tunnel_cccccccccccccccccccccccccccccccc", makeActive: true });
+  const connectionPaths = resolveConnectionPaths({ paths, connection: added.connection });
+  await saveTunnelConfig({ argv: [process.execPath, fakeTunnel], paths: connectionPaths });
+  const failPath = path.join(home, "fail-health");
+  const startCountPath = path.join(home, "start-count");
+  await mkdir(home, { recursive: true });
+  const child = launchSupervisor({
+    home,
+    connectionId: added.connection.id,
+    ready: true,
+    restartLimit: 2,
+    healthFailPath: failPath,
+    startCountPath,
+  });
+  try {
+    await waitFor(async () => {
+      const value = await readRuntimeState(paths).catch(() => null);
+      return value?.ready === true ? value : null;
+    }, 5000);
+    await writeFile(failPath, "fail", "utf8");
+    await waitFor(async () => {
+      try { return Number.parseInt(await readFile(startCountPath, "utf8"), 10) >= 2; } catch { return false; }
+    }, 5000);
+    await unlink(failPath).catch(() => {});
+    const recovered = await waitFor(async () => {
+      const value = await readRuntimeState(paths).catch(() => null);
+      return value?.ready === true && value?.tunnelHealth?.live === true ? value : null;
+    }, 5000);
+    assert.equal(recovered.status, "ready");
+  } finally {
+    await unlink(failPath).catch(() => {});
+    child.kill("SIGTERM");
+    await waitForExit(child);
+  }
+}
+
 async function notReadyCase() {
   const home = path.join(root, "not-ready");
   const paths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: home } });
@@ -72,7 +122,7 @@ async function notReadyCase() {
   assert.equal(state, null, "failed scoped startup must not publish a running runtime state");
 }
 
-function launchSupervisor({ home, connectionId, ready }) {
+function launchSupervisor({ home, connectionId, ready, restartLimit = 0, healthFailPath = "", startCountPath = "" }) {
   return spawn(process.execPath, [path.join(repoRoot, "scripts", "supervisor.mjs")], {
     cwd: repoRoot,
     env: {
@@ -81,10 +131,13 @@ function launchSupervisor({ home, connectionId, ready }) {
       ROOTBOUND_PROJECT_REF: ready ? "project_ready" : "project_not_ready",
       ROOTBOUND_PROJECT_ROOT: root,
       ROOTBOUND_CONNECTION_ID: connectionId,
-      ROOTBOUND_TUNNEL_RESTART_LIMIT: "0",
+      ROOTBOUND_TUNNEL_RESTART_LIMIT: String(restartLimit),
       ROOTBOUND_HEALTH_WATCHDOG_INTERVAL_MS: "100",
       ROOTBOUND_HEALTH_FAILURE_THRESHOLD: "2",
+      ROOTBOUND_RESTART_BUDGET_RESET_MS: "1000",
       FAKE_READY: ready ? "1" : "0",
+      FAKE_HEALTH_FAIL_PATH: healthFailPath,
+      FAKE_START_COUNT_PATH: startCountPath,
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,

@@ -36,6 +36,7 @@ const runtimeId = `runtime_${randomUUID()}`;
 const restartLimit = parseBoundedInt(process.env.ROOTBOUND_TUNNEL_RESTART_LIMIT ?? "3", 0, 20, "ROOTBOUND_TUNNEL_RESTART_LIMIT");
 const healthWatchdogIntervalMs = parseBoundedInt(process.env.ROOTBOUND_HEALTH_WATCHDOG_INTERVAL_MS ?? "5000", 100, 60000, "ROOTBOUND_HEALTH_WATCHDOG_INTERVAL_MS");
 const healthFailureThreshold = parseBoundedInt(process.env.ROOTBOUND_HEALTH_FAILURE_THRESHOLD ?? "3", 1, 10, "ROOTBOUND_HEALTH_FAILURE_THRESHOLD");
+const restartBudgetResetMs = parseBoundedInt(process.env.ROOTBOUND_RESTART_BUDGET_RESET_MS ?? "60000", 1000, 3600000, "ROOTBOUND_RESTART_BUDGET_RESET_MS");
 const launchEnv = requestedConnection ? explicitConnectionEnvironment(process.env) : process.env;
 const launch = resolveTunnelLaunch({ env: launchEnv, packageRoot, projectRoot, paths: connectionPaths });
 const childBaseEnv = connection.storageKind === "scoped-v1" ? managedTunnelEnvironment(launchEnv) : launchEnv;
@@ -50,6 +51,7 @@ let restarts = 0;
 let runtimeState = null;
 let healthTimer = null;
 let healthFailures = 0;
+let healthySince = null;
 let watchdogBusy = false;
 
 process.on("SIGINT", () => void shutdown("SIGINT"));
@@ -97,6 +99,7 @@ async function startChild() {
     startupReadinessCheckedAt: Date.now(),
     legacyReadinessFallback: !readiness.ok,
   });
+  healthySince = readiness.ok ? Date.now() : null;
   log(`tunnel ${readiness.ok ? "ready" : "running (legacy readiness fallback)"} pid=${child.pid}`);
   child.once("exit", (code, signal) => void onChildExit(code, signal));
   startHealthWatchdog();
@@ -134,6 +137,7 @@ function runtimeValue(patch = {}) {
     ...(runtimeState ?? {}),
     ...patch,
     tunnelPid: child?.pid ?? null,
+    mcpPid: mcpChild?.pid ?? null,
   };
 }
 
@@ -158,6 +162,16 @@ async function runHealthWatchdog() {
     const snapshot = summarizeTunnelHealth(await readTunnelHealthSnapshot({ healthUrlPath: connectionPaths.tunnelHealthUrlPath }));
     const healthyLocalProcess = snapshot.available && snapshot.live;
     healthFailures = healthyLocalProcess ? 0 : healthFailures + 1;
+    if (healthyLocalProcess && snapshot.ready) {
+      if (healthySince == null) healthySince = Date.now();
+      if (restarts > 0 && Date.now() - healthySince >= restartBudgetResetMs) {
+        log(`restart budget reset after ${Date.now() - healthySince}ms healthy`);
+        restarts = 0;
+        healthySince = Date.now();
+      }
+    } else {
+      healthySince = null;
+    }
     await publishRuntime({
       status: snapshot.ready ? "ready" : healthyLocalProcess ? "degraded" : "recovering",
       ready: snapshot.ready === true,
@@ -246,6 +260,7 @@ async function waitForTunnelReadiness({ healthUrlPath, timeoutMs }) {
 async function onChildExit(code, signal) {
   log(`tunnel exit code=${code} signal=${signal}`);
   child = null;
+  healthySince = null;
   if (stopping) return;
   if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
   await publishRuntime({ status: "recovering", ready: false, lastHealthCheckedAt: Date.now() }).catch(() => {});
