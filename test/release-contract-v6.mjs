@@ -110,7 +110,7 @@ assert.match(supervisor, /managedMcpTransport/);
 assert.match(supervisor, /probeTunnelClient\(\{ command: launch\.command/);
 assert.match(supervisor, /tunnelClientVersion/);
 assert.match(doctor, /tunnel-liveness/);
-assert.match(doctor, /current \/readyz passed/);
+assert.match(tunnelHealth, /current \/readyz passed/);
 assert.match(installer, /doctor_failure_summary/);
 assert.match(installer, /Staging doctor failed: \$STAGE_FAILURE/);
 assert.match(installer, /Installed doctor failed: \$INSTALLED_FAILURE/);
