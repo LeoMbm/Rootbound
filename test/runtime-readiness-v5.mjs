@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { addConnection } from "../src/connection-registry.mjs";
@@ -16,6 +15,7 @@ const fakeTunnel = path.join(root, "fake-tunnel.mjs");
 await writeFile(fakeTunnel, `
 import http from "node:http";
 import path from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 const home = process.env.ROOTBOUND_HOME;
 const id = process.env.ROOTBOUND_CONNECTION_ID;
