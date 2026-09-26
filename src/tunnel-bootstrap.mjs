@@ -203,22 +203,42 @@ export async function validateManagedTunnel({
   env = process.env,
   cwd = process.cwd(),
   timeoutMs = 20_000,
+  execFileFn = execFileAsync,
+  packageRoot = cwd,
+  platform = process.platform,
 } = {}) {
   if (!profilePath) throw new Error("validateManagedTunnel requires profilePath");
+  const profile = await inspectManagedTunnelProfile({ profilePath });
+  let validationProfilePath = profilePath;
+  let temporaryProfilePath = null;
+  if (profile.transport === "http") {
+    temporaryProfilePath = `${profilePath}.${process.pid}.doctor-stdio.yaml`;
+    const source = await readFile(profilePath, "utf8");
+    const validationSource = replaceManagedHttpBindingWithStdio(source, buildStdioCommand({ packageRoot }));
+    await writePrivateFile(temporaryProfilePath, validationSource, { platform });
+    validationProfilePath = temporaryProfilePath;
+  }
   try {
-    const { stdout = "", stderr = "" } = await execFileAsync(command, ["doctor", "--profile-file", profilePath], {
+    const { stdout = "", stderr = "" } = await execFileFn(command, ["doctor", "--profile-file", validationProfilePath], {
       cwd,
       env: managedTunnelEnvironment(env),
       timeout: timeoutMs,
       windowsHide: true,
       maxBuffer: 1024 * 1024,
     });
-    return { ok: true, detail: cleanToolOutput(stdout || stderr || "tunnel-client doctor passed") };
+    return {
+      ok: true,
+      detail: cleanToolOutput(stdout || stderr || "tunnel-client doctor passed"),
+      validationTransport: profile.transport === "http" ? "stdio" : profile.transport,
+      runtimeTransport: profile.transport,
+    };
   } catch (error) {
     const detail = cleanToolOutput(error?.stdout || error?.stderr || error?.message || "tunnel-client doctor failed");
     const failed = new Error(`OpenAI tunnel validation failed: ${detail}`);
     failed.code = "TUNNEL_DOCTOR_FAILED";
     throw failed;
+  } finally {
+    if (temporaryProfilePath) await unlink(temporaryProfilePath).catch(() => {});
   }
 }
 
@@ -266,6 +286,12 @@ export async function inspectManagedTunnelProfile({ profilePath } = {}) {
     return { managed: true, transport: "stdio", serverUrl: null };
   }
   return { managed: true, transport: "unknown", serverUrl: null };
+}
+
+function replaceManagedHttpBindingWithStdio(source, command) {
+  const block = /\n  server_urls:\n    - channel: main\n      url: [^\n]+\n/;
+  if (!block.test(source)) throw new Error("Managed HTTP tunnel profile is missing the expected main server_url binding");
+  return source.replace(block, `\n  commands:\n    - channel: main\n      command: ${yamlString(command)}\n`);
 }
 
 function assertLoopbackMcpUrl(value) {

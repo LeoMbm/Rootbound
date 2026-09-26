@@ -14,6 +14,7 @@ import {
   RECOMMENDED_TUNNEL_CLIENT_VERSION,
   inspectManagedTunnelProfile,
   rollbackManagedTunnelSetup,
+  validateManagedTunnel,
   validateRuntimeKey,
   validateTunnelId,
   writeManagedTunnelSetup,
@@ -128,6 +129,30 @@ assert.match(profile, /url:\s+"http:\/\/127\.0\.0\.1:7690\/mcp"/);
 assert.doesNotMatch(profile, /commands:/);
 assert.equal((await inspectManagedTunnelProfile({ profilePath: paths.tunnelManagedProfilePath })).transport, "http");
 assert.equal(profile.includes(secret), false, "managed tunnel profile must not contain the runtime key");
+
+let validationProfileSeen = null;
+const validation = await validateManagedTunnel({
+  profilePath: paths.tunnelManagedProfilePath,
+  cwd: packageRoot,
+  packageRoot,
+  execFileFn: async (command, args) => {
+    assert.equal(command, "tunnel-client");
+    assert.equal(args[0], "doctor");
+    validationProfileSeen = args[2];
+    const validationProfile = await readFile(validationProfileSeen, "utf8");
+    assert.match(validationProfile, /commands:/);
+    assert.match(validationProfile, /launch\.mjs/);
+    assert.doesNotMatch(validationProfile, /server_urls:/);
+    return { stdout: "doctor ok\n", stderr: "" };
+  },
+});
+assert.equal(validation.runtimeTransport, "http");
+assert.equal(validation.validationTransport, "stdio");
+assert.notEqual(validationProfileSeen, paths.tunnelManagedProfilePath);
+await assert.rejects(() => readFile(validationProfileSeen, "utf8"), (error) => error?.code === "ENOENT");
+const persistentProfileAfterDoctor = await readFile(paths.tunnelManagedProfilePath, "utf8");
+assert.match(persistentProfileAfterDoctor, /server_urls:/);
+assert.doesNotMatch(persistentProfileAfterDoctor, /commands:/);
 
 const persistedStatus = tunnelConfigStatus({ paths, env: {} });
 assert.equal(persistedStatus.configured, true);
