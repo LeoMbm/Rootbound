@@ -142,6 +142,7 @@ const validation = await validateManagedTunnel({
     const validationProfile = await readFile(validationProfileSeen, "utf8");
     assert.match(validationProfile, /commands:/);
     assert.match(validationProfile, /launch\.mjs/);
+    assert.match(validationProfile, new RegExp(process.execPath.replaceAll("\\", "\\\\").replaceAll(".", "\\.")));
     assert.doesNotMatch(validationProfile, /server_urls:/);
     return { stdout: "doctor ok\n", stderr: "" };
   },

@@ -214,7 +214,7 @@ export async function validateManagedTunnel({
   if (profile.transport === "http") {
     temporaryProfilePath = `${profilePath}.${process.pid}.doctor-stdio.yaml`;
     const source = await readFile(profilePath, "utf8");
-    const validationSource = replaceManagedHttpBindingWithStdio(source, buildStdioCommand({ packageRoot }));
+    const validationSource = replaceManagedHttpBindingWithStdio(source, buildStdioCommand({ nodePath: process.execPath, packageRoot }));
     await writePrivateFile(temporaryProfilePath, validationSource, { platform });
     validationProfilePath = temporaryProfilePath;
   }
