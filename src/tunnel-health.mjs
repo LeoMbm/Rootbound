@@ -39,7 +39,7 @@ export async function readTunnelHealthSnapshot({
     observedAt: now(),
     live: liveness.ok,
     ready: readiness.ok,
-    healthDetailsSupported: aggregate.status !== 404 && mcp.status !== 404,
+    healthDetailsSupported: aggregate.status !== null && mcp.status !== null && aggregate.status !== 404 && mcp.status !== 404,
     endpoints: {
       healthz: publicEndpoint(liveness),
       readyz: publicEndpoint(readiness),
@@ -148,6 +148,7 @@ function normalizeBaseUrl(value) {
   try {
     const url = new URL(text);
     if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (!["127.0.0.1", "localhost", "::1"].includes(url.hostname)) return null;
     return url.origin + url.pathname.replace(/\/$/, "");
   } catch {
     return null;

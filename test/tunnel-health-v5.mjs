@@ -80,6 +80,21 @@ const missing = await readTunnelHealthSnapshot({ healthUrlPath: path.join(root, 
 assert.equal(missing.available, false);
 assert.equal(missing.reason, "health_url_not_published");
 
+const remoteHealthUrlPath = path.join(runtime, "remote-health.url");
+await writeFile(remoteHealthUrlPath, "https://example.com\n", "utf8");
+const remote = await readTunnelHealthSnapshot({
+  healthUrlPath: remoteHealthUrlPath,
+  fetchFn: async () => { throw new Error("must not fetch non-loopback health URL"); },
+});
+assert.equal(remote.available, false);
+assert.equal(remote.reason, "health_url_empty");
+
+const networkFailure = await readTunnelHealthSnapshot({
+  healthUrlPath,
+  fetchFn: async () => { throw new Error("offline"); },
+});
+assert.equal(networkFailure.healthDetailsSupported, false);
+
 console.log("tunnel-health-v5: ok");
 
 function response(status, body) {
