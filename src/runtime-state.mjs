@@ -43,20 +43,22 @@ export async function stopRuntime(paths, { force = false, platform = process.pla
 
   const supervisorPid = runtimeSupervisorPid(current.state);
   const tunnelPid = runtimeTunnelPid(current.state);
+  const mcpPid = runtimeMcpPid(current.state);
   const supervisorAlive = isProcessAlive(supervisorPid);
   const tunnelAlive = isProcessAlive(tunnelPid);
-  if (!supervisorAlive && !tunnelAlive) {
+  const mcpAlive = isProcessAlive(mcpPid);
+  if (!supervisorAlive && !tunnelAlive && !mcpAlive) {
     await clearRuntimeState(paths);
-    return { status: "stopped", stopped: false, reason: "stale_state_cleared", previousPid: supervisorPid ?? null, previousTunnelPid: tunnelPid ?? null };
+    return { status: "stopped", stopped: false, reason: "stale_state_cleared", previousPid: supervisorPid ?? null, previousTunnelPid: tunnelPid ?? null, previousMcpPid: mcpPid ?? null };
   }
 
   const signal = force ? "SIGKILL" : "SIGTERM";
-  await signalRuntimeTree({ supervisorPid, tunnelPid, force, platform });
+  await signalRuntimeTree({ supervisorPid, tunnelPid, mcpPid, force, platform });
   const deadline = Date.now() + (force ? 1500 : 5000);
   while (Date.now() < deadline) {
-    if (!isProcessAlive(supervisorPid) && !isProcessAlive(tunnelPid)) {
+    if (!isProcessAlive(supervisorPid) && !isProcessAlive(tunnelPid) && !isProcessAlive(mcpPid)) {
       await clearRuntimeState(paths);
-      return { status: "stopped", stopped: true, signal, previousPid: supervisorPid ?? null, previousTunnelPid: tunnelPid ?? null };
+      return { status: "stopped", stopped: true, signal, previousPid: supervisorPid ?? null, previousTunnelPid: tunnelPid ?? null, previousMcpPid: mcpPid ?? null };
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -66,26 +68,31 @@ export async function stopRuntime(paths, { force = false, platform = process.pla
     signal,
     pid: supervisorPid ?? null,
     tunnelPid: tunnelPid ?? null,
+    mcpPid: mcpPid ?? null,
     supervisorAlive: isProcessAlive(supervisorPid),
     tunnelAlive: isProcessAlive(tunnelPid),
+    mcpAlive: isProcessAlive(mcpPid),
   };
 }
 
-async function signalRuntimeTree({ supervisorPid, tunnelPid, force, platform }) {
+async function signalRuntimeTree({ supervisorPid, tunnelPid, mcpPid, force, platform }) {
   if (platform === "win32") {
-    const rootPid = isProcessAlive(supervisorPid) ? supervisorPid : tunnelPid;
-    if (!Number.isInteger(rootPid) || rootPid <= 0) return;
-    try {
-      await execFileAsync("taskkill", ["/PID", String(rootPid), "/T", ...(force ? ["/F"] : [])], { windowsHide: true, timeout: 5000, maxBuffer: 512 * 1024 });
-      return;
-    } catch (error) {
-      if (!isProcessAlive(supervisorPid) && !isProcessAlive(tunnelPid)) return;
-      throw error;
+    const roots = isProcessAlive(supervisorPid)
+      ? [supervisorPid]
+      : [tunnelPid, mcpPid].filter((pid) => Number.isInteger(pid) && pid > 0 && isProcessAlive(pid));
+    for (const rootPid of roots) {
+      try {
+        await execFileAsync("taskkill", ["/PID", String(rootPid), "/T", ...(force ? ["/F"] : [])], { windowsHide: true, timeout: 5000, maxBuffer: 512 * 1024 });
+      } catch (error) {
+        if (!isProcessAlive(rootPid)) continue;
+        throw error;
+      }
     }
+    return;
   }
 
   const signal = force ? "SIGKILL" : "SIGTERM";
-  for (const groupId of [supervisorPid, tunnelPid]) {
+  for (const groupId of [supervisorPid, tunnelPid, mcpPid]) {
     if (!Number.isInteger(groupId) || groupId <= 0) continue;
     try {
       process.kill(-groupId, signal);
@@ -95,7 +102,7 @@ async function signalRuntimeTree({ supervisorPid, tunnelPid, force, platform }) 
     }
   }
 
-  for (const pid of [tunnelPid, supervisorPid]) {
+  for (const pid of [mcpPid, tunnelPid, supervisorPid]) {
     if (!isProcessAlive(pid)) continue;
     try { process.kill(pid, signal); }
     catch (error) { if (error?.code !== "ESRCH") throw error; }
@@ -109,6 +116,11 @@ function runtimeSupervisorPid(state) {
 
 function runtimeTunnelPid(state) {
   const value = state?.tunnelPid;
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function runtimeMcpPid(state) {
+  const value = state?.mcpPid;
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 

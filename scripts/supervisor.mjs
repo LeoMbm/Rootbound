@@ -57,7 +57,12 @@ let watchdogBusy = false;
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 log(`supervisor start pid=${process.pid} anchorProject=${projectRef} connection=${connection.id} tunnel=${connection.tunnelId ?? "unknown"} tunnelSource=${launch.source ?? "unknown"}`);
-await startChild();
+try {
+  await startChild();
+} catch (error) {
+  await stopManagedHttpMcp();
+  throw error;
+}
 
 async function startChild() {
   const startedAt = Date.now();
@@ -266,6 +271,7 @@ async function onChildExit(code, signal) {
   await publishRuntime({ status: "recovering", ready: false, lastHealthCheckedAt: Date.now() }).catch(() => {});
   if (restarts >= restartLimit) {
     log(`restart limit reached (${restartLimit}); supervisor stopping`);
+    await stopManagedHttpMcp();
     await clearRuntimeState(paths).catch(() => {});
     await logHandle.close().catch(() => {});
     process.exitCode = 1;
@@ -282,6 +288,23 @@ async function onChildExit(code, signal) {
   }
 }
 
+async function stopManagedHttpMcp() {
+  const currentMcp = mcpChild;
+  if (!currentMcp || currentMcp.exitCode !== null || currentMcp.signalCode !== null) {
+    mcpChild = null;
+    return;
+  }
+  try { currentMcp.kill("SIGTERM"); } catch {}
+  await Promise.race([
+    new Promise((resolve) => currentMcp.once("exit", resolve)),
+    new Promise((resolve) => setTimeout(resolve, 2000)),
+  ]);
+  if (currentMcp.exitCode === null && currentMcp.signalCode === null) {
+    try { currentMcp.kill("SIGKILL"); } catch {}
+  }
+  if (mcpChild === currentMcp) mcpChild = null;
+}
+
 async function shutdown(signal) {
   if (stopping) return;
   stopping = true;
@@ -293,12 +316,7 @@ async function shutdown(signal) {
     await Promise.race([new Promise((resolve) => current.once("exit", resolve)), new Promise((resolve) => setTimeout(resolve, 2000))]);
     if (current.exitCode === null && current.signalCode === null) { try { current.kill("SIGKILL"); } catch {} }
   }
-  const currentMcp = mcpChild;
-  if (currentMcp && currentMcp.exitCode === null && currentMcp.signalCode === null) {
-    try { currentMcp.kill("SIGTERM"); } catch {}
-    await Promise.race([new Promise((resolve) => currentMcp.once("exit", resolve)), new Promise((resolve) => setTimeout(resolve, 2000))]);
-    if (currentMcp.exitCode === null && currentMcp.signalCode === null) { try { currentMcp.kill("SIGKILL"); } catch {} }
-  }
+  await stopManagedHttpMcp();
   if (connectionPaths.tunnelHealthUrlPath) await unlink(connectionPaths.tunnelHealthUrlPath).catch(() => {});
   await clearRuntimeState(paths).catch(() => {});
   await logHandle.close().catch(() => {});
