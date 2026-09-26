@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  buildHttpServerUrl,
   buildStdioCommand,
   compareTunnelClientVersions,
   discoverTunnelCandidates,
@@ -11,6 +12,7 @@ import {
   parseTunnelClientVersion,
   probeTunnelClient,
   RECOMMENDED_TUNNEL_CLIENT_VERSION,
+  inspectManagedTunnelProfile,
   rollbackManagedTunnelSetup,
   validateRuntimeKey,
   validateTunnelId,
@@ -102,7 +104,9 @@ const setup = await writeManagedTunnelSetup({
 assert.equal(setup.configured, true);
 assert.equal(setup.tunnelId, tunnelA);
 assert.equal(setup.healthUrlPath, paths.tunnelHealthUrlPath);
-assert.equal(setup.mcpCommand, `'${nodePath}' '${path.join(packageRoot, "scripts", "launch.mjs")}' stdio`);
+assert.equal(setup.transport, "http");
+assert.equal(setup.mcpServerUrl, "http://127.0.0.1:7690/mcp");
+assert.equal(setup.mcpCommand, null);
 
 const secretText = await readFile(paths.tunnelSecretPath, "utf8");
 assert.equal(secretText, secret);
@@ -119,7 +123,10 @@ assert.match(profile, /listen_addr:\s+"127\.0\.0\.1:0"/);
 assert.match(profile, /url_file:/);
 assert.match(profile, /format: json/);
 assert.match(profile, /channel: main/);
-assert.match(profile, /launch\.mjs/);
+assert.match(profile, /server_urls:/);
+assert.match(profile, /url:\s+"http:\/\/127\.0\.0\.1:7690\/mcp"/);
+assert.doesNotMatch(profile, /commands:/);
+assert.equal((await inspectManagedTunnelProfile({ profilePath: paths.tunnelManagedProfilePath })).transport, "http");
 assert.equal(profile.includes(secret), false, "managed tunnel profile must not contain the runtime key");
 
 const persistedStatus = tunnelConfigStatus({ paths, env: {} });
@@ -127,6 +134,24 @@ assert.equal(persistedStatus.configured, true);
 assert.equal(persistedStatus.tunnelId, tunnelA);
 assert.deepEqual(persistedStatus.argv, ["tunnel-client", "run", "--profile-file", paths.tunnelManagedProfilePath]);
 assert.equal(JSON.stringify(persistedStatus).includes(secret), false);
+
+assert.equal(buildHttpServerUrl(), "http://127.0.0.1:7690/mcp");
+assert.equal(buildHttpServerUrl({ host: "localhost", port: 8765 }), "http://localhost:8765/mcp");
+assert.throws(() => buildHttpServerUrl({ host: "0.0.0.0", port: 7690 }), /loopback/);
+
+const stdioPaths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(root, "Rootbound Stdio State") }, home });
+await writeManagedTunnelSetup({
+  tunnelId: tunnelA,
+  apiKey: secret,
+  packageRoot,
+  nodePath,
+  paths: stdioPaths,
+  tunnelClientCommand: "tunnel-client",
+  platform: process.platform,
+  transport: "stdio",
+});
+assert.equal((await inspectManagedTunnelProfile({ profilePath: stdioPaths.tunnelManagedProfilePath })).transport, "stdio");
+await rollbackManagedTunnelSetup({ paths: stdioPaths });
 
 const commandWithSpaces = buildStdioCommand({ nodePath: "/Applications/Node Runtime/node", packageRoot: "/Users/example/Library/Application Support/Rootbound/app" });
 assert.equal(commandWithSpaces, "'/Applications/Node Runtime/node' '/Users/example/Library/Application Support/Rootbound/app/scripts/launch.mjs' stdio");

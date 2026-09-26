@@ -10,7 +10,7 @@ import { assertRuntimeProjectAllowed } from "../src/runtime-project-lifecycle.mj
 import { ensureRootboundStateDirs, resolveRootboundPaths } from "../src/state-paths.mjs";
 import { clearRuntimeState, writeRuntimeState } from "../src/runtime-state.mjs";
 import { resolveTunnelLaunch } from "../src/tunnel-config.mjs";
-import { managedTunnelEnvironment } from "../src/tunnel-bootstrap.mjs";
+import { inspectManagedTunnelProfile, managedTunnelEnvironment } from "../src/tunnel-bootstrap.mjs";
 import { readTunnelHealthSnapshot, summarizeTunnelHealth } from "../src/tunnel-health.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -39,8 +39,12 @@ const healthFailureThreshold = parseBoundedInt(process.env.ROOTBOUND_HEALTH_FAIL
 const launchEnv = requestedConnection ? explicitConnectionEnvironment(process.env) : process.env;
 const launch = resolveTunnelLaunch({ env: launchEnv, packageRoot, projectRoot, paths: connectionPaths });
 const childBaseEnv = connection.storageKind === "scoped-v1" ? managedTunnelEnvironment(launchEnv) : launchEnv;
+const managedProfile = connection.storageKind === "scoped-v1"
+  ? await inspectManagedTunnelProfile({ profilePath: connectionPaths.tunnelManagedProfilePath })
+  : { managed: false, transport: null, serverUrl: null };
 const logHandle = await open(paths.logPath, "a", 0o600);
 let child = null;
+let mcpChild = null;
 let stopping = false;
 let restarts = 0;
 let runtimeState = null;
@@ -55,6 +59,7 @@ await startChild();
 
 async function startChild() {
   const startedAt = Date.now();
+  await ensureManagedHttpMcp();
   if (connectionPaths.tunnelHealthUrlPath) await unlink(connectionPaths.tunnelHealthUrlPath).catch((error) => { if (error?.code !== "ENOENT") throw error; });
   child = spawn(launch.command, launch.args, {
     cwd: projectRoot,
@@ -107,6 +112,9 @@ function runtimeValue(patch = {}) {
     supervisorPid: process.pid,
     pid: process.pid,
     tunnelPid: child?.pid ?? null,
+    mcpPid: mcpChild?.pid ?? null,
+    managedMcpTransport: managedProfile.transport ?? null,
+    managedMcpServerUrl: managedProfile.serverUrl ?? null,
     startedAt: Date.now(),
     readyAt: null,
     startupReadinessCheckedAt: null,
@@ -166,6 +174,53 @@ async function runHealthWatchdog() {
   }
 }
 
+async function ensureManagedHttpMcp() {
+  if (managedProfile.transport !== "http") return;
+  if (mcpChild && mcpChild.exitCode === null && mcpChild.signalCode === null) return;
+  const target = new URL(managedProfile.serverUrl);
+  const host = target.hostname;
+  const port = Number.parseInt(target.port || "80", 10);
+  mcpChild = spawn(process.execPath, [path.join(packageRoot, "scripts", "launch.mjs"), "http"], {
+    cwd: projectRoot,
+    env: {
+      ...childBaseEnv,
+      ROOTBOUND_HOST: host,
+      ROOTBOUND_PORT: String(port),
+      ROOTBOUND_CONNECTION_ID: connection.id,
+    },
+    stdio: ["ignore", logHandle.fd, logHandle.fd],
+    windowsHide: true,
+    shell: false,
+  });
+  const currentMcp = mcpChild;
+  currentMcp.once("error", (error) => log(`mcp http spawn error: ${error.message}`));
+  currentMcp.once("exit", (code, signal) => {
+    if (mcpChild === currentMcp) mcpChild = null;
+    log(`mcp http exit code=${code} signal=${signal}`);
+    if (!stopping && child && child.exitCode === null && child.signalCode === null) {
+      try { child.kill("SIGTERM"); } catch {}
+    }
+  });
+  const deadline = Date.now() + 5000;
+  let lastError = "MCP HTTP server did not become ready";
+  while (Date.now() < deadline) {
+    if (currentMcp.exitCode !== null || currentMcp.signalCode !== null) throw new Error(`MCP HTTP server exited during startup: code=${currentMcp.exitCode} signal=${currentMcp.signalCode}`);
+    try {
+      const response = await fetch(`${target.origin}/readyz`, { signal: AbortSignal.timeout(1000) });
+      if (response.ok) {
+        log(`mcp http ready pid=${currentMcp.pid} url=${managedProfile.serverUrl}`);
+        return;
+      }
+      lastError = `MCP HTTP /readyz returned HTTP ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  try { currentMcp.kill("SIGTERM"); } catch {}
+  throw new Error(`MCP HTTP server did not become ready: ${lastError}`);
+}
+
 async function waitForTunnelReadiness({ healthUrlPath, timeoutMs }) {
   if (!healthUrlPath) return { ok: false, error: "health URL path unavailable" };
   const deadline = Date.now() + timeoutMs;
@@ -222,6 +277,12 @@ async function shutdown(signal) {
     try { current.kill("SIGTERM"); } catch {}
     await Promise.race([new Promise((resolve) => current.once("exit", resolve)), new Promise((resolve) => setTimeout(resolve, 2000))]);
     if (current.exitCode === null && current.signalCode === null) { try { current.kill("SIGKILL"); } catch {} }
+  }
+  const currentMcp = mcpChild;
+  if (currentMcp && currentMcp.exitCode === null && currentMcp.signalCode === null) {
+    try { currentMcp.kill("SIGTERM"); } catch {}
+    await Promise.race([new Promise((resolve) => currentMcp.once("exit", resolve)), new Promise((resolve) => setTimeout(resolve, 2000))]);
+    if (currentMcp.exitCode === null && currentMcp.signalCode === null) { try { currentMcp.kill("SIGKILL"); } catch {} }
   }
   if (connectionPaths.tunnelHealthUrlPath) await unlink(connectionPaths.tunnelHealthUrlPath).catch(() => {});
   await clearRuntimeState(paths).catch(() => {});

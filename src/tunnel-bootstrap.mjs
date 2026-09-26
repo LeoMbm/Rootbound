@@ -11,6 +11,8 @@ const TUNNEL_ID_PATTERN = /^tunnel_[0-9a-f]{32}$/;
 
 export const MINIMUM_TUNNEL_CLIENT_VERSION = "0.0.12";
 export const RECOMMENDED_TUNNEL_CLIENT_VERSION = "0.0.15";
+export const DEFAULT_ROOTBOUND_HTTP_HOST = "127.0.0.1";
+export const DEFAULT_ROOTBOUND_HTTP_PORT = 7690;
 
 export const TUNNEL_SETUP_URLS = Object.freeze({
   tunnels: "https://platform.openai.com/settings/organization/tunnels",
@@ -138,18 +140,25 @@ export async function writeManagedTunnelSetup({
   nodePath = "node",
   tunnelClientCommand = "tunnel-client",
   platform = process.platform,
+  transport = "http",
+  mcpServerUrl = buildHttpServerUrl(),
 } = {}) {
   if (!validateTunnelId(tunnelId)) throw new Error("Invalid OpenAI tunnel id; expected tunnel_ followed by 32 lowercase hexadecimal characters.");
   if (!validateRuntimeKey(apiKey)) throw new Error("Invalid runtime API key format.");
   if (!packageRoot) throw new Error("writeManagedTunnelSetup requires packageRoot");
   if (!paths?.tunnelManagedProfilePath || !paths?.tunnelSecretPath) throw new Error("writeManagedTunnelSetup requires Rootbound state paths");
+  if (!["http", "stdio"].includes(transport)) throw new Error("writeManagedTunnelSetup transport must be http or stdio");
+  if (transport === "http") assertLoopbackMcpUrl(mcpServerUrl);
 
   if (paths.stateDir) await ensureRootboundStateDirs(paths);
   await mkdir(path.dirname(paths.tunnelSecretPath), { recursive: true, mode: 0o700 });
   if (paths.tunnelHealthUrlPath) await unlink(paths.tunnelHealthUrlPath).catch((error) => { if (error?.code !== "ENOENT") throw error; });
   await writePrivateFile(paths.tunnelSecretPath, apiKey, { platform });
 
-  const mcpCommand = buildStdioCommand({ nodePath, packageRoot });
+  const mcpCommand = transport === "stdio" ? buildStdioCommand({ nodePath, packageRoot }) : null;
+  const mcpBinding = transport === "http"
+    ? ["  server_urls:", "    - channel: main", `      url: ${yamlString(mcpServerUrl)}`]
+    : ["  commands:", "    - channel: main", `      command: ${yamlString(mcpCommand)}`];
   const profile = [
     "config_version: 1",
     "control_plane:",
@@ -165,9 +174,7 @@ export async function writeManagedTunnelSetup({
     "  level: info",
     "  format: json",
     "mcp:",
-    "  commands:",
-    "    - channel: main",
-    `      command: ${yamlString(mcpCommand)}`,
+    ...mcpBinding,
     "",
   ].join("\n");
   await writePrivateFile(paths.tunnelManagedProfilePath, profile, { platform });
@@ -183,6 +190,8 @@ export async function writeManagedTunnelSetup({
     profilePath: paths.tunnelManagedProfilePath,
     secretPath: paths.tunnelSecretPath,
     healthUrlPath: paths.tunnelHealthUrlPath ?? null,
+    transport,
+    mcpServerUrl: transport === "http" ? mcpServerUrl : null,
     mcpCommand,
     tunnel: saved,
   };
@@ -231,6 +240,41 @@ export function managedTunnelEnvironment(env = process.env) {
 export function buildStdioCommand({ nodePath = "node", packageRoot } = {}) {
   if (!packageRoot) throw new Error("buildStdioCommand requires packageRoot");
   return [nodePath, path.join(packageRoot, "scripts", "launch.mjs"), "stdio"].map(quoteCommandArg).join(" ");
+}
+
+export function buildHttpServerUrl({ host = DEFAULT_ROOTBOUND_HTTP_HOST, port = DEFAULT_ROOTBOUND_HTTP_PORT } = {}) {
+  if (!["127.0.0.1", "localhost", "::1"].includes(host)) throw new Error("Rootbound managed HTTP MCP must bind to loopback");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Rootbound managed HTTP MCP port must be between 1 and 65535");
+  const authority = host === "::1" ? `[${host}]:${port}` : `${host}:${port}`;
+  return `http://${authority}/mcp`;
+}
+
+export async function inspectManagedTunnelProfile({ profilePath } = {}) {
+  if (!profilePath) return { managed: false, transport: null, serverUrl: null };
+  let text;
+  try { text = await readFile(profilePath, "utf8"); }
+  catch (error) {
+    if (error?.code === "ENOENT") return { managed: false, transport: null, serverUrl: null };
+    throw error;
+  }
+  const serverUrl = text.match(/\n\s*server_urls:\s*\n\s*-\s*channel:\s*main\s*\n\s*url:\s*["']?([^\s"'\n]+)["']?/m)?.[1] ?? null;
+  if (serverUrl) {
+    assertLoopbackMcpUrl(serverUrl);
+    return { managed: true, transport: "http", serverUrl };
+  }
+  if (/\n\s*commands:\s*\n\s*-\s*channel:\s*main\s*\n\s*command:/m.test(text)) {
+    return { managed: true, transport: "stdio", serverUrl: null };
+  }
+  return { managed: true, transport: "unknown", serverUrl: null };
+}
+
+function assertLoopbackMcpUrl(value) {
+  let parsed;
+  try { parsed = new URL(String(value)); }
+  catch { throw new Error("Rootbound managed HTTP MCP URL is invalid"); }
+  if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost", "::1"].includes(parsed.hostname) || parsed.pathname !== "/mcp") {
+    throw new Error("Rootbound managed HTTP MCP URL must be loopback http://.../mcp");
+  }
 }
 
 function defaultTunnelProfileDir({ env, home }) {
