@@ -50,6 +50,7 @@ async function readyCase() {
       return value?.ready === true ? value : null;
     }, 5000);
     assert.equal(state.status, "ready");
+    assert.equal(state.startupReady, true);
     assert.equal(state.connectionId, added.connection.id);
     assert.equal(state.projectRef, "project_ready");
   } finally {
@@ -81,6 +82,8 @@ function launchSupervisor({ home, connectionId, ready }) {
       ROOTBOUND_PROJECT_ROOT: root,
       ROOTBOUND_CONNECTION_ID: connectionId,
       ROOTBOUND_TUNNEL_RESTART_LIMIT: "0",
+      ROOTBOUND_HEALTH_WATCHDOG_INTERVAL_MS: "100",
+      ROOTBOUND_HEALTH_FAILURE_THRESHOLD: "2",
       FAKE_READY: ready ? "1" : "0",
     },
     stdio: ["ignore", "pipe", "pipe"],

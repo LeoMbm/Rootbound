@@ -11,6 +11,7 @@ import { ensureRootboundStateDirs, resolveRootboundPaths } from "../src/state-pa
 import { clearRuntimeState, writeRuntimeState } from "../src/runtime-state.mjs";
 import { resolveTunnelLaunch } from "../src/tunnel-config.mjs";
 import { managedTunnelEnvironment } from "../src/tunnel-bootstrap.mjs";
+import { readTunnelHealthSnapshot, summarizeTunnelHealth } from "../src/tunnel-health.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const paths = await ensureRootboundStateDirs(resolveRootboundPaths());
@@ -33,6 +34,8 @@ const connectionPaths = environmentOnlyConnection ? paths : resolveConnectionPat
 if (!environmentOnlyConnection) await assertRuntimeProjectAllowed({ paths, registry, connection, projectRef });
 const runtimeId = `runtime_${randomUUID()}`;
 const restartLimit = parseBoundedInt(process.env.ROOTBOUND_TUNNEL_RESTART_LIMIT ?? "3", 0, 20, "ROOTBOUND_TUNNEL_RESTART_LIMIT");
+const healthWatchdogIntervalMs = parseBoundedInt(process.env.ROOTBOUND_HEALTH_WATCHDOG_INTERVAL_MS ?? "5000", 100, 60000, "ROOTBOUND_HEALTH_WATCHDOG_INTERVAL_MS");
+const healthFailureThreshold = parseBoundedInt(process.env.ROOTBOUND_HEALTH_FAILURE_THRESHOLD ?? "3", 1, 10, "ROOTBOUND_HEALTH_FAILURE_THRESHOLD");
 const launchEnv = requestedConnection ? explicitConnectionEnvironment(process.env) : process.env;
 const launch = resolveTunnelLaunch({ env: launchEnv, packageRoot, projectRoot, paths: connectionPaths });
 const childBaseEnv = connection.storageKind === "scoped-v1" ? managedTunnelEnvironment(launchEnv) : launchEnv;
@@ -40,6 +43,10 @@ const logHandle = await open(paths.logPath, "a", 0o600);
 let child = null;
 let stopping = false;
 let restarts = 0;
+let runtimeState = null;
+let healthTimer = null;
+let healthFailures = 0;
+let watchdogBusy = false;
 
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
@@ -69,29 +76,42 @@ async function startChild() {
   });
 
   const requiresReadiness = connection.storageKind === "scoped-v1";
-  if (!requiresReadiness) await writeRuntimeState(paths, runtimeValue({ status: "starting", ready: false, startedAt }));
+  if (!requiresReadiness) await publishRuntime({ status: "starting", ready: false, startupReady: false, startedAt });
   const readiness = await waitForTunnelReadiness({ healthUrlPath: connectionPaths.tunnelHealthUrlPath, timeoutMs: requiresReadiness ? 4_000 : 10_000 });
   if (!readiness.ok && requiresReadiness) {
     try { child.kill("SIGTERM"); } catch {}
     throw new Error(`Tunnel did not become ready: ${readiness.error}`);
   }
   const readyAt = readiness.ok ? Date.now() : null;
-  await writeRuntimeState(paths, runtimeValue({ status: readiness.ok ? "ready" : "running", ready: readiness.ok, startedAt, readyAt, legacyReadinessFallback: !readiness.ok }));
+  await publishRuntime({
+    status: readiness.ok ? "ready" : "running",
+    ready: readiness.ok,
+    startupReady: readiness.ok,
+    startedAt,
+    readyAt,
+    startupReadinessCheckedAt: Date.now(),
+    legacyReadinessFallback: !readiness.ok,
+  });
   log(`tunnel ${readiness.ok ? "ready" : "running (legacy readiness fallback)"} pid=${child.pid}`);
   child.once("exit", (code, signal) => void onChildExit(code, signal));
+  startHealthWatchdog();
 }
 
-function runtimeValue({ status, ready, startedAt, readyAt = null, legacyReadinessFallback = false }) {
+function runtimeValue(patch = {}) {
   return {
-    schemaVersion: 2,
-    status,
-    ready,
+    schemaVersion: 3,
+    status: "starting",
+    ready: false,
+    startupReady: false,
     runtimeId,
     supervisorPid: process.pid,
     pid: process.pid,
     tunnelPid: child?.pid ?? null,
-    startedAt,
-    readyAt,
+    startedAt: Date.now(),
+    readyAt: null,
+    startupReadinessCheckedAt: null,
+    lastHealthCheckedAt: null,
+    tunnelHealth: null,
     scopeMode: "multi-project",
     anchorProjectRef: projectRef,
     anchorProjectRoot: projectRoot,
@@ -102,8 +122,48 @@ function runtimeValue({ status, ready, startedAt, readyAt = null, legacyReadines
     tunnelId: connection.tunnelId ?? null,
     transport: "secure-mcp-tunnel",
     tunnelSource: launch.source ?? null,
-    legacyReadinessFallback,
+    legacyReadinessFallback: false,
+    ...(runtimeState ?? {}),
+    ...patch,
+    tunnelPid: child?.pid ?? null,
   };
+}
+
+async function publishRuntime(patch) {
+  runtimeState = runtimeValue(patch);
+  await writeRuntimeState(paths, runtimeState);
+  return runtimeState;
+}
+
+function startHealthWatchdog() {
+  if (healthTimer) clearInterval(healthTimer);
+  healthFailures = 0;
+  healthTimer = setInterval(() => void runHealthWatchdog(), healthWatchdogIntervalMs);
+  healthTimer.unref?.();
+  void runHealthWatchdog();
+}
+
+async function runHealthWatchdog() {
+  if (watchdogBusy || stopping || !child || child.exitCode !== null || child.signalCode !== null) return;
+  watchdogBusy = true;
+  try {
+    const snapshot = summarizeTunnelHealth(await readTunnelHealthSnapshot({ healthUrlPath: connectionPaths.tunnelHealthUrlPath }));
+    const healthyLocalProcess = snapshot.available && snapshot.live;
+    healthFailures = healthyLocalProcess ? 0 : healthFailures + 1;
+    await publishRuntime({
+      status: snapshot.ready ? "ready" : healthyLocalProcess ? "degraded" : "recovering",
+      ready: snapshot.ready === true,
+      lastHealthCheckedAt: Date.now(),
+      tunnelHealth: snapshot,
+    }).catch(() => {});
+    if (!healthyLocalProcess && healthFailures >= healthFailureThreshold && child && child.exitCode === null && child.signalCode === null) {
+      log(`health watchdog restarting tunnel after ${healthFailures} consecutive local health failures`);
+      healthFailures = 0;
+      try { child.kill("SIGTERM"); } catch {}
+    }
+  } finally {
+    watchdogBusy = false;
+  }
 }
 
 async function waitForTunnelReadiness({ healthUrlPath, timeoutMs }) {
@@ -132,7 +192,8 @@ async function onChildExit(code, signal) {
   log(`tunnel exit code=${code} signal=${signal}`);
   child = null;
   if (stopping) return;
-  await writeRuntimeState(paths, runtimeValue({ status: "recovering", ready: false, startedAt: Date.now() })).catch(() => {});
+  if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+  await publishRuntime({ status: "recovering", ready: false, lastHealthCheckedAt: Date.now() }).catch(() => {});
   if (restarts >= restartLimit) {
     log(`restart limit reached (${restartLimit}); supervisor stopping`);
     await clearRuntimeState(paths).catch(() => {});
@@ -154,6 +215,7 @@ async function onChildExit(code, signal) {
 async function shutdown(signal) {
   if (stopping) return;
   stopping = true;
+  if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
   log(`supervisor shutdown ${signal}`);
   const current = child;
   if (current && current.exitCode === null && current.signalCode === null) {
