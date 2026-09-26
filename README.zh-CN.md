@@ -21,10 +21,13 @@
 - `repo_search` / `read_many` 支持分页；`precise_edit` 支持 SHA-guarded undo / redo。
 - continuity binding / checkpoint 支持持久化和幂等 retry。
 - diagnostics 会对路径和凭据进行脱敏，并且不会导出命令 stdout / stderr 或 thread preview。
+- 新建的 Rootbound managed tunnel 默认使用 loopback Streamable HTTP（`http://127.0.0.1:7690/mcp`）；旧的 stdio profile 保持兼容。
+- runtime 会区分启动时 readiness 与当前 tunnel health；只有连续的本地 health liveness 失败才会触发自动 recovery。
 
 ## 安装要求
 
 - Node.js >= 22.13.0
+- OpenAI `tunnel-client` >= 0.0.12；建议 0.0.15+
 - 本机已有受支持的 Codex 安装
 - 当前公开 Technical Preview：Apple Silicon macOS
 - Windows 代码仍在仓库中，但尚未通过公开 release 所需的真实机器验收

@@ -128,7 +128,7 @@ Rootbound currently requires:
 - **Git**
 - **Node.js 22.13 or newer**
 - **Codex installed locally**
-- OpenAI **`tunnel-client`**
+- OpenAI **`tunnel-client` 0.0.12 or newer**; **0.0.15+ is recommended**
 - a ChatGPT account/workspace that can use the required custom MCP app/connector actions
 
 Check Git and Node:
@@ -244,6 +244,26 @@ rootbound doctor "$PWD"
 
 Doctor and self-test do not intentionally start a Codex model turn.
 
+### Managed tunnel transport and health
+
+New Rootbound-managed connections use **Streamable HTTP on loopback** between `tunnel-client` and Rootbound:
+
+```text
+ChatGPT / OpenAI tunnel
+        ↓
+tunnel-client
+        ↓
+http://127.0.0.1:7690/mcp
+        ↓
+Rootbound MCP runtime
+```
+
+The endpoint is loopback-only; Rootbound refuses a managed HTTP MCP URL on a non-loopback host. Existing managed stdio profiles remain supported and are not silently rewritten during startup. Running `rootbound connection repair <name>` rewrites that managed profile using the current HTTP format after validating the credential.
+
+`rootbound status` distinguishes the startup gate from current health. `startupReady` records whether the tunnel passed startup readiness, while current `ready`, liveness, and component observations are refreshed from the tunnel health API. Reading health is passive and does not generate MCP traffic.
+
+The supervisor restarts a still-running tunnel only after repeated **local `/healthz` failures**. A degraded MCP/control-plane observation by itself does not trigger a restart because those observations can be historical or caused by an external dependency.
+
 ---
 
 # Daily use
@@ -287,7 +307,7 @@ rootbound connection repair work
 rootbound connection remove work
 ```
 
-Each scoped connection keeps its tunnel configuration, runtime key, and project allowlist isolated. A running connection switch is transactional: Rootbound validates the target, restarts the current runtime anchor on that connection only if the anchor is allowed there, requires `/readyz`, and restores the previous runtime if the target cannot become ready.
+Each scoped connection keeps its tunnel configuration, runtime key, and project allowlist isolated. A running connection switch is transactional: Rootbound validates the target, starts the local HTTP MCP target when the managed profile uses Streamable HTTP, restarts the current runtime anchor on that connection only if the anchor is allowed there, requires `/readyz`, and restores the previous runtime if the target cannot become ready.
 
 Rootbound calls these **connections**, not ChatGPT accounts. It does not store ChatGPT emails, ChatGPT OAuth tokens, or Codex OAuth credentials in the connection registry.
 
@@ -461,6 +481,8 @@ Rootbound is intentionally fail-closed.
 - the Rootbound permission profile is process-local;
 - connection runtime keys stay outside registry metadata, normal logs, diagnostics, and public status output;
 - new scoped tunnel connections require `/readyz` before becoming active;
+- managed tunnel profiles use loopback Streamable HTTP by default; legacy managed stdio profiles remain supported;
+- current tunnel health is observed separately from startup readiness, and the recovery watchdog restarts only after repeated local liveness failures;
 - connection switches, repair, removal, start/stop, and tunnel mutation are serialized to avoid runtime races;
 - runtime shutdown tracks the supervisor and tunnel and terminates the complete detached process tree, preventing an old MCP server from continuing to serve stale code after a restart or upgrade;
 - common secret-bearing files are excluded from ordinary read/search flows unless explicitly requested;

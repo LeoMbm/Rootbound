@@ -21,6 +21,8 @@ const controlPlane = await readFile(path.join(root, "bin", "rootbound.mjs"), "ut
 const supervisor = await readFile(path.join(root, "scripts", "supervisor.mjs"), "utf8");
 const commandWorker = await readFile(path.join(root, "scripts", "command-worker.mjs"), "utf8");
 const doctor = await readFile(path.join(root, "scripts", "doctor.mjs"), "utf8");
+const tunnelBootstrap = await readFile(path.join(root, "src", "tunnel-bootstrap.mjs"), "utf8");
+const tunnelHealth = await readFile(path.join(root, "src", "tunnel-health.mjs"), "utf8");
 
 assert.equal(packageJson.version, "0.1.0-preview.3");
 assert.equal(shrinkwrap.version, packageJson.version);
@@ -57,6 +59,7 @@ for (const testName of [
   "connection-scoped-runtime-v5.mjs",
   "public-multiproject-scope-v6.mjs",
   "multi-project-public-surface-v6.mjs",
+  "tunnel-health-v5.mjs",
   "release-contract-v6.mjs",
 ]) {
   assert.match(packageJson.scripts?.["test:v5"] ?? "", new RegExp(testName.replaceAll(".", "\\.")), `test:v5 must include ${testName}`);
@@ -88,6 +91,19 @@ assert.match(doctor, /versionedSurface/);
 assert.match(doctor, /PUBLIC_SURFACE_VERSION.*contract is internally consistent/);
 assert.doesNotMatch(doctor, /PUBLIC_SURFACE_VERSION\s*===\s*["']rootbound-public-preview-v\d+["']/);
 assert.doesNotMatch(doctor, /V5 surface contract/);
+assert.match(tunnelBootstrap, /MINIMUM_TUNNEL_CLIENT_VERSION = "0\.0\.12"/);
+assert.match(tunnelBootstrap, /RECOMMENDED_TUNNEL_CLIENT_VERSION = "0\.0\.15"/);
+assert.match(tunnelBootstrap, /server_urls/);
+assert.match(tunnelBootstrap, /127\.0\.0\.1/);
+assert.match(tunnelBootstrap, /transport = "http"/);
+assert.match(tunnelHealth, /health\?details=true/);
+assert.match(tunnelHealth, /health\/mcp/);
+assert.match(supervisor, /ROOTBOUND_HEALTH_FAILURE_THRESHOLD/);
+assert.match(supervisor, /healthyLocalProcess/);
+assert.match(supervisor, /restart budget reset/);
+assert.match(supervisor, /managedMcpTransport/);
+assert.match(doctor, /tunnel-liveness/);
+assert.match(doctor, /current \/readyz passed/);
 
 assert.match(projectToolScopeGuard, /codex\.command_exec/);
 assert.match(projectToolScopeGuard, /codex\.git_status/);
@@ -110,12 +126,16 @@ assert.match(readme, /rootbound-public-preview-v6/);
 assert.match(readme, /33 public tools/);
 assert.match(readme, /codex\.workspace_list/);
 assert.match(readme, /PROJECT_SCOPE_REQUIRED/);
+assert.match(readme, /Streamable HTTP on loopback/);
+assert.match(readme, /0\.0\.15\+ is recommended/);
 assert.doesNotMatch(readme, /one supervised active project runtime at a time/i);
 assert.match(readmeZh, /rootbound-public-preview-v6/);
 assert.match(readmeZh, /33/);
 assert.match(security, /connection-scoped/i);
 assert.match(security, /PROJECT_SCOPE_REQUIRED/);
 assert.match(security, /runtime anchor/i);
+assert.match(security, /loopback Streamable HTTP/i);
+assert.match(security, /temporary stdio validation profile/i);
 
 assert.match(multiProjectDoc, /one supervised runtime/i);
 assert.match(multiProjectDoc, /connection-scoped project allowlist/i);

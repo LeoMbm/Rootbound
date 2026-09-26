@@ -280,7 +280,7 @@ File protections:
 - macOS / POSIX: the secret file is written mode `0600`;
 - Windows: Rootbound removes inherited ACLs and grants full access to the current Windows account with `icacls`; setup fails closed if that ACL hardening cannot be applied.
 
-`tunnel-client doctor` is run against the generated profile before Codex trust is changed. If guided tunnel setup validation fails, Rootbound removes the generated tunnel metadata/profile/secret artifacts.
+New generated profiles use loopback Streamable HTTP for the runtime path. During setup/repair, `tunnel-client doctor` receives a private temporary stdio validation profile so credential/control-plane validation does not depend on the HTTP MCP runtime already being started. The temporary profile contains only the existing `file:` secret reference, is owner-private, and is removed immediately after validation. If guided tunnel setup validation fails, Rootbound removes the generated tunnel metadata/profile/secret artifacts.
 
 `rootbound tunnel clear` also removes the guided tunnel profile and dedicated secret file. An environment override such as `ROOTBOUND_TUNNEL_ARGV_JSON` remains outside Rootbound's control and is reported as still active.
 
@@ -357,11 +357,15 @@ Webpage content is untrusted input and can contain prompt injection. A model mus
 
 ## HTTP / tunnel boundary
 
-The local HTTP entry point is intended for loopback only. Raw unauthenticated local service exposure to the public internet is not a supported deployment.
+The managed HTTP MCP entry point is **loopback only**. Rootbound-generated profiles use `http://127.0.0.1:7690/mcp`, and managed profile validation rejects non-loopback HTTP targets. Raw unauthenticated local service exposure to the LAN or public internet is not a supported deployment.
 
-Normal ChatGPT access uses the authenticated OpenAI tunnel path and launches Rootbound over stdio. The HTTP launcher remains an advanced/local compatibility surface, not the normal onboarding path.
+Normal ChatGPT access still crosses the authenticated OpenAI tunnel, but new Rootbound-managed profiles connect `tunnel-client` to a separately supervised local Streamable HTTP MCP process. This decouples the tunnel process lifecycle from the MCP child lifecycle while retaining one Rootbound runtime per active connection.
 
-Rootbound manages the local stdio command/profile and secret boundary, but it does not control the security of external tunnel infrastructure or a separately supplied manual tunnel command.
+Existing Rootbound-managed stdio profiles remain supported for compatibility and are not silently rewritten during startup. Explicit connection repair rewrites a managed profile using the current HTTP format.
+
+Tunnel health reads are observational. Rootbound does not turn `status` or `doctor` into synthetic MCP traffic. The supervisor may recycle a tunnel after repeated local health-server liveness failures, but it does not restart merely because an MCP/control-plane component reports a degraded or stale observation.
+
+Rootbound manages the local profile and secret boundary, but it does not control the security or availability of external tunnel/control-plane infrastructure or a separately supplied manual tunnel command.
 
 ---
 
