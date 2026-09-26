@@ -6,7 +6,7 @@ import path from "node:path";
 import { addConnection, loadConnectionRegistry } from "../src/connection-registry.mjs";
 import { resolveConnectionPaths } from "../src/connection-paths.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
-import { writeManagedTunnelSetup } from "../src/tunnel-bootstrap.mjs";
+import { inspectManagedTunnelProfile, writeManagedTunnelSetup } from "../src/tunnel-bootstrap.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const root = await mkdtemp(path.join(os.tmpdir(), "rootbound-connection-lifecycle-"));
@@ -47,6 +47,29 @@ assert.equal(registry.connections.length, 0);
 await assert.rejects(() => readFile(connectionPaths.tunnelSecretPath, "utf8"), (error) => error?.code === "ENOENT");
 await assert.rejects(() => readFile(connectionPaths.tunnelManagedProfilePath, "utf8"), (error) => error?.code === "ENOENT");
 await assert.rejects(() => readFile(connectionPaths.tunnelConfigPath, "utf8"), (error) => error?.code === "ENOENT");
+
+const legacyAdded = await addConnection({
+  paths,
+  name: "legacy",
+  storageKind: "legacy-global",
+  source: "legacy",
+  tunnelId: "tunnel_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  makeActive: true,
+});
+const legacyPaths = resolveConnectionPaths({ paths, connection: legacyAdded.connection });
+await writeManagedTunnelSetup({
+  tunnelId: legacyAdded.connection.tunnelId,
+  apiKey: "legacy-old",
+  packageRoot: repoRoot,
+  paths: legacyPaths,
+  tunnelClientCommand: "tunnel-client",
+  transport: "stdio",
+});
+assert.equal((await inspectManagedTunnelProfile({ profilePath: legacyPaths.tunnelManagedProfilePath })).transport, "stdio");
+result = run(["repair", "legacy"], "legacy-new");
+assert.equal(result.status, 0, result.stderr);
+assert.equal(await readFile(legacyPaths.tunnelSecretPath, "utf8"), "legacy-new");
+assert.equal((await inspectManagedTunnelProfile({ profilePath: legacyPaths.tunnelManagedProfilePath })).transport, "http");
 
 console.log("connection-lifecycle-v5: ok");
 

@@ -39,10 +39,10 @@ const healthFailureThreshold = parseBoundedInt(process.env.ROOTBOUND_HEALTH_FAIL
 const restartBudgetResetMs = parseBoundedInt(process.env.ROOTBOUND_RESTART_BUDGET_RESET_MS ?? "60000", 1000, 3600000, "ROOTBOUND_RESTART_BUDGET_RESET_MS");
 const launchEnv = requestedConnection ? explicitConnectionEnvironment(process.env) : process.env;
 const launch = resolveTunnelLaunch({ env: launchEnv, packageRoot, projectRoot, paths: connectionPaths });
-const childBaseEnv = connection.storageKind === "scoped-v1" ? managedTunnelEnvironment(launchEnv) : launchEnv;
-const managedProfile = connection.storageKind === "scoped-v1"
-  ? await inspectManagedTunnelProfile({ profilePath: connectionPaths.tunnelManagedProfilePath })
-  : { managed: false, transport: null, serverUrl: null };
+const managedProfile = environmentOnlyConnection
+  ? { managed: false, transport: null, serverUrl: null }
+  : await inspectManagedTunnelProfile({ profilePath: connectionPaths.tunnelManagedProfilePath });
+const childBaseEnv = managedProfile.managed ? managedTunnelEnvironment(launchEnv) : launchEnv;
 const managedTunnelClient = managedProfile.managed
   ? await probeTunnelClient({ command: launch.command, env: childBaseEnv, cwd: packageRoot })
   : null;
@@ -90,7 +90,7 @@ async function startChild() {
     child.once("exit", (code, signal) => { clearTimeout(timer); reject(new Error(`tunnel exited during startup: code=${code} signal=${signal}`)); });
   });
 
-  const requiresReadiness = connection.storageKind === "scoped-v1";
+  const requiresReadiness = managedProfile.transport === "http" || connection.storageKind === "scoped-v1";
   if (!requiresReadiness) await publishRuntime({ status: "starting", ready: false, startupReady: false, startedAt });
   const readiness = await waitForTunnelReadiness({ healthUrlPath: connectionPaths.tunnelHealthUrlPath, timeoutMs: requiresReadiness ? 4_000 : 10_000 });
   if (!readiness.ok && requiresReadiness) {

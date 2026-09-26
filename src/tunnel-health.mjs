@@ -77,7 +77,7 @@ export function summarizeTunnelHealth(snapshot) {
   };
 }
 
-export function evaluateDoctorTunnelHealth({ storageKind, runtimeRunning, health } = {}) {
+export function evaluateDoctorTunnelHealth({ storageKind, managedTransport = null, runtimeRunning, health } = {}) {
   if (!runtimeRunning) {
     return {
       liveness: { ok: true, required: false, detail: "runtime stopped", action: null },
@@ -86,7 +86,7 @@ export function evaluateDoctorTunnelHealth({ storageKind, runtimeRunning, health
     };
   }
 
-  const legacy = storageKind === "legacy-global";
+  const legacy = storageKind === "legacy-global" && managedTransport !== "http";
   const available = health?.available === true;
   const live = available && health?.live === true;
   const ready = available && health?.ready === true;

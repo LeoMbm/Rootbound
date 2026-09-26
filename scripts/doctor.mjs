@@ -242,6 +242,7 @@ async function checkConnections() {
     : null;
   const healthPolicy = evaluateDoctorTunnelHealth({
     storageKind: active.storageKind,
+    managedTransport: runtime.state?.managedMcpTransport ?? null,
     runtimeRunning: runtime.running,
     health,
   });
