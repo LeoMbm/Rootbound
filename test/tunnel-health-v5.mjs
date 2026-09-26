@@ -116,6 +116,17 @@ assert.equal(legacyUnhealthy.liveness.ok, false);
 assert.equal(legacyUnhealthy.liveness.required, false);
 assert.match(legacyUnhealthy.warning, /reports unhealthy/);
 
+const migratedLegacyWithoutHealth = evaluateDoctorTunnelHealth({
+  storageKind: "legacy-global",
+  managedTransport: "http",
+  runtimeRunning: true,
+  health: summarizeTunnelHealth(missing),
+});
+assert.equal(migratedLegacyWithoutHealth.liveness.ok, false);
+assert.equal(migratedLegacyWithoutHealth.liveness.required, true);
+assert.equal(migratedLegacyWithoutHealth.readiness.ok, false);
+assert.equal(migratedLegacyWithoutHealth.readiness.required, true);
+
 const scopedWithoutHealth = evaluateDoctorTunnelHealth({
   storageKind: "scoped-v1",
   runtimeRunning: true,
