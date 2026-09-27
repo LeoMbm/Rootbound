@@ -2,6 +2,8 @@ name: V5 Foundation
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -21,8 +23,31 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm ci
+      - name: Install accepted Codex build (macOS)
+        if: runner.os == 'macOS'
+        run: npm install --global @openai/codex@0.149.0-alpha.4
+      - name: Install accepted Codex build (Windows)
+        if: runner.os == 'Windows'
+        run: npm install --global @openai/codex@0.147.0
+      - name: Report Codex version
+        run: codex --version
       - run: npm run test:v5
       - name: Syntax-check V5 JavaScript
         run: node scripts/validate-v5-syntax.mjs
       - name: Report lock metadata drift
         run: node scripts/check-lock-root.mjs
+
+  release:
+    name: Release validation / macOS / Node 22.16.0
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.16.0"
+      - run: npm ci
+      - name: Install accepted Codex build
+        run: npm install --global @openai/codex@0.149.0-alpha.4
+      - name: Report Codex version
+        run: codex --version
+      - run: npm run validate:release

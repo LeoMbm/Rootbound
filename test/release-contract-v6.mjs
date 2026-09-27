@@ -21,8 +21,11 @@ const controlPlane = await readFile(path.join(root, "bin", "rootbound.mjs"), "ut
 const supervisor = await readFile(path.join(root, "scripts", "supervisor.mjs"), "utf8");
 const commandWorker = await readFile(path.join(root, "scripts", "command-worker.mjs"), "utf8");
 const doctor = await readFile(path.join(root, "scripts", "doctor.mjs"), "utf8");
+const tunnelBootstrap = await readFile(path.join(root, "src", "tunnel-bootstrap.mjs"), "utf8");
+const tunnelHealth = await readFile(path.join(root, "src", "tunnel-health.mjs"), "utf8");
+const installer = await readFile(path.join(root, "scripts", "install.sh"), "utf8");
 
-assert.equal(packageJson.version, "0.1.0-preview.3");
+assert.equal(packageJson.version, "0.1.0-preview.4");
 assert.equal(shrinkwrap.version, packageJson.version);
 assert.equal(shrinkwrap.packages?.[""]?.version, packageJson.version);
 assert.equal(PUBLIC_SERVER_VERSION, "0.1.0-preview.10");
@@ -57,6 +60,7 @@ for (const testName of [
   "connection-scoped-runtime-v5.mjs",
   "public-multiproject-scope-v6.mjs",
   "multi-project-public-surface-v6.mjs",
+  "tunnel-health-v5.mjs",
   "release-contract-v6.mjs",
 ]) {
   assert.match(packageJson.scripts?.["test:v5"] ?? "", new RegExp(testName.replaceAll(".", "\\.")), `test:v5 must include ${testName}`);
@@ -72,10 +76,14 @@ assert.match(workspaceTools, /PROJECT_SCOPE_REQUIRED|resolveProjectScope/);
 assert.match(scopedRuntime, /resolveScopedCwd/);
 assert.match(scopedRuntime, /PROJECT_SCOPE_REQUIRED|resolveProjectScope/);
 assert.match(runtimeLifecycle, /revokeProjectFromSavedConnections/);
-assert.match(runtimeState, /for \(const groupId of \[supervisorPid, tunnelPid\]\)/);
+assert.match(runtimeState, /for \(const groupId of \[supervisorPid, tunnelPid, mcpPid\]\)/);
 assert.match(runtimeState, /process\.kill\(-groupId, signal\)/);
 assert.match(runtimeState, /execFileAsync\("taskkill", \["\/PID", String\(rootPid\), "\/T"/);
-assert.match(runtimeState, /!isProcessAlive\(supervisorPid\) && !isProcessAlive\(tunnelPid\)/);
+assert.match(runtimeState, /!isProcessAlive\(supervisorPid\) && !isProcessAlive\(tunnelPid\) && !isProcessAlive\(mcpPid\)/);
+assert.match(runtimeState, /previousMcpPid/);
+assert.match(runtimeState, /taskkill"[\s\S]*"\/T", "\/F"/);
+assert.match(runtimeState, /const escalated = stopAttempt\?\.escalated === true/);
+assert.match(supervisor, /stopManagedHttpMcp/);
 assert.match(controlPlane, /revokeProjectFromSavedConnections/);
 assert.match(controlPlane, /projectAccessCleanup/);
 assert.match(supervisor, /assertRuntimeProjectAllowed/);
@@ -88,6 +96,31 @@ assert.match(doctor, /versionedSurface/);
 assert.match(doctor, /PUBLIC_SURFACE_VERSION.*contract is internally consistent/);
 assert.doesNotMatch(doctor, /PUBLIC_SURFACE_VERSION\s*===\s*["']rootbound-public-preview-v\d+["']/);
 assert.doesNotMatch(doctor, /V5 surface contract/);
+assert.match(tunnelBootstrap, /MINIMUM_TUNNEL_CLIENT_VERSION = "0\.0\.12"/);
+assert.match(tunnelBootstrap, /RECOMMENDED_TUNNEL_CLIENT_VERSION = "0\.0\.15"/);
+assert.match(tunnelBootstrap, /server_urls/);
+assert.match(tunnelBootstrap, /127\.0\.0\.1/);
+assert.match(tunnelBootstrap, /transport = "http"/);
+assert.match(tunnelHealth, /health\?details=true/);
+assert.match(tunnelHealth, /health\/mcp/);
+assert.match(tunnelHealth, /evaluateDoctorTunnelHealth/);
+assert.match(tunnelHealth, /storageKind === "legacy-global" && managedTransport !== "http"/);
+assert.match(doctor, /runtime\.state\?\.startupReady \?\? runtime\.state\?\.ready/);
+assert.match(doctor, /managedTransport: runtime\.state\?\.managedMcpTransport/);
+assert.match(supervisor, /ROOTBOUND_HEALTH_FAILURE_THRESHOLD/);
+assert.match(supervisor, /healthyLocalProcess/);
+assert.match(supervisor, /restart budget reset/);
+assert.match(supervisor, /managedMcpTransport/);
+assert.match(supervisor, /environmentOnlyConnection[\s\S]*inspectManagedTunnelProfile/);
+assert.match(supervisor, /managedProfile\.managed \? managedTunnelEnvironment/);
+assert.match(supervisor, /managedProfile\.transport === "http" \|\| connection\.storageKind === "scoped-v1"/);
+assert.match(supervisor, /probeTunnelClient\(\{ command: launch\.command/);
+assert.match(supervisor, /tunnelClientVersion/);
+assert.match(doctor, /tunnel-liveness/);
+assert.match(tunnelHealth, /current \/readyz passed/);
+assert.match(installer, /doctor_failure_summary/);
+assert.match(installer, /Staging doctor failed: \$STAGE_FAILURE/);
+assert.match(installer, /Installed doctor failed: \$INSTALLED_FAILURE/);
 
 assert.match(projectToolScopeGuard, /codex\.command_exec/);
 assert.match(projectToolScopeGuard, /codex\.git_status/);
@@ -105,17 +138,21 @@ assert.match(rescueTools, /authorityExecutor\.resolveAuthority\(\{ cwd: cwd \?\?
 assert.doesNotMatch(rescueTools, /cwd \?\? authorityExecutor\.defaultCwd/);
 assert.match(rescueTools, /authority\.effectiveCwd/);
 
-assert.match(readme, /Current preview: \*\*0\.1\.0-preview\.3\*\*/);
+assert.match(readme, /Current preview: \*\*0\.1\.0-preview\.4\*\*/);
 assert.match(readme, /rootbound-public-preview-v6/);
 assert.match(readme, /33 public tools/);
 assert.match(readme, /codex\.workspace_list/);
 assert.match(readme, /PROJECT_SCOPE_REQUIRED/);
+assert.match(readme, /Streamable HTTP on loopback/);
+assert.match(readme, /0\.0\.15\+ is recommended/);
 assert.doesNotMatch(readme, /one supervised active project runtime at a time/i);
 assert.match(readmeZh, /rootbound-public-preview-v6/);
 assert.match(readmeZh, /33/);
 assert.match(security, /connection-scoped/i);
 assert.match(security, /PROJECT_SCOPE_REQUIRED/);
 assert.match(security, /runtime anchor/i);
+assert.match(security, /loopback Streamable HTTP/i);
+assert.match(security, /temporary stdio validation profile/i);
 
 assert.match(multiProjectDoc, /one supervised runtime/i);
 assert.match(multiProjectDoc, /connection-scoped project allowlist/i);

@@ -14,8 +14,9 @@ import { withRootboundPermissionOverrides } from "../src/rootbound-permission-pr
 import { runtimeStatus } from "../src/runtime-state.mjs";
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from "../src/surface-contracts.mjs";
-import { validateManagedTunnel } from "../src/tunnel-bootstrap.mjs";
+import { probeTunnelClient, validateManagedTunnel } from "../src/tunnel-bootstrap.mjs";
 import { tunnelConfigStatus } from "../src/tunnel-config.mjs";
+import { evaluateDoctorTunnelHealth, readTunnelHealthSnapshot, summarizeTunnelHealth } from "../src/tunnel-health.mjs";
 
 const require = createRequire(import.meta.url);
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +40,7 @@ let appServer = null;
 let projectContext = null;
 let codexCompatibility = null;
 let connectionContext = { status: "not_configured" };
+let tunnelClientProbe = null;
 
 const supportedPlatform = process.platform === "win32" || (process.platform === "darwin" && process.arch === "arm64");
 const dynamicMacCompatibility = process.platform === "darwin" && process.arch === "arm64";
@@ -52,6 +54,25 @@ const versionedSurface = /^rootbound-public-preview-v\d+$/.test(PUBLIC_SURFACE_V
 const expectedSurface = versionedSurface && uniqueToolNames && PUBLIC_TOOL_NAMES.length > 0;
 record("public-surface", expectedSurface && forbiddenModelTools.length === 0, `${PUBLIC_SURFACE_VERSION}; ${PUBLIC_TOOL_NAMES.length} tools; modelLane=chatgpt-only`, forbiddenModelTools.length ? `Forbidden Codex model tools exposed: ${forbiddenModelTools.join(", ")}` : !versionedSurface ? "Public surface version is not a supported versioned Rootbound preview identifier" : !uniqueToolNames ? "Public tool list contains duplicate names" : "Expected a non-empty unique ChatGPT-only public surface");
 record("surface-compatibility", expectedSurface, expectedSurface ? `${PUBLIC_SURFACE_VERSION} contract is internally consistent (${PUBLIC_TOOL_NAMES.length} tools)` : "Surface contract is stale or incomplete", expectedSurface ? null : "Restart/reconnect the Rootbound MCP connection after upgrading so ChatGPT refreshes its cached tool snapshot");
+
+try {
+  tunnelClientProbe = await probeTunnelClient({ cwd: projectRoot });
+  record(
+    "tunnel-client-version",
+    true,
+    `tunnel-client ${tunnelClientProbe.version}; minimum ${tunnelClientProbe.minimumVersion}; recommended ${tunnelClientProbe.recommendedVersion}+`,
+    null,
+    true
+  );
+  if (!tunnelClientProbe.recommended) {
+    warnings.push({
+      kind: "tunnel-client-version",
+      message: `tunnel-client ${tunnelClientProbe.version} is supported, but ${tunnelClientProbe.recommendedVersion}+ is recommended.`,
+    });
+  }
+} catch (error) {
+  record("tunnel-client-version", false, message(error), "Upgrade tunnel-client, then rerun rootbound doctor", true);
+}
 
 await checkConnections();
 
@@ -144,6 +165,12 @@ const result = {
   rootbound: { packageVersion: packageJson.version, serverVersion: PUBLIC_SERVER_VERSION, surfaceVersion: PUBLIC_SURFACE_VERSION, publicToolCount: PUBLIC_TOOL_NAMES.length, modelLane: "chatgpt-only", installRoot: redactHomePath(projectRoot) },
   host: { platform: process.platform, arch: process.arch, node: process.version },
   connection: connectionContext,
+  tunnelClient: tunnelClientProbe ? {
+    version: tunnelClientProbe.version,
+    minimumVersion: tunnelClientProbe.minimumVersion,
+    recommendedVersion: tunnelClientProbe.recommendedVersion,
+    recommended: tunnelClientProbe.recommended,
+  } : null,
   codex: {
     resolutionSource: codexResolution?.source ?? null,
     executable: codexResolution?.path ? redactHomePath(codexResolution.path) : null,
@@ -209,9 +236,33 @@ async function checkConnections() {
   const runtime = await runtimeStatus(rootboundPaths);
   const drift = runtime.running && Boolean(runtime.state?.connectionId) && runtime.state.connectionId !== active.id;
   record("runtime-connection", !drift, runtime.running ? (drift ? `registry=${active.name}; runtime=${runtime.state?.connectionName ?? runtime.state?.connectionId}` : `runtime uses ${active.name}`) : "runtime stopped", drift ? `Run rootbound connection switch ${active.name}` : null);
-  const ready = !runtime.running || active.storageKind === "legacy-global" || runtime.state?.ready === true;
-  record("tunnel-readiness", ready, runtime.running ? (runtime.state?.ready ? "runtime /readyz passed" : active.storageKind === "legacy-global" ? "legacy runtime compatibility mode" : "runtime is not ready") : "runtime stopped", ready ? null : `Run rootbound connection switch ${active.name}`);
-  connectionContext = { status: tunnel?.configured ? "configured" : "invalid", id: active.id, name: active.name, tunnelId: tunnel?.tunnelId ?? active.tunnelId ?? null, storageKind: active.storageKind, runtime: runtime.status, ready: runtime.state?.ready ?? false, drift };
+  let health = null;
+  health = runtime.running
+    ? summarizeTunnelHealth(await readTunnelHealthSnapshot({ healthUrlPath: connectionPaths.tunnelHealthUrlPath }))
+    : null;
+  const healthPolicy = evaluateDoctorTunnelHealth({
+    storageKind: active.storageKind,
+    managedTransport: runtime.state?.managedMcpTransport ?? null,
+    runtimeRunning: runtime.running,
+    health,
+  });
+  record("tunnel-liveness", healthPolicy.liveness.ok, healthPolicy.liveness.detail, healthPolicy.liveness.action, healthPolicy.liveness.required);
+  record("tunnel-readiness", healthPolicy.readiness.ok, healthPolicy.readiness.detail, healthPolicy.readiness.action, healthPolicy.readiness.required);
+  if (healthPolicy.warning) warnings.push({ kind: "tunnel-health:legacy", message: healthPolicy.warning });
+  for (const [name, component] of Object.entries(health?.components ?? {})) {
+    if (component?.status === "degraded") warnings.push({ kind: `tunnel-health:${name}`, message: `${name} is degraded (${component.state ?? "unknown"})` });
+  }
+  connectionContext = {
+    status: tunnel?.configured ? "configured" : "invalid",
+    id: active.id,
+    name: active.name,
+    tunnelId: tunnel?.tunnelId ?? active.tunnelId ?? null,
+    storageKind: active.storageKind,
+    runtime: runtime.status,
+    startupReady: runtime.state?.startupReady ?? runtime.state?.ready ?? false,
+    currentHealth: health,
+    drift,
+  };
 }
 
 function parseArgs(argv) {

@@ -10,6 +10,9 @@ import { registerProject, resolveProjectRoot } from "../src/project-registry.mjs
 import { resolveRootboundPaths } from "../src/state-paths.mjs";
 import { runtimeStatus, stopRuntime, tailLog } from "../src/runtime-state.mjs";
 import { resolveTunnelLaunch, tunnelConfigStatus } from "../src/tunnel-config.mjs";
+import { getActiveConnection, loadConnectionRegistry } from "../src/connection-registry.mjs";
+import { resolveConnectionPaths } from "../src/connection-paths.mjs";
+import { readTunnelHealthSnapshot, summarizeTunnelHealth } from "../src/tunnel-health.mjs";
 import {
   allowedProjectsForCurrentConnection,
   grantProjectForCurrentConnection,
@@ -124,8 +127,9 @@ async function ensureTunnelReadyForConnect(opts, projectRoot) {
   const interactive = !opts.json && !opts.yes && process.stdin.isTTY && process.stdout.isTTY;
   setupLine(opts, "\nRootbound setup");
   setupLine(opts, "Checking ChatGPT tunnel prerequisites...");
-  await probeTunnelClient({ cwd: packageRoot });
-  setupLine(opts, "✓ tunnel-client detected");
+  const tunnelClient = await probeTunnelClient({ cwd: packageRoot });
+  setupLine(opts, `✓ tunnel-client ${tunnelClient.version} detected`);
+  if (!tunnelClient.recommended) setupLine(opts, `! tunnel-client ${tunnelClient.recommendedVersion}+ is recommended`);
 
   const candidates = await discoverTunnelCandidates();
   const tunnelId = await chooseTunnelId({ candidates, interactive, opts });
@@ -303,12 +307,23 @@ async function statusCommand(opts) {
   const store = await openStateStore({ paths });
   try {
     const runtime = await runtimeStatus(paths);
+    let tunnelHealth = null;
+    try {
+      const registry = await loadConnectionRegistry({ paths });
+      const active = getActiveConnection(registry);
+      if (runtime.running && active) {
+        const connectionPaths = resolveConnectionPaths({ paths, connection: active });
+        tunnelHealth = summarizeTunnelHealth(await readTunnelHealthSnapshot({ healthUrlPath: connectionPaths.tunnelHealthUrlPath }));
+      }
+    } catch (error) {
+      tunnelHealth = { available: false, live: false, ready: false, healthDetailsSupported: false, components: {}, reason: error instanceof Error ? error.message : String(error) };
+    }
     let projects;
     if (opts.positionals[0]) {
       const resolved = await resolveProjectRoot(opts.positionals[0]);
       projects = store.listProjects().filter((row) => row.root === resolved.root);
     } else projects = store.listProjects();
-    printResult({ ok: true, runtime, projects, stateRoot: paths.root }, opts);
+    printResult({ ok: true, runtime, tunnelHealth, projects, stateRoot: paths.root }, opts);
   } finally { store.close(); }
 }
 
@@ -587,7 +602,14 @@ function printResult(value, opts) {
     if (value.runtime?.anchorProjectRoot) process.stdout.write(`Runtime anchor: ${value.runtime.anchorProjectRoot}\n`);
     if (value.runtime?.status === "running") process.stdout.write(`ChatGPT connector settings: ${TUNNEL_SETUP_URLS.connectors}\n`);
   } else if (Array.isArray(value.projects)) {
-    process.stdout.write(`Runtime: ${value.runtime.status}\nState: ${value.stateRoot}\nProjects: ${value.projects.length}\n`);
+    process.stdout.write(`Runtime: ${value.runtime.status}\n`);
+    if (value.runtime.state?.ready !== undefined) process.stdout.write(`Startup ready: ${value.runtime.state.ready ? "yes" : "no"}\n`);
+    if (value.tunnelHealth) {
+      process.stdout.write(`Tunnel live: ${value.tunnelHealth.live ? "yes" : "no"}\n`);
+      process.stdout.write(`Tunnel ready now: ${value.tunnelHealth.ready ? "yes" : "no"}\n`);
+      if (value.tunnelHealth.components?.mcp) process.stdout.write(`MCP observed: ${value.tunnelHealth.components.mcp.status ?? "unknown"}/${value.tunnelHealth.components.mcp.state ?? "unknown"}\n`);
+    }
+    process.stdout.write(`State: ${value.stateRoot}\nProjects: ${value.projects.length}\n`);
     for (const project of value.projects) process.stdout.write(`- ${project.projectRef}  ${project.root}${project.trusted ? "  trusted" : ""}\n`);
   } else process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }

@@ -3,10 +3,18 @@ import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  buildHttpServerUrl,
   buildStdioCommand,
+  compareTunnelClientVersions,
   discoverTunnelCandidates,
   managedTunnelEnvironment,
+  MINIMUM_TUNNEL_CLIENT_VERSION,
+  parseTunnelClientVersion,
+  probeTunnelClient,
+  RECOMMENDED_TUNNEL_CLIENT_VERSION,
+  inspectManagedTunnelProfile,
   rollbackManagedTunnelSetup,
+  validateManagedTunnel,
   validateRuntimeKey,
   validateTunnelId,
   writeManagedTunnelSetup,
@@ -41,6 +49,39 @@ assert.equal(validateRuntimeKey("opaque runtime key with spaces"), true);
 assert.equal(validateRuntimeKey("bad\nkey"), false);
 assert.equal(validateRuntimeKey(""), false);
 
+assert.equal(MINIMUM_TUNNEL_CLIENT_VERSION, "0.0.12");
+assert.equal(RECOMMENDED_TUNNEL_CLIENT_VERSION, "0.0.15");
+assert.deepEqual(parseTunnelClientVersion("0.0.15\n")?.parts, [0, 0, 15]);
+assert.equal(parseTunnelClientVersion("v0.0.15 (git sha: abc)")?.version, "0.0.15");
+assert.equal(parseTunnelClientVersion("tunnel-client 0.0.15"), null);
+assert.equal(compareTunnelClientVersions("0.0.15", "0.0.12"), 1);
+assert.equal(compareTunnelClientVersions("0.0.12", "0.0.12"), 0);
+assert.equal(compareTunnelClientVersions("0.0.11", "0.0.12"), -1);
+
+const supportedProbe = await probeTunnelClient({
+  command: "fake-tunnel-client",
+  execFileFn: async (command, args) => {
+    assert.equal(command, "fake-tunnel-client");
+    assert.deepEqual(args, ["--version"]);
+    return { stdout: "0.0.15\n", stderr: "" };
+  },
+});
+assert.equal(supportedProbe.version, "0.0.15");
+assert.equal(supportedProbe.recommended, true);
+
+const supportedOldProbe = await probeTunnelClient({
+  execFileFn: async () => ({ stdout: "0.0.12\n", stderr: "" }),
+});
+assert.equal(supportedOldProbe.recommended, false);
+await assert.rejects(
+  () => probeTunnelClient({ execFileFn: async () => ({ stdout: "0.0.11\n", stderr: "" }) }),
+  (error) => error?.code === "TUNNEL_CLIENT_VERSION_UNSUPPORTED" && error?.minimumVersion === "0.0.12"
+);
+await assert.rejects(
+  () => probeTunnelClient({ execFileFn: async () => ({ stdout: "unknown\n", stderr: "" }) }),
+  (error) => error?.code === "TUNNEL_CLIENT_VERSION_UNPARSEABLE"
+);
+
 const sanitized = managedTunnelEnvironment({ CONTROL_PLANE_TUNNEL_ID: tunnelB, CONTROL_PLANE_API_KEY: "secret", OPENAI_API_KEY: "other", KEEP_ME: "yes" });
 assert.equal(sanitized.CONTROL_PLANE_TUNNEL_ID, undefined);
 assert.equal(sanitized.CONTROL_PLANE_API_KEY, undefined);
@@ -64,7 +105,9 @@ const setup = await writeManagedTunnelSetup({
 assert.equal(setup.configured, true);
 assert.equal(setup.tunnelId, tunnelA);
 assert.equal(setup.healthUrlPath, paths.tunnelHealthUrlPath);
-assert.equal(setup.mcpCommand, `'${nodePath}' '${path.join(packageRoot, "scripts", "launch.mjs")}' stdio`);
+assert.equal(setup.transport, "http");
+assert.equal(setup.mcpServerUrl, "http://127.0.0.1:7690/mcp");
+assert.equal(setup.mcpCommand, null);
 
 const secretText = await readFile(paths.tunnelSecretPath, "utf8");
 assert.equal(secretText, secret);
@@ -81,8 +124,39 @@ assert.match(profile, /listen_addr:\s+"127\.0\.0\.1:0"/);
 assert.match(profile, /url_file:/);
 assert.match(profile, /format: json/);
 assert.match(profile, /channel: main/);
-assert.match(profile, /launch\.mjs/);
+assert.match(profile, /server_urls:/);
+assert.match(profile, /url:\s+"http:\/\/127\.0\.0\.1:7690\/mcp"/);
+assert.doesNotMatch(profile, /commands:/);
+assert.equal((await inspectManagedTunnelProfile({ profilePath: paths.tunnelManagedProfilePath })).transport, "http");
 assert.equal(profile.includes(secret), false, "managed tunnel profile must not contain the runtime key");
+
+let validationProfileSeen = null;
+const validation = await validateManagedTunnel({
+  profilePath: paths.tunnelManagedProfilePath,
+  cwd: packageRoot,
+  packageRoot,
+  execFileFn: async (command, args) => {
+    assert.equal(command, "tunnel-client");
+    assert.equal(args[0], "doctor");
+    validationProfileSeen = args[2];
+    const validationProfile = await readFile(validationProfileSeen, "utf8");
+    assert.match(validationProfile, /commands:/);
+    assert.match(validationProfile, /launch\.mjs/);
+    const commandValue = validationProfile.match(/^\s*command:\s*(".*")\s*$/m)?.[1];
+    assert.ok(commandValue, "validation profile must contain a quoted command");
+    const decodedCommand = JSON.parse(commandValue);
+    assert.ok(decodedCommand.includes(process.execPath), "validation command must use the current Node executable");
+    assert.doesNotMatch(validationProfile, /server_urls:/);
+    return { stdout: "doctor ok\n", stderr: "" };
+  },
+});
+assert.equal(validation.runtimeTransport, "http");
+assert.equal(validation.validationTransport, "stdio");
+assert.notEqual(validationProfileSeen, paths.tunnelManagedProfilePath);
+await assert.rejects(() => readFile(validationProfileSeen, "utf8"), (error) => error?.code === "ENOENT");
+const persistentProfileAfterDoctor = await readFile(paths.tunnelManagedProfilePath, "utf8");
+assert.match(persistentProfileAfterDoctor, /server_urls:/);
+assert.doesNotMatch(persistentProfileAfterDoctor, /commands:/);
 
 const persistedStatus = tunnelConfigStatus({ paths, env: {} });
 assert.equal(persistedStatus.configured, true);
@@ -90,11 +164,31 @@ assert.equal(persistedStatus.tunnelId, tunnelA);
 assert.deepEqual(persistedStatus.argv, ["tunnel-client", "run", "--profile-file", paths.tunnelManagedProfilePath]);
 assert.equal(JSON.stringify(persistedStatus).includes(secret), false);
 
-const commandWithSpaces = buildStdioCommand({ nodePath: "/Applications/Node Runtime/node", packageRoot: "/Users/example/Library/Application Support/Rootbound/app" });
-assert.equal(commandWithSpaces, "'/Applications/Node Runtime/node' '/Users/example/Library/Application Support/Rootbound/app/scripts/launch.mjs' stdio");
+assert.equal(buildHttpServerUrl(), "http://127.0.0.1:7690/mcp");
+assert.equal(buildHttpServerUrl({ host: "localhost", port: 8765 }), "http://localhost:8765/mcp");
+assert.throws(() => buildHttpServerUrl({ host: "0.0.0.0", port: 7690 }), /loopback/);
+
+const stdioPaths = resolveRootboundPaths({ env: { ROOTBOUND_HOME: path.join(root, "Rootbound Stdio State") }, home });
+await writeManagedTunnelSetup({
+  tunnelId: tunnelA,
+  apiKey: secret,
+  packageRoot,
+  nodePath,
+  paths: stdioPaths,
+  tunnelClientCommand: "tunnel-client",
+  platform: process.platform,
+  transport: "stdio",
+});
+assert.equal((await inspectManagedTunnelProfile({ profilePath: stdioPaths.tunnelManagedProfilePath })).transport, "stdio");
+await rollbackManagedTunnelSetup({ paths: stdioPaths });
+
+const commandPackageRoot = "/Users/example/Library/Application Support/Rootbound/app";
+const commandLaunchPath = path.join(commandPackageRoot, "scripts", "launch.mjs");
+const commandWithSpaces = buildStdioCommand({ nodePath: "/Applications/Node Runtime/node", packageRoot: commandPackageRoot });
+assert.equal(commandWithSpaces, `'/Applications/Node Runtime/node' '${commandLaunchPath}' stdio`);
 assert.equal(
-  buildStdioCommand({ packageRoot: "/Users/example/Library/Application Support/Rootbound/app" }),
-  "node '/Users/example/Library/Application Support/Rootbound/app/scripts/launch.mjs' stdio"
+  buildStdioCommand({ packageRoot: commandPackageRoot }),
+  `node '${commandLaunchPath}' stdio`
 );
 
 await rollbackManagedTunnelSetup({ paths });

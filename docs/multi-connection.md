@@ -45,7 +45,9 @@ rootbound connection add work
 
 Replace `work` with any short label that makes sense to you, for example `personal`, `client-acme`, or `second-account`.
 
-The guided setup checks `tunnel-client`, discovers tunnel IDs when possible, asks for a tunnel Runtime API key, stores the key in a private connection-scoped file, validates with `tunnel-client doctor`, and saves the connection only after validation succeeds.
+The guided setup checks the `tunnel-client` version (minimum `0.0.12`, `0.0.15+` recommended), discovers tunnel IDs when possible, asks for a tunnel Runtime API key, stores the key in a private connection-scoped file, validates with `tunnel-client doctor`, and saves the connection only after validation succeeds.
+
+New managed profiles bind the main MCP channel to `http://127.0.0.1:7690/mcp` with Streamable HTTP. Setup validation uses a temporary private stdio profile so `tunnel-client doctor` can validate the credential/control-plane before the long-lived HTTP MCP runtime exists. Existing stdio profiles continue to run unchanged until an explicit repair rewrites them.
 
 For the long-lived daemon, use a restricted runtime key with only the permissions needed to read/use the tunnel. Rootbound does not silently persist `OPENAI_API_KEY` as a tunnel runtime credential.
 
@@ -91,7 +93,7 @@ rootbound connection repair work
 
 Rootbound refuses to repair a connection that is currently used by the runtime. Stop Rootbound or switch away first.
 
-Repair preserves the tunnel ID, writes the candidate replacement key, and validates it with `tunnel-client doctor`. If validation fails, Rootbound restores the previous key/configuration and returns:
+Repair preserves the tunnel ID, writes the candidate replacement key, rewrites Rootbound-managed profiles to the current loopback HTTP format, and validates the candidate with `tunnel-client doctor`. If validation fails, Rootbound restores the previous key/configuration and returns:
 
 ```text
 CONNECTION_REPAIR_FAILED_RESTORED
@@ -123,8 +125,10 @@ If the removed connection was active while Rootbound was stopped, the first rema
 connection-registry
 active-connection
 tunnel-secret-permissions
+tunnel-client-version
 tunnel-client-doctor
 runtime-connection
+tunnel-liveness
 tunnel-readiness
 ```
 
@@ -150,9 +154,15 @@ rootbound tunnel show
 
 Rootbound cannot reliably inspect which tunnel the ChatGPT UI currently selected. If ChatGPT points to a different tunnel, the request may never reach the active Rootbound daemon.
 
-## Runtime readiness
+## Runtime readiness and recovery
 
 New scoped profiles configure a tunnel health URL file and Rootbound requires `/readyz` to return HTTP 200 before publishing the runtime as ready.
+
+Runtime state keeps startup readiness separate from current observations. `startupReady` records the startup gate; current `ready`, `lastHealthCheckedAt`, and sanitized tunnel component observations are refreshed while the runtime is active. `rootbound status` and `rootbound doctor` therefore do not equate “supervisor PID exists” with “tunnel works now”.
+
+The health reader is passive: it reads `/healthz`, `/readyz`, `/health?details=true`, and `/health/mcp` when available and does not synthesize MCP calls. Older supported tunnel-client builds that do not expose detailed component endpoints remain compatible.
+
+The watchdog is deliberately conservative. It restarts a tunnel only after repeated failures of the tunnel client's **local health server** while the tunnel process is still alive. Component-level `degraded`, old observations, or external control-plane failures do not independently cause restart loops. After a sustained healthy interval, the restart budget resets.
 
 Process existence alone is not successful startup for new connection profiles. The original legacy/default connection keeps a compatibility fallback so an existing installation is not broken merely because its old managed YAML predates health URL support.
 

@@ -23,12 +23,13 @@ try {
 
   if (process.platform !== "win32") {
     const first = await spawnRuntimeTree(root, "force-tree");
-    await writeRuntimeState(paths, { pid: first.supervisorPid, supervisorPid: first.supervisorPid, tunnelPid: first.tunnelPid, startedAt: Date.now() });
+    await writeRuntimeState(paths, { pid: first.supervisorPid, supervisorPid: first.supervisorPid, tunnelPid: first.tunnelPid, mcpPid: first.mcpPid, startedAt: Date.now() });
     const forced = await stopRuntime(paths, { force: true });
     assert.equal(forced.status, "stopped");
     assert.equal(forced.stopped, true);
     assert.equal(forced.previousPid, first.supervisorPid);
     assert.equal(forced.previousTunnelPid, first.tunnelPid);
+    assert.equal(forced.previousMcpPid, first.mcpPid);
     await waitForExit(first.supervisorPid);
     await waitForExit(first.tunnelPid);
     await waitForExit(first.mcpPid);
@@ -39,7 +40,7 @@ try {
     assert.equal(await readRuntimeState(paths), null);
 
     const orphan = await spawnRuntimeTree(root, "orphan-tree");
-    await writeRuntimeState(paths, { pid: orphan.supervisorPid, supervisorPid: orphan.supervisorPid, tunnelPid: orphan.tunnelPid, startedAt: Date.now() });
+    await writeRuntimeState(paths, { pid: orphan.supervisorPid, supervisorPid: orphan.supervisorPid, tunnelPid: orphan.tunnelPid, mcpPid: orphan.mcpPid, startedAt: Date.now() });
     process.kill(orphan.supervisorPid, "SIGKILL");
     await waitForExit(orphan.supervisorPid);
     assert.equal(isProcessAlive(orphan.supervisorPid), false);

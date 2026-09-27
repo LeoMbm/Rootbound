@@ -9,6 +9,11 @@ import { clearTunnelConfig, saveTunnelConfig } from "./tunnel-config.mjs";
 const execFileAsync = promisify(execFile);
 const TUNNEL_ID_PATTERN = /^tunnel_[0-9a-f]{32}$/;
 
+export const MINIMUM_TUNNEL_CLIENT_VERSION = "0.0.12";
+export const RECOMMENDED_TUNNEL_CLIENT_VERSION = "0.0.15";
+export const DEFAULT_ROOTBOUND_HTTP_HOST = "127.0.0.1";
+export const DEFAULT_ROOTBOUND_HTTP_PORT = 7690;
+
 export const TUNNEL_SETUP_URLS = Object.freeze({
   tunnels: "https://platform.openai.com/settings/organization/tunnels",
   runtimeKeys: "https://platform.openai.com/settings/organization/api-keys",
@@ -53,10 +58,45 @@ export async function discoverTunnelCandidates({ env = process.env, home = os.ho
   return candidates;
 }
 
-export async function probeTunnelClient({ command = "tunnel-client", env = process.env, cwd = process.cwd(), timeoutMs = 5000 } = {}) {
+export function parseTunnelClientVersion(value) {
+  const text = String(value ?? "").trim();
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?(?:\s|$)/.exec(text);
+  if (!match) return null;
+  return {
+    version: `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`,
+    parts: [Number(match[1]), Number(match[2]), Number(match[3])],
+  };
+}
+
+export function compareTunnelClientVersions(left, right) {
+  const a = typeof left === "string" ? parseTunnelClientVersion(left)?.parts : left?.parts;
+  const b = typeof right === "string" ? parseTunnelClientVersion(right)?.parts : right?.parts;
+  if (!a || !b) throw new Error("compareTunnelClientVersions requires parseable semantic versions");
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+export async function probeTunnelClient({
+  command = "tunnel-client",
+  env = process.env,
+  cwd = process.cwd(),
+  timeoutMs = 5000,
+  execFileFn = execFileAsync,
+  minimumVersion = MINIMUM_TUNNEL_CLIENT_VERSION,
+  recommendedVersion = RECOMMENDED_TUNNEL_CLIENT_VERSION,
+} = {}) {
+  let stdout = "";
+  let stderr = "";
   try {
-    await execFileAsync(command, ["--help"], { cwd, env, timeout: timeoutMs, windowsHide: true, maxBuffer: 512 * 1024 });
-    return { ok: true, command };
+    ({ stdout = "", stderr = "" } = await execFileFn(command, ["--version"], {
+      cwd,
+      env,
+      timeout: timeoutMs,
+      windowsHide: true,
+      maxBuffer: 512 * 1024,
+    }));
   } catch (error) {
     if (error?.code === "ENOENT") {
       const missing = new Error(`tunnel-client was not found on PATH. Install the supported tunnel-client from ${TUNNEL_SETUP_URLS.tunnels}, then retry.`);
@@ -68,6 +108,28 @@ export async function probeTunnelClient({ command = "tunnel-client", env = proce
     failed.code = "TUNNEL_CLIENT_UNAVAILABLE";
     throw failed;
   }
+
+  const parsed = parseTunnelClientVersion(stdout || stderr);
+  if (!parsed) {
+    const failed = new Error(`tunnel-client version could not be parsed from: ${cleanToolOutput(stdout || stderr)}`);
+    failed.code = "TUNNEL_CLIENT_VERSION_UNPARSEABLE";
+    throw failed;
+  }
+  if (compareTunnelClientVersions(parsed, minimumVersion) < 0) {
+    const failed = new Error(`tunnel-client ${parsed.version} is unsupported; Rootbound requires ${minimumVersion} or newer.`);
+    failed.code = "TUNNEL_CLIENT_VERSION_UNSUPPORTED";
+    failed.version = parsed.version;
+    failed.minimumVersion = minimumVersion;
+    throw failed;
+  }
+  return {
+    ok: true,
+    command,
+    version: parsed.version,
+    minimumVersion,
+    recommendedVersion,
+    recommended: compareTunnelClientVersions(parsed, recommendedVersion) >= 0,
+  };
 }
 
 export async function writeManagedTunnelSetup({
@@ -78,18 +140,25 @@ export async function writeManagedTunnelSetup({
   nodePath = "node",
   tunnelClientCommand = "tunnel-client",
   platform = process.platform,
+  transport = "http",
+  mcpServerUrl = buildHttpServerUrl(),
 } = {}) {
   if (!validateTunnelId(tunnelId)) throw new Error("Invalid OpenAI tunnel id; expected tunnel_ followed by 32 lowercase hexadecimal characters.");
   if (!validateRuntimeKey(apiKey)) throw new Error("Invalid runtime API key format.");
   if (!packageRoot) throw new Error("writeManagedTunnelSetup requires packageRoot");
   if (!paths?.tunnelManagedProfilePath || !paths?.tunnelSecretPath) throw new Error("writeManagedTunnelSetup requires Rootbound state paths");
+  if (!["http", "stdio"].includes(transport)) throw new Error("writeManagedTunnelSetup transport must be http or stdio");
+  if (transport === "http") assertLoopbackMcpUrl(mcpServerUrl);
 
   if (paths.stateDir) await ensureRootboundStateDirs(paths);
   await mkdir(path.dirname(paths.tunnelSecretPath), { recursive: true, mode: 0o700 });
   if (paths.tunnelHealthUrlPath) await unlink(paths.tunnelHealthUrlPath).catch((error) => { if (error?.code !== "ENOENT") throw error; });
   await writePrivateFile(paths.tunnelSecretPath, apiKey, { platform });
 
-  const mcpCommand = buildStdioCommand({ nodePath, packageRoot });
+  const mcpCommand = transport === "stdio" ? buildStdioCommand({ nodePath, packageRoot }) : null;
+  const mcpBinding = transport === "http"
+    ? ["  server_urls:", "    - channel: main", `      url: ${yamlString(mcpServerUrl)}`]
+    : ["  commands:", "    - channel: main", `      command: ${yamlString(mcpCommand)}`];
   const profile = [
     "config_version: 1",
     "control_plane:",
@@ -105,9 +174,7 @@ export async function writeManagedTunnelSetup({
     "  level: info",
     "  format: json",
     "mcp:",
-    "  commands:",
-    "    - channel: main",
-    `      command: ${yamlString(mcpCommand)}`,
+    ...mcpBinding,
     "",
   ].join("\n");
   await writePrivateFile(paths.tunnelManagedProfilePath, profile, { platform });
@@ -123,6 +190,8 @@ export async function writeManagedTunnelSetup({
     profilePath: paths.tunnelManagedProfilePath,
     secretPath: paths.tunnelSecretPath,
     healthUrlPath: paths.tunnelHealthUrlPath ?? null,
+    transport,
+    mcpServerUrl: transport === "http" ? mcpServerUrl : null,
     mcpCommand,
     tunnel: saved,
   };
@@ -134,22 +203,42 @@ export async function validateManagedTunnel({
   env = process.env,
   cwd = process.cwd(),
   timeoutMs = 20_000,
+  execFileFn = execFileAsync,
+  packageRoot = cwd,
+  platform = process.platform,
 } = {}) {
   if (!profilePath) throw new Error("validateManagedTunnel requires profilePath");
+  const profile = await inspectManagedTunnelProfile({ profilePath });
+  let validationProfilePath = profilePath;
+  let temporaryProfilePath = null;
+  if (profile.transport === "http") {
+    temporaryProfilePath = `${profilePath}.${process.pid}.doctor-stdio.yaml`;
+    const source = await readFile(profilePath, "utf8");
+    const validationSource = replaceManagedHttpBindingWithStdio(source, buildStdioCommand({ nodePath: process.execPath, packageRoot }));
+    await writePrivateFile(temporaryProfilePath, validationSource, { platform });
+    validationProfilePath = temporaryProfilePath;
+  }
   try {
-    const { stdout = "", stderr = "" } = await execFileAsync(command, ["doctor", "--profile-file", profilePath], {
+    const { stdout = "", stderr = "" } = await execFileFn(command, ["doctor", "--profile-file", validationProfilePath], {
       cwd,
       env: managedTunnelEnvironment(env),
       timeout: timeoutMs,
       windowsHide: true,
       maxBuffer: 1024 * 1024,
     });
-    return { ok: true, detail: cleanToolOutput(stdout || stderr || "tunnel-client doctor passed") };
+    return {
+      ok: true,
+      detail: cleanToolOutput(stdout || stderr || "tunnel-client doctor passed"),
+      validationTransport: profile.transport === "http" ? "stdio" : profile.transport,
+      runtimeTransport: profile.transport,
+    };
   } catch (error) {
     const detail = cleanToolOutput(error?.stdout || error?.stderr || error?.message || "tunnel-client doctor failed");
     const failed = new Error(`OpenAI tunnel validation failed: ${detail}`);
     failed.code = "TUNNEL_DOCTOR_FAILED";
     throw failed;
+  } finally {
+    if (temporaryProfilePath) await unlink(temporaryProfilePath).catch(() => {});
   }
 }
 
@@ -171,6 +260,47 @@ export function managedTunnelEnvironment(env = process.env) {
 export function buildStdioCommand({ nodePath = "node", packageRoot } = {}) {
   if (!packageRoot) throw new Error("buildStdioCommand requires packageRoot");
   return [nodePath, path.join(packageRoot, "scripts", "launch.mjs"), "stdio"].map(quoteCommandArg).join(" ");
+}
+
+export function buildHttpServerUrl({ host = DEFAULT_ROOTBOUND_HTTP_HOST, port = DEFAULT_ROOTBOUND_HTTP_PORT } = {}) {
+  if (!["127.0.0.1", "localhost", "::1"].includes(host)) throw new Error("Rootbound managed HTTP MCP must bind to loopback");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Rootbound managed HTTP MCP port must be between 1 and 65535");
+  const authority = host === "::1" ? `[${host}]:${port}` : `${host}:${port}`;
+  return `http://${authority}/mcp`;
+}
+
+export async function inspectManagedTunnelProfile({ profilePath } = {}) {
+  if (!profilePath) return { managed: false, transport: null, serverUrl: null };
+  let text;
+  try { text = await readFile(profilePath, "utf8"); }
+  catch (error) {
+    if (error?.code === "ENOENT") return { managed: false, transport: null, serverUrl: null };
+    throw error;
+  }
+  const serverUrl = text.match(/\n\s*server_urls:\s*\n\s*-\s*channel:\s*main\s*\n\s*url:\s*["']?([^\s"'\n]+)["']?/m)?.[1] ?? null;
+  if (serverUrl) {
+    assertLoopbackMcpUrl(serverUrl);
+    return { managed: true, transport: "http", serverUrl };
+  }
+  if (/\n\s*commands:\s*\n\s*-\s*channel:\s*main\s*\n\s*command:/m.test(text)) {
+    return { managed: true, transport: "stdio", serverUrl: null };
+  }
+  return { managed: true, transport: "unknown", serverUrl: null };
+}
+
+function replaceManagedHttpBindingWithStdio(source, command) {
+  const block = /\n  server_urls:\n    - channel: main\n      url: [^\n]+\n/;
+  if (!block.test(source)) throw new Error("Managed HTTP tunnel profile is missing the expected main server_url binding");
+  return source.replace(block, `\n  commands:\n    - channel: main\n      command: ${yamlString(command)}\n`);
+}
+
+function assertLoopbackMcpUrl(value) {
+  let parsed;
+  try { parsed = new URL(String(value)); }
+  catch { throw new Error("Rootbound managed HTTP MCP URL is invalid"); }
+  if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost", "::1"].includes(parsed.hostname) || parsed.pathname !== "/mcp") {
+    throw new Error("Rootbound managed HTTP MCP URL must be loopback http://.../mcp");
+  }
 }
 
 function defaultTunnelProfileDir({ env, home }) {
