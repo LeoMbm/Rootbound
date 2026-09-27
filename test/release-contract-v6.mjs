@@ -138,7 +138,7 @@ assert.match(rescueTools, /authorityExecutor\.resolveAuthority\(\{ cwd: cwd \?\?
 assert.doesNotMatch(rescueTools, /cwd \?\? authorityExecutor\.defaultCwd/);
 assert.match(rescueTools, /authority\.effectiveCwd/);
 
-assert.match(readme, /Current preview: \*\*0\.1\.0-preview\.3\*\*/);
+assert.match(readme, /Current preview: \*\*0\.1\.0-preview\.4\*\*/);
 assert.match(readme, /rootbound-public-preview-v6/);
 assert.match(readme, /33 public tools/);
 assert.match(readme, /codex\.workspace_list/);
