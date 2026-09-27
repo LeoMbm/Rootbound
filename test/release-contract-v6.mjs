@@ -81,6 +81,8 @@ assert.match(runtimeState, /process\.kill\(-groupId, signal\)/);
 assert.match(runtimeState, /execFileAsync\("taskkill", \["\/PID", String\(rootPid\), "\/T"/);
 assert.match(runtimeState, /!isProcessAlive\(supervisorPid\) && !isProcessAlive\(tunnelPid\) && !isProcessAlive\(mcpPid\)/);
 assert.match(runtimeState, /previousMcpPid/);
+assert.match(runtimeState, /taskkill"[\s\S]*"\/T", "\/F"/);
+assert.match(runtimeState, /const escalated = stopAttempt\?\.escalated === true/);
 assert.match(supervisor, /stopManagedHttpMcp/);
 assert.match(controlPlane, /revokeProjectFromSavedConnections/);
 assert.match(controlPlane, /projectAccessCleanup/);
