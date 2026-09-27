@@ -182,11 +182,13 @@ await writeManagedTunnelSetup({
 assert.equal((await inspectManagedTunnelProfile({ profilePath: stdioPaths.tunnelManagedProfilePath })).transport, "stdio");
 await rollbackManagedTunnelSetup({ paths: stdioPaths });
 
-const commandWithSpaces = buildStdioCommand({ nodePath: "/Applications/Node Runtime/node", packageRoot: "/Users/example/Library/Application Support/Rootbound/app" });
-assert.equal(commandWithSpaces, "'/Applications/Node Runtime/node' '/Users/example/Library/Application Support/Rootbound/app/scripts/launch.mjs' stdio");
+const commandPackageRoot = "/Users/example/Library/Application Support/Rootbound/app";
+const commandLaunchPath = path.join(commandPackageRoot, "scripts", "launch.mjs");
+const commandWithSpaces = buildStdioCommand({ nodePath: "/Applications/Node Runtime/node", packageRoot: commandPackageRoot });
+assert.equal(commandWithSpaces, `'/Applications/Node Runtime/node' '${commandLaunchPath}' stdio`);
 assert.equal(
-  buildStdioCommand({ packageRoot: "/Users/example/Library/Application Support/Rootbound/app" }),
-  "node '/Users/example/Library/Application Support/Rootbound/app/scripts/launch.mjs' stdio"
+  buildStdioCommand({ packageRoot: commandPackageRoot }),
+  `node '${commandLaunchPath}' stdio`
 );
 
 await rollbackManagedTunnelSetup({ paths });
