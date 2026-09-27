@@ -6,7 +6,7 @@
 
 **Apple Silicon macOS Technical Preview**
 
-Current preview: **0.1.0-preview.3**
+Current preview: **0.1.0-preview.4**
 
 Windows support is implemented in parts of the codebase but is **not part of this public preview yet**. Real-machine Windows validation is still pending.
 
@@ -20,9 +20,27 @@ Rootbound is useful when you want ChatGPT to inspect, edit, test, commit, and co
 
 ---
 
-## What is new in 0.1.0-preview.3?
+## What is new in 0.1.0-preview.4?
 
-`0.1.0-preview.3` removes Rootbound's one-active-project limitation without introducing one daemon or tunnel per repository.
+`0.1.0-preview.4` hardens the managed ChatGPT tunnel/runtime boundary after real-world connector failures.
+
+### Resilient managed tunnel runtime
+
+- new Rootbound-managed profiles use loopback Streamable HTTP at `http://127.0.0.1:7690/mcp` between `tunnel-client` and Rootbound;
+- existing managed stdio profiles remain supported and are not silently rewritten at startup;
+- `tunnel-client` versions below `0.0.12` are refused, while `0.0.15+` is recommended;
+- startup readiness is tracked separately from current tunnel liveness/readiness;
+- `rootbound status` and `rootbound doctor` expose passive tunnel health observations without generating synthetic MCP traffic;
+- the supervisor restarts a still-running tunnel only after repeated local health-server failures, avoiding restart loops on stale or externally degraded observations;
+- the separately supervised HTTP MCP child is included in stop/recovery cleanup on macOS and Windows;
+- installer failures now surface the exact required doctor checks that failed;
+- legacy/default connections remain compatible and can be explicitly migrated to the HTTP profile through `rootbound connection repair <name>`.
+
+The public MCP contract remains **33 tools** on `rootbound-public-preview-v6`.
+
+### Also retained from preview.3
+
+`0.1.0-preview.3` removed Rootbound's one-active-project limitation without introducing one daemon or tunnel per repository.
 
 ### One runtime, several authorized projects
 
