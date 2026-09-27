@@ -142,7 +142,10 @@ const validation = await validateManagedTunnel({
     const validationProfile = await readFile(validationProfileSeen, "utf8");
     assert.match(validationProfile, /commands:/);
     assert.match(validationProfile, /launch\.mjs/);
-    assert.match(validationProfile, new RegExp(process.execPath.replaceAll("\\", "\\\\").replaceAll(".", "\\.")));
+    const commandValue = validationProfile.match(/^\s*command:\s*(".*")\s*$/m)?.[1];
+    assert.ok(commandValue, "validation profile must contain a quoted command");
+    const decodedCommand = JSON.parse(commandValue);
+    assert.ok(decodedCommand.includes(process.execPath), "validation command must use the current Node executable");
     assert.doesNotMatch(validationProfile, /server_urls:/);
     return { stdout: "doctor ok\n", stderr: "" };
   },
