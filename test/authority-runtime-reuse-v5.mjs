@@ -26,6 +26,11 @@ class FakeClient {
 
   async start() {
     this.#metrics.started += 1;
+    if (this.#metrics.startDelayMs) await new Promise((resolve) => setTimeout(resolve, this.#metrics.startDelayMs));
+    if (this.#metrics.failNextStart) {
+      this.#metrics.failNextStart = false;
+      throw new Error("synthetic start failure");
+    }
     this.#running = true;
   }
 
@@ -42,7 +47,7 @@ class FakeClient {
   }
 
   async request(method, params) {
-    this.#metrics.requests.push([method, params]);
+    this.#metrics.requests.push([method, params, this.#cwd]);
     await this.#delay();
     if (method === "config/read") {
       if (this.#metrics.failNextConfigRead) {
@@ -175,6 +180,59 @@ class FakeClient {
     await executor.close();
   }
   assert.equal(metrics.closed, 2);
+}
+
+{
+  const secondRoot = path.join(temp, "project-three");
+  await mkdir(secondRoot);
+  const secondCwd = await realpath(secondRoot);
+  const metrics = { created: 0, started: 0, closed: 0, requests: [], startDelayMs: 20 };
+  const executor = makeExecutor({ cwd, metrics, authorityClientMaxUses: 1 });
+  try {
+    await executor.validate();
+    assert.equal(metrics.closed, 1, "validation should recycle before the concurrent cross-project acquisition");
+    const [first, second] = await Promise.all([
+      executor.resolveAuthority({ cwd, access: "readOnly" }),
+      executor.resolveAuthority({ cwd: secondCwd, access: "readOnly" }),
+    ]);
+    assert.equal(first.effectiveCwd, cwd);
+    assert.equal(second.effectiveCwd, secondCwd);
+    const crossProjectRequests = metrics.requests.filter(
+      ([method, params, clientCwd]) => method === "config/read" && params.cwd !== clientCwd
+    );
+    assert.deepEqual(crossProjectRequests, [], "a project must never use an App Server launched for another cwd");
+    assert.equal(metrics.created, 3, "validation plus two concurrent project scopes should create distinct project-scoped clients");
+  } finally {
+    await executor.close();
+  }
+}
+
+{
+  const metrics = { created: 0, started: 0, closed: 0, requests: [], failNextStart: false };
+  const executor = makeExecutor({ cwd, metrics, authorityClientMaxUses: 1 });
+  try {
+    await executor.validate();
+    metrics.failNextStart = true;
+    await assert.rejects(
+      executor.resolveAuthority({ cwd, access: "readOnly" }),
+      /synthetic start failure/
+    );
+    await executor.resolveAuthority({ cwd, access: "readOnly" });
+    assert.equal(metrics.created, 3, "startup failure must not poison the next warm-client acquisition");
+  } finally {
+    await executor.close();
+  }
+}
+
+{
+  const metrics = { created: 0, started: 0, closed: 0, requests: [], startDelayMs: 30 };
+  const executor = makeExecutor({ cwd, metrics, authorityClientMaxUses: 1 });
+  await executor.validate();
+  const pending = executor.resolveAuthority({ cwd, access: "readOnly" });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await executor.close();
+  await assert.rejects(pending, /closed while authority App Server was starting|CodexAuthorityExecutor is closed/);
+  assert.equal(metrics.closed, 2, "closing during startup must close both the recycled validation client and the pending startup client");
 }
 
 console.log("authority-runtime-reuse-v5: ok");

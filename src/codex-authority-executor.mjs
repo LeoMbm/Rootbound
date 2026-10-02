@@ -180,6 +180,7 @@ export class CodexAuthorityExecutor {
   #authorityClientActive = 0;
   #authorityClientRecyclePending = false;
   #authorityClientDrainWaiters = new Set();
+  #authorityLifecycleTail = Promise.resolve();
   #authorityClientMaxAgeMs;
   #authorityClientMaxUses;
   #now;
@@ -352,7 +353,7 @@ export class CodexAuthorityExecutor {
     this.#notifyAuthorityClientDrained({ force: true });
     const starting = this.#authorityClientStartPromise;
     if (starting) await starting.catch(() => {});
-    await this.#recycleAuthorityClient({ force: true });
+    await this.#withAuthorityLifecycleLock(() => this.#recycleAuthorityClient({ force: true }));
   }
 
   async #resolveAuthorityWithClient(client, effectiveCwd, access, timeoutMs) {
@@ -513,71 +514,81 @@ export class CodexAuthorityExecutor {
 
   async #acquireAuthorityClient(cwd) {
     this.#assertOpen();
-    while (
-      this.#authorityClient
-      && (
-        !this.#authorityClient.running
-        || normalizeConfigPath(this.#authorityClientCwd ?? "") !== normalizeConfigPath(cwd)
-      )
-      && this.#authorityClientActive > 0
-    ) {
-      this.#authorityClientRecyclePending = true;
-      await this.#waitForAuthorityClientDrain();
+    while (true) {
+      let drain = null;
+      const acquired = await this.#withAuthorityLifecycleLock(async () => {
+        this.#assertOpen();
+        if (
+          this.#authorityClient
+          && (
+            !this.#authorityClient.running
+            || normalizeConfigPath(this.#authorityClientCwd ?? "") !== normalizeConfigPath(cwd)
+          )
+        ) {
+          if (this.#authorityClientActive > 0) {
+            this.#authorityClientRecyclePending = true;
+            drain = this.#waitForAuthorityClientDrain();
+            return null;
+          }
+          await this.#recycleAuthorityClient();
+        }
+        if (this.#authorityClient && this.#authorityClientActive === 0 && this.#authorityClientShouldRecycle()) {
+          await this.#recycleAuthorityClient();
+        }
+        if (!this.#authorityClient) {
+          if (!this.#authorityClientStartPromise) {
+            const client = this.#newClient(cwd);
+            this.#authorityClientStartPromise = (async () => {
+              try {
+                await client.start();
+              } catch (error) {
+                await client.close().catch(() => {});
+                throw error;
+              }
+              if (this.#closed) {
+                await client.close().catch(() => {});
+                throw new Error("CodexAuthorityExecutor closed while authority App Server was starting");
+              }
+              this.#authorityClient = client;
+              this.#authorityClientCwd = cwd;
+              this.#authorityClientCreatedAt = this.#now();
+              this.#authorityClientUses = 0;
+              this.#authorityClientRecyclePending = false;
+              return client;
+            })().finally(() => {
+              this.#authorityClientStartPromise = null;
+            });
+          }
+          await this.#authorityClientStartPromise;
+        }
+        const client = this.#authorityClient;
+        if (!client) throw new Error("authority App Server failed to become available");
+        this.#authorityClientActive += 1;
+        this.#authorityClientUses += 1;
+        return client;
+      });
+      if (acquired) return acquired;
+      if (!drain) throw new Error("authority App Server lifecycle wait was not initialized");
+      await drain;
       this.#assertOpen();
     }
-    if (
-      this.#authorityClient
-      && (
-        !this.#authorityClient.running
-        || normalizeConfigPath(this.#authorityClientCwd ?? "") !== normalizeConfigPath(cwd)
-      )
-    ) {
-      await this.#recycleAuthorityClient();
-    }
-    if (this.#authorityClient && this.#authorityClientActive === 0 && this.#authorityClientShouldRecycle()) {
-      await this.#recycleAuthorityClient();
-    }
-    if (!this.#authorityClient) {
-      if (!this.#authorityClientStartPromise) {
-        const client = this.#newClient(cwd);
-        this.#authorityClientStartPromise = (async () => {
-          await client.start();
-          if (this.#closed) {
-            await client.close().catch(() => {});
-            throw new Error("CodexAuthorityExecutor closed while authority App Server was starting");
-          }
-          this.#authorityClient = client;
-          this.#authorityClientCwd = cwd;
-          this.#authorityClientCreatedAt = this.#now();
-          this.#authorityClientUses = 0;
-          this.#authorityClientRecyclePending = false;
-          return client;
-        })().finally(() => {
-          this.#authorityClientStartPromise = null;
-        });
-      }
-      await this.#authorityClientStartPromise;
-    }
-    const client = this.#authorityClient;
-    if (!client) throw new Error("authority App Server failed to become available");
-    this.#authorityClientActive += 1;
-    this.#authorityClientUses += 1;
-    return client;
   }
 
   async #releaseAuthorityClient(client, { failed = false } = {}) {
-    if (this.#authorityClient === client) {
-      this.#authorityClientActive = Math.max(0, this.#authorityClientActive - 1);
-      if (failed || this.#authorityClientShouldRecycle()) this.#authorityClientRecyclePending = true;
-      if (this.#authorityClientActive === 0 && this.#authorityClientRecyclePending) {
-        this.#notifyAuthorityClientDrained();
-        await this.#recycleAuthorityClient();
-      } else if (this.#authorityClientActive === 0) {
-        this.#notifyAuthorityClientDrained();
+    await this.#withAuthorityLifecycleLock(async () => {
+      if (this.#authorityClient === client) {
+        this.#authorityClientActive = Math.max(0, this.#authorityClientActive - 1);
+        if (failed || this.#authorityClientShouldRecycle()) this.#authorityClientRecyclePending = true;
+        if (this.#authorityClientActive === 0 && this.#authorityClientRecyclePending) {
+          this.#notifyAuthorityClientDrained();
+          await this.#recycleAuthorityClient();
+        } else if (this.#authorityClientActive === 0) {
+          this.#notifyAuthorityClientDrained();
+        }
+        return;
       }
-      return;
-    }
-    await client.close().catch(() => {});
+      await client.close().catch(() => {});
+    });
   }
 
   #waitForAuthorityClientDrain() {
@@ -614,6 +625,18 @@ export class CodexAuthorityExecutor {
     this.#authorityClientUses = 0;
     this.#authorityClientRecyclePending = false;
     await client.close().catch(() => {});
+  }
+
+  async #withAuthorityLifecycleLock(operation) {
+    const previous = this.#authorityLifecycleTail;
+    let release;
+    this.#authorityLifecycleTail = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   #assertOpen() {
