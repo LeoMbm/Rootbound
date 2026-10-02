@@ -236,6 +236,33 @@ The real benchmark now reports `diagnostics.gitExecutable` and includes
 `git_status` / `git_diff` scenarios so this optimization can be validated
 on the host rather than inferred from microbenchmarks alone.
 
+### 2026-10-02 final real host benchmark
+
+Same host/runtime, 7 measured iterations after 1 warmup:
+
+| Scenario | Median | p95 |
+| --- | ---: | ---: |
+| Authority resolution | 4.74 ms | 5.04 ms |
+| No-op command | 52.11 ms | 54.68 ms |
+| Repository search | 93.64 ms | 100.02 ms |
+| Read 3 files | 55.98 ms | 59.20 ms |
+| Git status | 33.99 ms | 37.91 ms |
+| Git diff | 38.55 ms | 41.93 ms |
+
+The runtime reported:
+
+```json
+{
+  "repoSearchCandidateEngine": "ripgrep-files",
+  "gitExecutable": "/Applications/Xcode.app/Contents/Developer/usr/bin/git"
+}
+```
+
+Compared with the pre-install connector baseline for `git_status`
+(~2313 ms median), the optimized Git primitive itself is now ~34 ms on the
+same Mac. Connector/tunnel latency is intentionally measured separately during
+preview-install validation.
+
 ## Release acceptance
 
 Before merging/releasing this branch:
