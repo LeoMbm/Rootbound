@@ -20,44 +20,48 @@ try {
   record("codex", false, error instanceof Error ? error.message : String(error));
 }
 
-if (authority && executor) {
-  await runCheck("read", async () => {
-    const result = await executor.exec({
-      command: [process.execPath, "-e", "const fs=require('node:fs');const rows=fs.readdirSync('.',{withFileTypes:true});process.stdout.write(String(rows.length));"],
-      cwd,
-      access: "readOnly",
-      timeoutMs: 10_000,
+try {
+  if (authority && executor) {
+    await runCheck("read", async () => {
+      const result = await executor.exec({
+        command: [process.execPath, "-e", "const fs=require('node:fs');const rows=fs.readdirSync('.',{withFileTypes:true});process.stdout.write(String(rows.length));"],
+        cwd,
+        access: "readOnly",
+        timeoutMs: 10_000,
+      });
+      const count = Number.parseInt(result.stdout, 10);
+      const ok = result.exitCode === 0 && Number.isInteger(count) && count >= 0;
+      return { ok, detail: ok ? `read-only sandbox listed ${count} entries` : commandDetail(result) };
     });
-    const count = Number.parseInt(result.stdout, 10);
-    const ok = result.exitCode === 0 && Number.isInteger(count) && count >= 0;
-    return { ok, detail: ok ? `read-only sandbox listed ${count} entries` : commandDetail(result) };
-  });
 
-  await runCheck("command-exec", async () => {
-    const marker = `rootbound-self-test-command-${process.pid}`;
-    const result = await executor.exec({
-      command: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(marker)})`],
-      cwd,
-      access: "readOnly",
-      timeoutMs: 10_000,
+    await runCheck("command-exec", async () => {
+      const marker = `rootbound-self-test-command-${process.pid}`;
+      const result = await executor.exec({
+        command: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(marker)})`],
+        cwd,
+        access: "readOnly",
+        timeoutMs: 10_000,
+      });
+      const ok = result.exitCode === 0 && result.stdout === marker;
+      return { ok, detail: ok ? `model-free command/exec returned expected marker; profile=${result.permissionProfile}` : commandDetail(result) };
     });
-    const ok = result.exitCode === 0 && result.stdout === marker;
-    return { ok, detail: ok ? `model-free command/exec returned expected marker; profile=${result.permissionProfile}` : commandDetail(result) };
-  });
 
-  await runCheck("write-cleanup", async () => {
-    const marker = `rootbound-self-test-write-${process.pid}-${Date.now()}`;
-    const filename = `.rootbound-self-test-${process.pid}-${Date.now()}.tmp`;
-    const script = `const fs=require('node:fs');const p=${JSON.stringify(filename)};const marker=${JSON.stringify(marker)};let ok=false;try{fs.writeFileSync(p,marker,'utf8');ok=fs.readFileSync(p,'utf8')===marker;process.stdout.write(ok?marker:'mismatch');}finally{try{fs.unlinkSync(p);}catch{}}`;
-    const result = await executor.exec({
-      command: [process.execPath, "-e", script],
-      cwd,
-      access: "inherit",
-      timeoutMs: 10_000,
+    await runCheck("write-cleanup", async () => {
+      const marker = `rootbound-self-test-write-${process.pid}-${Date.now()}`;
+      const filename = `.rootbound-self-test-${process.pid}-${Date.now()}.tmp`;
+      const script = `const fs=require('node:fs');const p=${JSON.stringify(filename)};const marker=${JSON.stringify(marker)};let ok=false;try{fs.writeFileSync(p,marker,'utf8');ok=fs.readFileSync(p,'utf8')===marker;process.stdout.write(ok?marker:'mismatch');}finally{try{fs.unlinkSync(p);}catch{}}`;
+      const result = await executor.exec({
+        command: [process.execPath, "-e", script],
+        cwd,
+        access: "inherit",
+        timeoutMs: 10_000,
+      });
+      const ok = result.exitCode === 0 && result.stdout === marker;
+      return { ok, detail: ok ? `workspace write/read/delete probe succeeded; profile=${result.permissionProfile}` : commandDetail(result) };
     });
-    const ok = result.exitCode === 0 && result.stdout === marker;
-    return { ok, detail: ok ? `workspace write/read/delete probe succeeded; profile=${result.permissionProfile}` : commandDetail(result) };
-  });
+  }
+} finally {
+  await executor?.close().catch(() => {});
 }
 
 const ok = checks.every((check) => check.ok);

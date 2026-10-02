@@ -9,6 +9,7 @@ const args = parseArgs(process.argv.slice(2));
 const cwd = path.resolve(args.cwd ?? process.cwd());
 const result = { ok: false, cwd, codex: null, checks: [] };
 let publicContext = null;
+let authorityExecutor = null;
 
 try {
   const configOverrides = withRootboundPermissionOverrides([], { profileOverride: ROOTBOUND_PERMISSION_PROFILE });
@@ -19,6 +20,7 @@ try {
     maxTimeoutMs: 30_000,
     outputBytesCap: 64 * 1024,
   });
+  authorityExecutor = compatible.executor;
 
   result.codex = {
     path: compatible.resolution.path,
@@ -50,6 +52,7 @@ try {
   result.error = message(error);
 } finally {
   await publicContext?.close().catch(() => {});
+  await authorityExecutor?.close().catch(() => {});
 }
 
 if (args.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
