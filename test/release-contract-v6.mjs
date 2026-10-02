@@ -25,7 +25,7 @@ const tunnelBootstrap = await readFile(path.join(root, "src", "tunnel-bootstrap.
 const tunnelHealth = await readFile(path.join(root, "src", "tunnel-health.mjs"), "utf8");
 const installer = await readFile(path.join(root, "scripts", "install.sh"), "utf8");
 
-assert.equal(packageJson.version, "0.1.0-preview.4");
+assert.equal(packageJson.version, "0.1.0-preview.5");
 assert.equal(shrinkwrap.version, packageJson.version);
 assert.equal(shrinkwrap.packages?.[""]?.version, packageJson.version);
 assert.equal(PUBLIC_SERVER_VERSION, "0.1.0-preview.10");
