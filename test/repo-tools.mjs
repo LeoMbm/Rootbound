@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { registerRepoTools } from "../src/repo-tools.mjs";
 
 const registered = new Map();
@@ -79,13 +80,15 @@ assert.equal(searchExec.command[1], "-e");
 const status = await registered.get("codex.git_status").handler({ cwd: "/project" });
 assert.equal(status.isError, false);
 const statusExec = calls.filter((call) => call.kind === "exec").at(-1);
-assert.deepEqual(statusExec.command, ["git", "status", "--short", "--branch"]);
+assert.equal(path.basename(statusExec.command[0]), "git");
+assert.deepEqual(statusExec.command.slice(1), ["status", "--short", "--branch"]);
 assert.equal(statusExec.access, "readOnly");
 
 const diff = await registered.get("codex.git_diff").handler({ cwd: "/project", staged: true, pathspec: ["src/a.js"] });
 assert.equal(diff.isError, false);
 const diffExec = calls.filter((call) => call.kind === "exec").at(-1);
-assert.deepEqual(diffExec.command, ["git", "diff", "--cached", "--", "src/a.js"]);
+assert.equal(path.basename(diffExec.command[0]), "git");
+assert.deepEqual(diffExec.command.slice(1), ["diff", "--cached", "--", "src/a.js"]);
 assert.equal(diffExec.access, "readOnly");
 
 const patchText = "*** Begin Patch\n*** Update File: src/a.js\n@@\n-old\n+new\n*** End Patch";

@@ -3,6 +3,7 @@ import path from "node:path";
 import { decodeCursor, encodeCursor } from "./pagination.mjs";
 import { typedToolResponse } from "./tool-errors.mjs";
 import { withAuthorityLease } from "./authority-lease.mjs";
+import { resolveGitExecutable } from "./git-executable.mjs";
 
 const require = createRequire(import.meta.url);
 const z = require("zod/v4");
@@ -193,7 +194,8 @@ export function registerRepoTools(server, { authorityExecutor, continuityState =
   }, async ({ cwd, rescueRef, bindingRef }, ctx) => typedToolResponse(async () => {
     const resolved = rescueManager && getSessionKey ? rescueManager.resolveBinding({ sessionKey: getSessionKey(ctx), cwd, explicitBindingRef: bindingRef, rescueRef }) : { bindingRef: bindingRef ?? null };
     const scoped = resolved.bindingRef && continuityState ? continuityState.assertCwd(resolved.bindingRef, cwd) : null;
-    const result = await authorityExecutor.exec({ command: ["git", "status", "--short", "--branch"], cwd: scoped?.targetCwd ?? cwd, access: "readOnly", timeoutMs: 10_000 });
+    const gitBin = await resolveGitExecutable();
+    const result = await authorityExecutor.exec({ command: [gitBin, "status", "--short", "--branch"], cwd: scoped?.targetCwd ?? cwd, access: "readOnly", timeoutMs: 10_000 });
     return projectCommandResult(result);
   }, { operation: "git_status", isError: (payload) => payload?.status === "failed" }));
 
@@ -205,7 +207,8 @@ export function registerRepoTools(server, { authorityExecutor, continuityState =
   }, async ({ cwd, staged, pathspec, rescueRef, bindingRef }, ctx) => typedToolResponse(async () => {
     const resolved = rescueManager && getSessionKey ? rescueManager.resolveBinding({ sessionKey: getSessionKey(ctx), cwd, explicitBindingRef: bindingRef, rescueRef }) : { bindingRef: bindingRef ?? null };
     const scoped = resolved.bindingRef && continuityState ? continuityState.assertCwd(resolved.bindingRef, cwd) : null;
-    const command = ["git", "diff"];
+    const gitBin = await resolveGitExecutable();
+    const command = [gitBin, "diff"];
     if (staged) command.push("--cached");
     if (pathspec.length) command.push("--", ...pathspec);
     const result = await authorityExecutor.exec({ command, cwd: scoped?.targetCwd ?? cwd, access: "readOnly", timeoutMs: 15_000 });

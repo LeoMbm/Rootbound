@@ -164,6 +164,33 @@ or secret-bearing files are only included when the caller intentionally sets
 The benchmark output exposes `diagnostics.repoSearchCandidateEngine` so real
 host runs can confirm which enumerator was used.
 
+### 2026-10-02 real host result after the search-candidate fix
+
+Same host and runtime (Codex CLI 0.144.1, Apple Silicon macOS, Node v24.10.0),
+7 measured iterations after 1 warmup:
+
+| Scenario | Before fix median | After fix median | Change |
+| --- | ---: | ---: | ---: |
+| Authority resolution | 6.84 ms | 4.86 ms | -28.9% |
+| No-op command | 53.97 ms | 48.03 ms | -11.0% |
+| Repository search | 1659.48 ms | 94.08 ms | **-94.3% / 17.6x faster** |
+| Read 3 files | 61.63 ms | 59.91 ms | -2.8% |
+
+Repository-search p95 dropped from **1798.33 ms** to **101.62 ms**.
+The benchmark reported:
+
+```json
+{
+  "diagnostics": {
+    "repoSearchCandidateEngine": "ripgrep-files"
+  }
+}
+```
+
+This confirms that the production path used ripgrep candidate enumeration and
+that the measured Git enumeration bottleneck was removed on the real Codex
+runtime.
+
 ## Why ripgrep is limited to candidate enumeration
 
 The user-facing search engine was **not** replaced with ripgrep. Only file
@@ -179,6 +206,35 @@ the measured authority-lifecycle bottleneck and could add mutation races.
 
 Read batching and local long-polling reduce round trips without changing the
 write-serialization safety model.
+
+## macOS Git executable resolution
+
+Profiling after the repository-search fix exposed a second platform-specific
+latency source. Inside the Codex sandbox on the test Mac:
+
+- `/usr/bin/git status --short --branch`: roughly **1.5-1.7 seconds**;
+- `/usr/bin/git diff --no-ext-diff`: roughly **1.5-1.7 seconds**;
+- the Git binary inside the selected Xcode/Command Line Tools developer
+  directory: roughly **0-10 ms** for the same commands.
+
+The slow `/usr/bin/git` path is Apple's developer-tool shim and emitted
+`xcrun`/developer-cache warnings in this sandbox. Rootbound now resolves Git
+once and caches the result:
+
+1. explicit `ROOTBOUND_GIT_BIN` override, if configured and executable;
+2. a non-`/usr/bin/git` executable already present in `PATH`;
+3. `DEVELOPER_DIR/usr/bin/git`;
+4. the active developer directory reported by `/usr/bin/xcode-select -p`;
+5. known Command Line Tools / Xcode Git paths;
+6. portable fallback to `git`.
+
+The resolver is used by public `git_status` / `git_diff` and by
+continuity/rescue Git probes, avoiding repeated Apple shim startup cost without
+changing Git semantics. Linux and Windows retain the normal `git` lookup.
+
+The real benchmark now reports `diagnostics.gitExecutable` and includes
+`git_status` / `git_diff` scenarios so this optimization can be validated
+on the host rather than inferred from microbenchmarks alone.
 
 ## Release acceptance
 

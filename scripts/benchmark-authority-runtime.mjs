@@ -8,6 +8,7 @@ import { CodexAuthorityExecutor } from "../src/codex-authority-executor.mjs";
 import { resolveCodexExecutable, probeCodexExecutable } from "../src/codex-bin.mjs";
 import { readManyAuthorized } from "../src/construction-tools.mjs";
 import { searchPageAuthorized } from "../src/repo-tools.mjs";
+import { resolveGitExecutable } from "../src/git-executable.mjs";
 import {
   ROOTBOUND_PERMISSION_PROFILE,
   withRootboundPermissionOverrides,
@@ -93,6 +94,7 @@ const executor = new CodexAuthorityExecutor({
 
 try {
   const validateMs = await measureOne(() => executor.validate());
+  const gitBin = await resolveGitExecutable();
   const repoSearchProbe = await searchPageAuthorized({
     authorityExecutor: executor,
     query: "CodexAuthorityExecutor",
@@ -137,6 +139,24 @@ try {
       allowSensitive: false,
     }),
   },
+  {
+    name: "git_status",
+    run: () => executor.exec({
+      command: [gitBin, "status", "--short", "--branch"],
+      cwd,
+      access: "readOnly",
+      timeoutMs: 10_000,
+    }),
+  },
+  {
+    name: "git_diff",
+    run: () => executor.exec({
+      command: [gitBin, "diff", "--no-ext-diff"],
+      cwd,
+      access: "readOnly",
+      timeoutMs: 10_000,
+    }),
+  },
   ];
 
   const results = {};
@@ -164,6 +184,7 @@ try {
     validateMs: round(validateMs),
     diagnostics: {
       repoSearchCandidateEngine: repoSearchProbe.candidateEngine ?? null,
+      gitExecutable: gitBin,
     },
     results,
   };

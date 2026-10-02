@@ -1,4 +1,5 @@
 import path from "node:path";
+import { resolveGitExecutable } from "./git-executable.mjs";
 import { createRequire } from "node:module";
 import { createContinuityIdempotency } from "./continuity-idempotency.mjs";
 import { buildContinuityManifest, manifestInjectionFooter, persistContinuityManifest } from "./continuity-manifest.mjs";
@@ -380,7 +381,8 @@ async function safeQuota(context) {
 
 async function commitsSinceBaseline({ authorityExecutor, cwd, baselineHead, currentHead }) {
   if (!baselineHead || !currentHead || baselineHead === currentHead) return [];
-  const result = await authorityExecutor.exec({ command: ["git", "log", "--format=%H%x09%s", `${baselineHead}..${currentHead}`, "--max-count=50"], cwd, access: "readOnly", timeoutMs: 10_000 });
+  const gitBin = await resolveGitExecutable();
+  const result = await authorityExecutor.exec({ command: [gitBin, "log", "--format=%H%x09%s", `${baselineHead}..${currentHead}`, "--max-count=50"], cwd, access: "readOnly", timeoutMs: 10_000 });
   if (result.exitCode !== 0) return [];
   return result.stdout.split(/\r?\n/).filter(Boolean).map((line) => { const [sha, ...rest] = line.split("\t"); return { sha, subject: rest.join("\t").slice(0, 500) }; });
 }
@@ -466,7 +468,7 @@ function publicThread(thread) { return { id: thread?.id ?? null, preview: thread
 function publicProject(project) { return { projectRef: project.projectRef, root: project.root, gitRoot: project.gitRoot, name: project.name, trusted: project.trusted }; }
 function dedupeThreads(rows) { const seen = new Set(); return rows.filter((row) => row?.id && !seen.has(row.id) && seen.add(row.id)); }
 async function mapLimit(values, limit, mapper) { const output = new Array(values.length); let index = 0; async function worker() { while (true) { const current = index++; if (current >= values.length) return; output[current] = await mapper(values[current], current); } } await Promise.all(Array.from({ length: Math.min(limit, values.length) }, worker)); return output; }
-async function isAncestorSha({ authorityExecutor, cwd, ancestor, descendant }) { if (!ancestor || !descendant) return null; const result = await authorityExecutor.exec({ command: ["git", "merge-base", "--is-ancestor", ancestor, descendant], cwd, access: "readOnly", timeoutMs: 5_000 }); return result.exitCode === 0 ? true : result.exitCode === 1 ? false : null; }
+async function isAncestorSha({ authorityExecutor, cwd, ancestor, descendant }) { if (!ancestor || !descendant) return null; const gitBin = await resolveGitExecutable(); const result = await authorityExecutor.exec({ command: [gitBin, "merge-base", "--is-ancestor", ancestor, descendant], cwd, access: "readOnly", timeoutMs: 5_000 }); return result.exitCode === 0 ? true : result.exitCode === 1 ? false : null; }
 function normalizeOrigin(value) { if (typeof value !== "string" || !value.trim()) return null; let out = value.trim().replace(/\\/g, "/").replace(/\.git$/i, ""); out = out.replace(/^ssh:\/\//i, "").replace(/^https?:\/\//i, "").replace(/^git@/i, ""); out = out.replace(/^([^/]+):(?=[^/])/, "$1/"); out = out.replace(/^[^@/]+@/, ""); return out.replace(/\/+$/, "").toLowerCase(); }
 function samePath(left, right) { const a = path.resolve(left); const b = path.resolve(right); return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b; }
 function isPathWithin(root, target) { if (typeof target !== "string" || !target) return false; const relative = path.relative(path.resolve(root), path.resolve(target)); return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)); }

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { isSensitivePath } from "./secret-boundaries.mjs";
 import { RootboundToolError } from "./tool-errors.mjs";
+import { resolveGitExecutable } from "./git-executable.mjs";
 
 const FINGERPRINT_SCRIPT = String.raw`
 const fs=require('node:fs');
@@ -9,9 +10,10 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const {spawnSync}=require('node:child_process');
 const cwd=process.cwd();
+const gitBin=process.argv[1]||'git';
 const cap=500;
 function git(args){
-  const r=spawnSync('git',args,{cwd,encoding:'utf8',windowsHide:true,shell:false,maxBuffer:16*1024*1024});
+  const r=spawnSync(gitBin,args,{cwd,encoding:'utf8',windowsHide:true,shell:false,maxBuffer:16*1024*1024});
   if(r.error||r.status!==0)return null;
   return String(r.stdout||'').replace(/\r?\n$/,'');
 }
@@ -326,7 +328,8 @@ export function createRescueSessionManager({ store, authorityExecutor, continuit
 
 export async function captureWorktreeFingerprint({ authorityExecutor, cwd }) {
   const authority = await authorityExecutor.resolveAuthority({ cwd, access: "readOnly", timeoutMs: 10_000 });
-  const result = await authorityExecutor.exec({ command: [process.execPath, "-e", FINGERPRINT_SCRIPT], cwd: authority.effectiveCwd, access: "readOnly", timeoutMs: 20_000 });
+  const gitBin = await resolveGitExecutable();
+  const result = await authorityExecutor.exec({ command: [process.execPath, "-e", FINGERPRINT_SCRIPT, gitBin], cwd: authority.effectiveCwd, access: "readOnly", timeoutMs: 20_000 });
   if (result.exitCode !== 0 || result.stdoutTruncated) throw stateError("WORKTREE_FINGERPRINT_FAILED", `Unable to capture worktree fingerprint: ${result.stderr || `exit ${result.exitCode}`}`);
   let parsed;
   try { parsed = JSON.parse(result.stdout); }
