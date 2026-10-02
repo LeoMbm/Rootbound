@@ -44,11 +44,16 @@ export function registerCommandTools(server, { commandManager, continuityState =
 
   server.registerTool("codex.command_poll", {
     title: "Poll Long Command",
-    description: "Poll durable long-command state and incremental stdout/stderr chunks after a cursor. Returns nextCursor so callers do not need to re-read previous output.",
-    inputSchema: z.object({ commandId, cursor: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(500).default(100) }).strict(),
+    description: "Poll durable long-command state and incremental stdout/stderr chunks after a cursor. Returns nextCursor so callers do not need to re-read previous output. Set waitMs to wait locally for new output/completion and reduce repeated remote polling; the call still returns when the wait expires.",
+    inputSchema: z.object({
+      commandId,
+      cursor: z.number().int().min(0).default(0),
+      limit: z.number().int().min(1).max(500).default(100),
+      waitMs: z.number().int().min(0).max(20_000).default(0),
+    }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async ({ commandId, cursor, limit }) => typedToolResponse(async () => {
-    const result = commandManager.poll(commandId, { cursor, limit });
+  }, async ({ commandId, cursor, limit, waitMs }) => typedToolResponse(async () => {
+    const result = await commandManager.pollWait(commandId, { cursor, limit, waitMs });
     let rescue = result.bindingRef && rescueManager ? rescueManager.activeByBinding(result.bindingRef) : null;
     if (rescue && result.active === false && result.access === "inherit") {
       rescue = await rescueManager.refreshExpected(rescue, { rollbackSafe: false, reason: "long_command_write_capable" });

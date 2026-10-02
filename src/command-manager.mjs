@@ -32,6 +32,8 @@ export function createCommandManager({
 
   const sessions = new Map();
   const persistedBytes = new Map();
+  const changeVersions = new Map();
+  const changeWaiters = new Map();
 
   function scopeFor({ bindingRef = null, cwd = null }) {
     if (bindingRef && continuityState) {
@@ -72,6 +74,7 @@ export function createCommandManager({
       const patch = stream === "stderr" ? { stderrTruncated: true } : { stdoutTruncated: true };
       if (current) store.updateCommand(commandId, { ...patch, updatedAt: now() });
     }
+    signalChange(commandId);
   }
 
   function finishStreaming(commandId, result, error = null) {
@@ -96,7 +99,38 @@ export function createCommandManager({
     const session = sessions.get(commandId);
     sessions.delete(commandId);
     persistedBytes.delete(commandId);
+    signalChange(commandId);
     void session?.close().catch(() => {});
+  }
+
+  function signalChange(commandId) {
+    changeVersions.set(commandId, (changeVersions.get(commandId) ?? 0) + 1);
+    const waiting = changeWaiters.get(commandId);
+    if (!waiting?.size) return;
+    changeWaiters.delete(commandId);
+    for (const waiter of waiting) waiter();
+  }
+
+  async function waitForChange(commandId, version, waitMs) {
+    if (waitMs <= 0 || (changeVersions.get(commandId) ?? 0) !== version) return;
+    await new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const waiting = changeWaiters.get(commandId);
+        waiting?.delete(finish);
+        if (waiting?.size === 0) changeWaiters.delete(commandId);
+        resolve();
+      };
+      const timer = setTimeout(finish, waitMs);
+      timer.unref?.();
+      const waiting = changeWaiters.get(commandId) ?? new Set();
+      waiting.add(finish);
+      changeWaiters.set(commandId, waiting);
+      if ((changeVersions.get(commandId) ?? 0) !== version) finish();
+    });
   }
 
   return {
@@ -126,7 +160,10 @@ export function createCommandManager({
         });
         child.once?.("error", (error) => {
           const failedAt = now();
-          try { store.updateCommand(commandId, { status: "failed", finishedAt: failedAt, workerPid: null, error: error instanceof Error ? error.message : String(error), updatedAt: failedAt }); } catch {}
+          try {
+            store.updateCommand(commandId, { status: "failed", finishedAt: failedAt, workerPid: null, error: error instanceof Error ? error.message : String(error), updatedAt: failedAt });
+            signalChange(commandId);
+          } catch {}
         });
         child.unref?.();
         const row = store.updateCommand(commandId, { workerPid: child.pid ?? null, updatedAt: now() });
@@ -184,6 +221,15 @@ export function createCommandManager({
       };
     },
 
+    async pollWait(commandId, { cursor = 0, limit = 100, waitMs = 0 } = {}) {
+      if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 20_000) throw new Error("waitMs must be between 0 and 20000");
+      const version = changeVersions.get(commandId) ?? 0;
+      const initial = this.poll(commandId, { cursor, limit });
+      if (waitMs === 0 || !initial.active || initial.chunks.length > 0) return initial;
+      await waitForChange(commandId, version, waitMs);
+      return this.poll(commandId, { cursor, limit });
+    },
+
     async write(commandId, { data = "", closeStdin = false } = {}) {
       if (platform === "win32") throw typedError("COMMAND_STDIN_UNSUPPORTED", "command_write is not supported by the accepted Codex Windows streaming implementation.", ["Run the command non-interactively on Windows.", "Use macOS for stdin streaming until upstream Windows support lands."]);
       const session = sessions.get(commandId);
@@ -200,12 +246,14 @@ export function createCommandManager({
         if (!command?.workerPid || !isProcessAlive(command.workerPid)) return { commandId, status: "interrupted", terminated: false, reason: "worker_not_running" };
         process.kill(command.workerPid, "SIGTERM");
         store.updateCommand(commandId, { status: "stopping", updatedAt: now() });
+        signalChange(commandId);
         return { commandId, status: "stopping", terminated: true, mode: "worker-signal" };
       }
       const session = sessions.get(commandId);
       if (!session) throw typedError("COMMAND_SESSION_NOT_ACTIVE", `No active streaming session for ${commandId}`, ["Poll the command status; if interrupted, start it again."]);
       const result = await session.terminate();
       store.updateCommand(commandId, { status: "stopping", updatedAt: now() });
+      signalChange(commandId);
       return { commandId, status: "stopping", ...result, mode: "app-server" };
     },
 
@@ -216,7 +264,9 @@ export function createCommandManager({
         await session.close({ terminate: true });
         const row = store.getCommand(commandId);
         if (row && ACTIVE.has(row.status)) store.updateCommand(commandId, { status: "interrupted", finishedAt: now(), error: row.error ?? "Rootbound runtime stopped while command was active", updatedAt: now() });
+        signalChange(commandId);
       }));
+      for (const commandId of changeWaiters.keys()) signalChange(commandId);
     },
   };
 }

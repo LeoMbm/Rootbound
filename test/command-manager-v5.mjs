@@ -17,8 +17,10 @@ const resultPromise = new Promise((resolve) => { resolveResult = resolve; });
 let writeCall = null;
 let terminateCalls = 0;
 let closeCalls = 0;
+let emitOutput = null;
 
 const sessionFactory = async ({ processId, onOutput }) => {
+  emitOutput = (stream, text) => onOutput({ stream, data: Buffer.from(text) });
   onOutput({ stream: "stdout", data: Buffer.from("hello ") });
   onOutput({ stream: "stderr", data: Buffer.from("warn\n") });
   return {
@@ -54,6 +56,15 @@ try {
   assert.deepEqual(first.chunks.map((chunk) => [chunk.stream, chunk.text]), [["stdout", "hello "], ["stderr", "warn\n"]]);
   assert.ok(first.nextCursor > 0);
 
+  const waitStartedAt = Date.now();
+  const waitPromise = manager.pollWait(started.commandId, { cursor: first.nextCursor, limit: 10, waitMs: 1_000 });
+  setTimeout(() => {
+    emitOutput("stdout", "later\n");
+  }, 20);
+  const waited = await waitPromise;
+  assert.ok(Date.now() - waitStartedAt < 900, "pollWait should wake on output instead of waiting for the full timeout");
+  assert.deepEqual(waited.chunks.map((chunk) => chunk.text), ["later\n"]);
+
   await manager.write(started.commandId, { data: "world\n", closeStdin: true });
   assert.equal(writeCall.data.toString("utf8"), "world\n");
   assert.equal(writeCall.closeStdin, true);
@@ -64,7 +75,7 @@ try {
 
   resolveResult({ exitCode: 0 });
   await new Promise((resolve) => setImmediate(resolve));
-  const finished = manager.poll(started.commandId, { cursor: first.nextCursor, limit: 10 });
+  const finished = manager.poll(started.commandId, { cursor: waited.nextCursor, limit: 10 });
   assert.equal(finished.status, "completed");
   assert.equal(finished.exitCode, 0);
   assert.equal(finished.chunks.length, 0);
