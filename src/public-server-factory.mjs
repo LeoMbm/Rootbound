@@ -29,6 +29,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
   if (!commandManager) throw new Error("Rootbound public server requires commandManager");
   if (!stateStore) throw new Error("Rootbound public server requires stateStore");
   if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 4) throw new Error("maxConcurrent must be an integer between 1 and 4");
+  let commandInFlight = 0;
 
   const commandSchema = z.object({
     command: z.array(z.string().max(32_768)).min(1).max(128).describe("argv vector passed to official Codex command/exec under the locally resolved Codex permission profile"),
@@ -40,7 +41,6 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
   }).strict();
 
   return function createServer(requestContext = {}) {
-    let inFlight = 0;
     const connectionFallbackKey = requestContext?.requestInfo ? null : `mcp-connection:${randomUUID()}`;
     const getSessionKey = (ctx) => requestContext?.requestInfo
       ? null
@@ -63,7 +63,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       },
       async ({ command, cwd, access, timeoutMs, rescueRef, bindingRef }, ctx) => typedToolResponse(async () => {
-        if (inFlight >= maxConcurrent) {
+        if (commandInFlight >= maxConcurrent) {
           const error = new Error(`bridge concurrency limit reached (${maxConcurrent})`);
           error.code = "BRIDGE_CONCURRENCY_LIMIT";
           error.category = "transient";
@@ -71,7 +71,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
           error.nextActions = ["Retry after the active command finishes or use command_start for long-running work."];
           throw error;
         }
-        inFlight += 1;
+        commandInFlight += 1;
         try {
           await guardProjectToolScope("codex.command_exec", { cwd, bindingRef, rescueRef });
           const resolved = rescueManager.resolveBinding({ sessionKey: getSessionKey(ctx), cwd, explicitBindingRef: bindingRef, rescueRef });
@@ -95,7 +95,7 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
           if (effectiveBindingRef) payload.continuityJournaled = true;
           if (resolved.implicit) payload.rescueSession = rescueManager.publicSession(updatedRescue ?? resolved.rescue);
           return payload;
-        } finally { inFlight -= 1; }
+        } finally { commandInFlight -= 1; }
       }, { operation: "command_exec", isError: (payload) => payload?.exitCode !== 0 })
     );
 
