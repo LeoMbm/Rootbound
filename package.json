@@ -25,6 +25,7 @@
     "doctor": "node scripts/doctor.mjs",
     "probe:codex": "node scripts/probe-codex-compat.mjs",
     "bench:authority": "node scripts/benchmark-authority-runtime.mjs",
+    "bench:mcp-loopback": "node scripts/benchmark-mcp-loopback.mjs",
     "self-test": "node scripts/self-test.mjs",
     "check:syntax": "node scripts/validate-v5-syntax.mjs",
     "check:lock": "node scripts/check-lock-root.mjs",
