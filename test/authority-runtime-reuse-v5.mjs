@@ -18,11 +18,17 @@ class FakeClient {
     this.#cwd = cwd;
     this.#metrics = metrics;
     metrics.created += 1;
+    if (Array.isArray(metrics.clients)) metrics.clients.push(this);
   }
 
   get running() { return this.#running; }
   get notificationMethods() { return []; }
   get serverRequestMethods() { return []; }
+
+  crash() {
+    this.#running = false;
+    this.#metrics.crashed = (this.#metrics.crashed ?? 0) + 1;
+  }
 
   async start() {
     this.#metrics.started += 1;
@@ -233,6 +239,48 @@ class FakeClient {
   await executor.close();
   await assert.rejects(pending, /closed while authority App Server was starting|CodexAuthorityExecutor is closed/);
   assert.equal(metrics.closed, 2, "closing during startup must close both the recycled validation client and the pending startup client");
+}
+
+{
+  const metrics = { created: 0, started: 0, closed: 0, requests: [], clients: [] };
+  const executor = makeExecutor({ cwd, metrics, authorityClientMaxUses: 100 });
+  try {
+    await executor.validate();
+    assert.equal(metrics.clients.length, 1);
+    metrics.clients[0].crash();
+    const authority = await executor.resolveAuthority({ cwd, access: "readOnly" });
+    assert.equal(authority.effectiveCwd, cwd);
+    assert.equal(metrics.created, 2, "a dead warm App Server must be replaced before the next authority operation");
+    assert.equal(metrics.started, 2);
+  } finally {
+    await executor.close();
+  }
+}
+
+{
+  const metrics = { created: 0, started: 0, closed: 0, requests: [] };
+  const executor = makeExecutor({ cwd, metrics, authorityClientMaxUses: 100 });
+  await executor.validate();
+  let activeResolve;
+  let releaseResolve;
+  const active = new Promise((resolve) => { activeResolve = resolve; });
+  const release = new Promise((resolve) => { releaseResolve = resolve; });
+  const operation = executor.withAuthority({ cwd, access: "readOnly" }, async () => {
+    activeResolve();
+    await release;
+    return "completed";
+  });
+  await active;
+  const closeResult = await Promise.race([
+    executor.close().then(() => "closed"),
+    new Promise((resolve) => setTimeout(() => resolve("timeout"), 500)),
+  ]);
+  assert.equal(closeResult, "closed", "executor shutdown must not hang while an authority lease is active");
+  assert.equal(metrics.closed, 1, "shutdown must close the active warm App Server exactly once");
+  releaseResolve();
+  assert.equal(await operation, "completed");
+  await executor.close();
+  assert.equal(metrics.closed, 1, "releasing a lease after shutdown must not leak or double-close the client");
 }
 
 console.log("authority-runtime-reuse-v5: ok");
