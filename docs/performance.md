@@ -263,6 +263,34 @@ Compared with the pre-install connector baseline for `git_status`
 same Mac. Connector/tunnel latency is intentionally measured separately during
 preview-install validation.
 
+### 2026-10-02 real MCP loopback benchmark
+
+The optimized preview was then installed and exercised through the real local
+Streamable HTTP MCP endpoint at `http://127.0.0.1:7690/mcp`, bypassing the
+external ChatGPT tunnel while keeping the production Rootbound runtime in the
+path.
+
+| Scenario | Primitive median | MCP loopback median | Local MCP overhead |
+| --- | ---: | ---: | ---: |
+| Repository search | 93.64 ms | 108.58 ms | +14.94 ms |
+| Read 3 files | 55.98 ms | 64.74 ms | +8.76 ms |
+| Git status | 33.99 ms | 44.76 ms | +10.77 ms |
+| Git diff | 38.55 ms | 44.04 ms | +5.49 ms |
+| No-op command | 52.11 ms | 62.50 ms | +10.39 ms |
+
+This isolates the local MCP transport/runtime overhead to roughly 5-15 ms for
+these hot-path operations. At this point Rootbound's local MCP layer is not the
+dominant latency source.
+
+A separate connector-path sample from ChatGPT measured approximate medians of
+869 ms for repository search, 1017 ms for reading 3 files, 700 ms for Git
+status, 737 ms for Git diff, and 1709 ms for a short command. Compared with the
+loopback medians, that leaves roughly 0.65-1.65 seconds outside the local
+Rootbound primitive/MCP path, primarily in the external connector/tunnel and
+remote invocation path. These connector numbers are operational samples rather
+than a deterministic local benchmark, so they should be treated as indicative,
+not as a strict performance contract.
+
 ## Release acceptance
 
 Before merging/releasing this branch:
