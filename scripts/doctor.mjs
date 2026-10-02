@@ -118,6 +118,7 @@ if (codexResolution?.path && codexProbe?.ok) {
   } finally { await client.close().catch(() => {}); }
 
   if (requestedCwd) {
+    let oneShotAuthority = null;
     try {
       let resolved;
       if (dynamicMacCompatibility) {
@@ -135,9 +136,9 @@ if (codexResolution?.path && codexProbe?.ok) {
           `Codex CLI ${codexCompatibility.version}; ${codexCompatibility.knownAcceptedVersion ? "built-in version policy" : "runtime capability probe passed"}`
         );
       } else {
-        const authority = new CodexAuthorityExecutor({ codexBin: codexResolution.path, defaultCwd: requestedCwd, profileOverride, configOverrides, acceptedCodexVersions: ACCEPTED_CODEX_VERSIONS });
-        await authority.validate();
-        resolved = await authority.resolveAuthority({ cwd: requestedCwd, access: "readOnly" });
+        oneShotAuthority = new CodexAuthorityExecutor({ codexBin: codexResolution.path, defaultCwd: requestedCwd, profileOverride, configOverrides, acceptedCodexVersions: ACCEPTED_CODEX_VERSIONS });
+        await oneShotAuthority.validate();
+        resolved = await oneShotAuthority.resolveAuthority({ cwd: requestedCwd, access: "readOnly" });
       }
       projectContext = { ok: true, cwd: redactHomePath(resolved.effectiveCwd), permissionProfile: resolved.permissionProfile, permissionCeiling: resolved.permissionCeiling, authoritySource: resolved.authoritySource, trustedAncestor: redactHomePath(resolved.trustedAncestor), profileOverride };
       record("project-authority", true, `read-only authority accepted ${redactHomePath(requestedCwd)} as ${resolved.permissionProfile}`);
@@ -147,6 +148,9 @@ if (codexResolution?.path && codexProbe?.ok) {
       }
       projectContext = { ok: false, error: sanitizeText(error instanceof Error ? error.message : String(error)) };
       warnings.push({ kind: "project-authority", message: projectContext.error });
+    } finally {
+      await oneShotAuthority?.close().catch(() => {});
+      await codexCompatibility?.executor?.close?.().catch(() => {});
     }
   }
 }

@@ -162,10 +162,13 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       const autopilotDrain = rescueAutopilot?.close() ?? Promise.resolve();
       try { await commandManager?.close(); }
       finally {
-        try { await publicContext?.close(); }
+        try { await authorityExecutor?.close?.(); }
         finally {
-          await autopilotDrain.catch(() => {});
-          stateStore?.close();
+          try { await publicContext?.close(); }
+          finally {
+            await autopilotDrain.catch(() => {});
+            stateStore?.close();
+          }
         }
       }
     }
@@ -185,6 +188,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
   } catch (error) {
     const autopilotDrain = rescueAutopilot?.close() ?? Promise.resolve();
     await commandManager?.close().catch(() => {});
+    await authorityExecutor?.close?.().catch(() => {});
     await publicContext?.close().catch(() => {});
     await autopilotDrain.catch(() => {});
     try { stateStore?.close(); } catch {}

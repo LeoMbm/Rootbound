@@ -18,6 +18,8 @@ export function acceptedCodexVersionsFor({ platform = process.platform, arch = p
 }
 export const ACCEPTED_CODEX_VERSIONS = acceptedCodexVersionsFor();
 const MAC_NULL_PROFILE_COMPAT_VERSIONS = new Set(["0.148.0-alpha.15", "0.148.0-alpha.9"]);
+const DEFAULT_AUTHORITY_CLIENT_MAX_AGE_MS = 5 * 60_000;
+const DEFAULT_AUTHORITY_CLIENT_MAX_USES = 100;
 const KNOWN_SANDBOX_FIELDS = Object.freeze({
   readOnly: new Set(["type", "networkAccess"]),
   workspaceWrite: new Set(["type", "networkAccess", "writableRoots", "excludeTmpdirEnvVar", "excludeSlashTmp"]),
@@ -139,6 +141,16 @@ function truncateUtf8(text, byteCap) {
   return { text: bytes.subarray(0, byteCap).toString("utf8"), truncated: true };
 }
 
+function projectResolvedAuthority(authority) {
+  return {
+    effectiveCwd: authority.effectiveCwd,
+    permissionProfile: authority.permissionProfile,
+    permissionCeiling: authority.permissionCeiling,
+    authoritySource: authority.authoritySource,
+    trustedAncestor: authority.trustedAncestor,
+  };
+}
+
 function assertNoModelOrRuntimeSideEffects(client) {
   const methods = client.notificationMethods;
   if (methods.some((method) => method.startsWith("turn/") || method === "thread/tokenUsage/updated")) {
@@ -159,6 +171,19 @@ export class CodexAuthorityExecutor {
   #outputBytesCap;
   #acceptedCodexVersions;
   #codexVersion = null;
+  #clientFactory;
+  #authorityClient = null;
+  #authorityClientCwd = null;
+  #authorityClientStartPromise = null;
+  #authorityClientCreatedAt = 0;
+  #authorityClientUses = 0;
+  #authorityClientActive = 0;
+  #authorityClientRecyclePending = false;
+  #authorityClientDrainWaiters = new Set();
+  #authorityClientMaxAgeMs;
+  #authorityClientMaxUses;
+  #now;
+  #closed = false;
 
   constructor({
     codexBin,
@@ -169,6 +194,11 @@ export class CodexAuthorityExecutor {
     watchdogGraceMs = 5_000,
     outputBytesCap = 32_768,
     acceptedCodexVersions = ACCEPTED_CODEX_VERSIONS,
+    prevalidatedCodexVersion = null,
+    clientFactory = null,
+    authorityClientMaxAgeMs = DEFAULT_AUTHORITY_CLIENT_MAX_AGE_MS,
+    authorityClientMaxUses = DEFAULT_AUTHORITY_CLIENT_MAX_USES,
+    now = () => Date.now(),
   }) {
     if (!codexBin) throw new Error("CodexAuthorityExecutor requires codexBin");
     if (defaultCwd !== null && (typeof defaultCwd !== "string" || !defaultCwd.trim())) throw new Error("defaultCwd must be a non-empty string when provided");
@@ -177,6 +207,11 @@ export class CodexAuthorityExecutor {
     if (!Number.isInteger(maxTimeoutMs) || maxTimeoutMs <= 0) throw new Error("maxTimeoutMs must be a positive integer");
     if (!Number.isInteger(outputBytesCap) || outputBytesCap <= 0) throw new Error("outputBytesCap must be a positive integer");
     if (!Array.isArray(acceptedCodexVersions) || !acceptedCodexVersions.length || !acceptedCodexVersions.every((value) => typeof value === "string" && value)) throw new Error("acceptedCodexVersions must be a non-empty string array");
+    if (prevalidatedCodexVersion !== null && (typeof prevalidatedCodexVersion !== "string" || !prevalidatedCodexVersion.trim())) throw new Error("prevalidatedCodexVersion must be a non-empty string when provided");
+    if (clientFactory !== null && typeof clientFactory !== "function") throw new Error("clientFactory must be a function when provided");
+    if (!Number.isInteger(authorityClientMaxAgeMs) || authorityClientMaxAgeMs < 1_000) throw new Error("authorityClientMaxAgeMs must be at least 1000");
+    if (!Number.isInteger(authorityClientMaxUses) || authorityClientMaxUses < 1) throw new Error("authorityClientMaxUses must be a positive integer");
+    if (typeof now !== "function") throw new Error("now must be a function");
 
     this.#codexBin = codexBin;
     this.#defaultCwd = defaultCwd ? path.resolve(defaultCwd) : null;
@@ -186,6 +221,11 @@ export class CodexAuthorityExecutor {
     this.#watchdogGraceMs = watchdogGraceMs;
     this.#outputBytesCap = outputBytesCap;
     this.#acceptedCodexVersions = new Set(acceptedCodexVersions);
+    this.#codexVersion = prevalidatedCodexVersion?.trim() ?? null;
+    this.#clientFactory = clientFactory;
+    this.#authorityClientMaxAgeMs = authorityClientMaxAgeMs;
+    this.#authorityClientMaxUses = authorityClientMaxUses;
+    this.#now = now;
   }
 
   get codexVersion() { return this.#codexVersion; }
@@ -193,16 +233,19 @@ export class CodexAuthorityExecutor {
   get profileOverride() { return this.#profileOverride; }
 
   async validate() {
+    this.#assertOpen();
     if (this.#defaultCwd) this.#defaultCwd = await this.#validateCwd(this.#defaultCwd);
-    const { stdout } = await execFileAsync(this.#codexBin, ["--version"], {
-      cwd: this.#defaultCwd ?? process.cwd(),
-      windowsHide: true,
-      timeout: 10_000,
-      maxBuffer: 1024 * 1024,
-    });
-    const match = String(stdout).match(/codex-cli\s+([^\s]+)/i);
-    if (!match) throw new Error(`unable to parse Codex CLI version from: ${String(stdout).trim()}`);
-    this.#codexVersion = match[1];
+    if (!this.#codexVersion) {
+      const { stdout } = await execFileAsync(this.#codexBin, ["--version"], {
+        cwd: this.#defaultCwd ?? process.cwd(),
+        windowsHide: true,
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      });
+      const match = String(stdout).match(/codex-cli\s+([^\s]+)/i);
+      if (!match) throw new Error(`unable to parse Codex CLI version from: ${String(stdout).trim()}`);
+      this.#codexVersion = match[1];
+    }
     if (!this.#acceptedCodexVersions.has(this.#codexVersion)) {
       throw new Error(
         `unsupported Codex CLI version for Rootbound direct-profile authority: ${this.#codexVersion}. ` +
@@ -215,9 +258,7 @@ export class CodexAuthorityExecutor {
       return { codexVersion: this.#codexVersion, defaultCwd: null, profileOverride: this.#profileOverride, configOverrides: [...this.#configOverrides] };
     }
 
-    const client = this.#newClient(this.#defaultCwd, 15_000);
-    await client.start();
-    try {
+    return this.#withAuthorityClient(this.#defaultCwd, async (client) => {
       const configRead = await client.request("config/read", { cwd: this.#defaultCwd, includeLayers: false });
       const config = configRead?.config;
       if (!config || typeof config !== "object") throw new Error("Codex config/read did not return an effective config object");
@@ -231,25 +272,54 @@ export class CodexAuthorityExecutor {
         trustedAncestor: findTrustedAncestor(config, this.#defaultCwd)?.root ?? null,
         allowedProfiles: [...profiles],
       };
-    } finally {
-      await client.close();
-    }
+    });
   }
 
   async resolveAuthority({ cwd = null, access = "inherit", timeoutMs = 10_000 } = {}) {
+    this.#assertOpen();
     if (!SUPPORTED_ACCESS.has(access)) throw new Error(`unsupported access mode: ${access}`);
     if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > this.#maxTimeoutMs) throw new Error(`timeoutMs must be an integer between 1 and ${this.#maxTimeoutMs}`);
     if (!this.#codexVersion) throw new Error("CodexAuthorityExecutor.validate() must succeed before resolveAuthority()");
     const requestedCwd = cwd ?? this.#defaultCwd;
     if (!requestedCwd) throw new Error("cwd is required when no local default cwd is configured");
     const effectiveCwd = await this.#validateCwd(requestedCwd);
-    const client = this.#newClient(effectiveCwd, timeoutMs + this.#watchdogGraceMs);
-    await client.start();
-    try { return await this.#resolveAuthorityWithClient(client, effectiveCwd, access, timeoutMs); }
-    finally { await client.close(); }
+    const authority = await this.#withAuthorityClient(
+      effectiveCwd,
+      (client) => this.#resolveAuthorityWithClient(client, effectiveCwd, access, timeoutMs)
+    );
+    return projectResolvedAuthority(authority);
+  }
+
+  async withAuthority({ cwd = null, access = "inherit", timeoutMs = 10_000 } = {}, operation) {
+    this.#assertOpen();
+    if (typeof operation !== "function") throw new Error("withAuthority requires an operation callback");
+    if (!SUPPORTED_ACCESS.has(access)) throw new Error(`unsupported access mode: ${access}`);
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > this.#maxTimeoutMs) throw new Error(`timeoutMs must be an integer between 1 and ${this.#maxTimeoutMs}`);
+    if (!this.#codexVersion) throw new Error("CodexAuthorityExecutor.validate() must succeed before withAuthority()");
+    const requestedCwd = cwd ?? this.#defaultCwd;
+    if (!requestedCwd) throw new Error("cwd is required when no local default cwd is configured");
+    const effectiveCwd = await this.#validateCwd(requestedCwd);
+    return this.#withAuthorityClient(effectiveCwd, async (client) => {
+      const authority = await this.#resolveAuthorityWithClient(client, effectiveCwd, access, timeoutMs);
+      const lease = Object.freeze({
+        nativeLease: true,
+        effectiveCwd: authority.effectiveCwd,
+        permissionProfile: authority.permissionProfile,
+        permissionCeiling: authority.permissionCeiling,
+        authoritySource: authority.authoritySource,
+        trustedAncestor: authority.trustedAncestor,
+        access,
+        exec: (input) => this.#execWithResolvedAuthority(client, authority, {
+          ...input,
+          access: input?.access ?? access,
+        }, { leaseAccess: access }),
+      });
+      return operation(lease);
+    });
   }
 
   async exec({ command, cwd = null, access = "inherit", timeoutMs = 10_000 }) {
+    this.#assertOpen();
     if (!Array.isArray(command) || command.length === 0 || !command.every((item) => typeof item === "string")) throw new Error("command must be a non-empty argv string array");
     if (!SUPPORTED_ACCESS.has(access)) throw new Error(`unsupported access mode: ${access}`);
     if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > this.#maxTimeoutMs) throw new Error(`timeoutMs must be an integer between 1 and ${this.#maxTimeoutMs}`);
@@ -260,35 +330,10 @@ export class CodexAuthorityExecutor {
     const requestedCwd = cwd ?? this.#defaultCwd;
     if (!requestedCwd) throw new Error("cwd is required when no local default cwd is configured");
     const effectiveCwd = await this.#validateCwd(requestedCwd);
-    const executable = await resolveWindowsExecutable(command);
-    const client = this.#newClient(effectiveCwd, timeoutMs + this.#watchdogGraceMs);
-    await client.start();
-    try {
+    return this.#withAuthorityClient(effectiveCwd, async (client) => {
       const resolvedAuthority = await this.#resolveAuthorityWithClient(client, effectiveCwd, access, timeoutMs);
-      const result = await client.exec(
-        { command: executable.command, cwd: effectiveCwd, permissionProfile: resolvedAuthority.permissionProfile, timeoutMs },
-        { timeoutMs: timeoutMs + this.#watchdogGraceMs }
-      );
-      assertNoModelOrRuntimeSideEffects(client);
-      const stdout = truncateUtf8(result.stdout, this.#outputBytesCap);
-      const stderr = truncateUtf8(result.stderr, this.#outputBytesCap);
-      return {
-        ...result,
-        stdout: stdout.text,
-        stderr: stderr.text,
-        stdoutTruncated: stdout.truncated,
-        stderrTruncated: stderr.truncated,
-        access,
-        effectiveCwd,
-        permissionProfile: resolvedAuthority.permissionProfile,
-        permissionCeiling: resolvedAuthority.permissionCeiling,
-        authoritySource: resolvedAuthority.authoritySource,
-        trustedAncestor: resolvedAuthority.trustedAncestor,
-        executableResolution: executable.executableResolution,
-        notificationMethods: client.notificationMethods,
-        serverRequestMethods: client.serverRequestMethods,
-      };
-    } catch (error) {
+      return this.#execWithResolvedAuthority(client, resolvedAuthority, { command, access, timeoutMs }, { leaseAccess: access });
+    }).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       if (/CreateProcessWithLogonW failed:\s*267|helper_unknown_error|setup refresh had errors/i.test(message)) {
         throw new Error(
@@ -298,9 +343,16 @@ export class CodexAuthorityExecutor {
         );
       }
       throw error;
-    } finally {
-      await client.close();
-    }
+    });
+  }
+
+  async close() {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#notifyAuthorityClientDrained({ force: true });
+    const starting = this.#authorityClientStartPromise;
+    if (starting) await starting.catch(() => {});
+    await this.#recycleAuthorityClient({ force: true });
   }
 
   async #resolveAuthorityWithClient(client, effectiveCwd, access, timeoutMs) {
@@ -336,6 +388,44 @@ export class CodexAuthorityExecutor {
       permissionCeiling: authority.profileId,
       authoritySource: authority.source,
       trustedAncestor: authority.trustedAncestor,
+      allowedPermissionProfiles: [...allowedProfiles],
+    };
+  }
+
+  async #execWithResolvedAuthority(client, authority, { command, access = "inherit", timeoutMs = 10_000 } = {}, { leaseAccess = "inherit" } = {}) {
+    if (!Array.isArray(command) || command.length === 0 || !command.every((item) => typeof item === "string")) throw new Error("command must be a non-empty argv string array");
+    if (!SUPPORTED_ACCESS.has(access)) throw new Error(`unsupported access mode: ${access}`);
+    if (leaseAccess === "readOnly" && access !== "readOnly") throw new Error("read-only authority lease cannot be escalated to inherit");
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > this.#maxTimeoutMs) throw new Error(`timeoutMs must be an integer between 1 and ${this.#maxTimeoutMs}`);
+    assertRemoteModelFreeMethod("command/exec");
+    assertNoNestedCodexInvocation(command, { codexBin: this.#codexBin });
+    const permissionProfile = access === "readOnly" ? ":read-only" : authority.permissionCeiling;
+    if (!authority.allowedPermissionProfiles?.includes(permissionProfile)) {
+      throw new Error(`authority lease cannot use unavailable permission profile: ${permissionProfile}`);
+    }
+    const executable = await resolveWindowsExecutable(command);
+    const result = await client.exec(
+      { command: executable.command, cwd: authority.effectiveCwd, permissionProfile, timeoutMs },
+      { timeoutMs: timeoutMs + this.#watchdogGraceMs }
+    );
+    assertNoModelOrRuntimeSideEffects(client);
+    const stdout = truncateUtf8(result.stdout, this.#outputBytesCap);
+    const stderr = truncateUtf8(result.stderr, this.#outputBytesCap);
+    return {
+      ...result,
+      stdout: stdout.text,
+      stderr: stderr.text,
+      stdoutTruncated: stdout.truncated,
+      stderrTruncated: stderr.truncated,
+      access,
+      effectiveCwd: authority.effectiveCwd,
+      permissionProfile,
+      permissionCeiling: authority.permissionCeiling,
+      authoritySource: authority.authoritySource,
+      trustedAncestor: authority.trustedAncestor,
+      executableResolution: executable.executableResolution,
+      notificationMethods: client.notificationMethods,
+      serverRequestMethods: client.serverRequestMethods,
     };
   }
 
@@ -392,18 +482,142 @@ export class CodexAuthorityExecutor {
     return new Set(allowed);
   }
 
-  #newClient(cwd, requestTimeoutMs) {
-    return new CodexAppServerClient({
+  #newClient(cwd) {
+    const options = {
       cwd,
       launch: () => ({
         command: this.#codexBin,
         args: [...this.#configOverrides.flatMap((value) => ["-c", value]), "app-server", "--stdio"],
         options: { cwd },
       }),
-      requestTimeoutMs,
+      requestTimeoutMs: 15_000,
       initializeCapabilities: { experimentalApi: true },
       clientInfo: { name: "rootbound_public_authority", title: "Rootbound Public Authority", version: "0.1.0" },
-    });
+    };
+    return this.#clientFactory ? this.#clientFactory(options) : new CodexAppServerClient(options);
+  }
+
+  async #withAuthorityClient(cwd, operation) {
+    const client = await this.#acquireAuthorityClient(cwd);
+    let failed = false;
+    try {
+      return await operation(client);
+    } catch (error) {
+      failed = true;
+      this.#authorityClientRecyclePending = true;
+      throw error;
+    } finally {
+      await this.#releaseAuthorityClient(client, { failed });
+    }
+  }
+
+  async #acquireAuthorityClient(cwd) {
+    this.#assertOpen();
+    while (
+      this.#authorityClient
+      && (
+        !this.#authorityClient.running
+        || normalizeConfigPath(this.#authorityClientCwd ?? "") !== normalizeConfigPath(cwd)
+      )
+      && this.#authorityClientActive > 0
+    ) {
+      this.#authorityClientRecyclePending = true;
+      await this.#waitForAuthorityClientDrain();
+      this.#assertOpen();
+    }
+    if (
+      this.#authorityClient
+      && (
+        !this.#authorityClient.running
+        || normalizeConfigPath(this.#authorityClientCwd ?? "") !== normalizeConfigPath(cwd)
+      )
+    ) {
+      await this.#recycleAuthorityClient();
+    }
+    if (this.#authorityClient && this.#authorityClientActive === 0 && this.#authorityClientShouldRecycle()) {
+      await this.#recycleAuthorityClient();
+    }
+    if (!this.#authorityClient) {
+      if (!this.#authorityClientStartPromise) {
+        const client = this.#newClient(cwd);
+        this.#authorityClientStartPromise = (async () => {
+          await client.start();
+          if (this.#closed) {
+            await client.close().catch(() => {});
+            throw new Error("CodexAuthorityExecutor closed while authority App Server was starting");
+          }
+          this.#authorityClient = client;
+          this.#authorityClientCwd = cwd;
+          this.#authorityClientCreatedAt = this.#now();
+          this.#authorityClientUses = 0;
+          this.#authorityClientRecyclePending = false;
+          return client;
+        })().finally(() => {
+          this.#authorityClientStartPromise = null;
+        });
+      }
+      await this.#authorityClientStartPromise;
+    }
+    const client = this.#authorityClient;
+    if (!client) throw new Error("authority App Server failed to become available");
+    this.#authorityClientActive += 1;
+    this.#authorityClientUses += 1;
+    return client;
+  }
+
+  async #releaseAuthorityClient(client, { failed = false } = {}) {
+    if (this.#authorityClient === client) {
+      this.#authorityClientActive = Math.max(0, this.#authorityClientActive - 1);
+      if (failed || this.#authorityClientShouldRecycle()) this.#authorityClientRecyclePending = true;
+      if (this.#authorityClientActive === 0 && this.#authorityClientRecyclePending) {
+        this.#notifyAuthorityClientDrained();
+        await this.#recycleAuthorityClient();
+      } else if (this.#authorityClientActive === 0) {
+        this.#notifyAuthorityClientDrained();
+      }
+      return;
+    }
+    await client.close().catch(() => {});
+  }
+
+  #waitForAuthorityClientDrain() {
+    if (this.#authorityClientActive === 0) return Promise.resolve();
+    return new Promise((resolve) => this.#authorityClientDrainWaiters.add(resolve));
+  }
+
+  #notifyAuthorityClientDrained({ force = false } = {}) {
+    if (!force && this.#authorityClientActive !== 0) return;
+    if (!this.#authorityClientDrainWaiters.size) return;
+    const waiters = [...this.#authorityClientDrainWaiters];
+    this.#authorityClientDrainWaiters.clear();
+    for (const resolve of waiters) resolve();
+  }
+
+  #authorityClientShouldRecycle() {
+    if (!this.#authorityClient) return false;
+    if (!this.#authorityClient.running) return true;
+    if (this.#authorityClientUses >= this.#authorityClientMaxUses) return true;
+    return this.#authorityClientCreatedAt > 0
+      && this.#now() - this.#authorityClientCreatedAt >= this.#authorityClientMaxAgeMs;
+  }
+
+  async #recycleAuthorityClient({ force = false } = {}) {
+    const client = this.#authorityClient;
+    if (!client) return;
+    if (!force && this.#authorityClientActive > 0) {
+      this.#authorityClientRecyclePending = true;
+      return;
+    }
+    this.#authorityClient = null;
+    this.#authorityClientCwd = null;
+    this.#authorityClientCreatedAt = 0;
+    this.#authorityClientUses = 0;
+    this.#authorityClientRecyclePending = false;
+    await client.close().catch(() => {});
+  }
+
+  #assertOpen() {
+    if (this.#closed) throw new Error("CodexAuthorityExecutor is closed");
   }
 
   async #validateCwd(value) {

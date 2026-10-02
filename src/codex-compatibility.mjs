@@ -50,42 +50,48 @@ export async function resolveCompatibleCodexRuntime({
     profileOverride,
     configOverrides,
     acceptedCodexVersions: processAcceptedVersions,
+    prevalidatedCodexVersion: version,
     maxTimeoutMs,
     watchdogGraceMs: 5_000,
     outputBytesCap,
   });
 
-  const validation = await executor.validate();
-  const authority = await executor.resolveAuthority({ cwd: effectiveCwd, access: "readOnly", timeoutMs: 10_000 });
-  if (authority.permissionProfile !== ":read-only") {
-    throw new Error(`Codex compatibility probe expected :read-only downscope, got ${String(authority.permissionProfile)}`);
-  }
-  if (path.resolve(authority.trustedAncestor ?? "") !== effectiveCwd) {
-    throw new Error(`Codex compatibility probe expected exact trusted root ${effectiveCwd}, got ${authority.trustedAncestor ?? "none"}`);
-  }
-
-  if (!known) {
-    const marker = `rootbound-codex-compat-${process.pid}`;
-    const command = await executor.exec({
-      command: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(marker)})`],
-      cwd: effectiveCwd,
-      access: "readOnly",
-      timeoutMs: 10_000,
-    });
-    if (command.exitCode !== 0 || command.stdout !== marker) {
-      throw new Error(`Codex compatibility command/exec probe failed: exit=${command.exitCode} stdout=${JSON.stringify(command.stdout)} stderr=${JSON.stringify(command.stderr)}`);
+  try {
+    const validation = await executor.validate();
+    const authority = await executor.resolveAuthority({ cwd: effectiveCwd, access: "readOnly", timeoutMs: 10_000 });
+    if (authority.permissionProfile !== ":read-only") {
+      throw new Error(`Codex compatibility probe expected :read-only downscope, got ${String(authority.permissionProfile)}`);
     }
-  }
+    if (path.resolve(authority.trustedAncestor ?? "") !== effectiveCwd) {
+      throw new Error(`Codex compatibility probe expected exact trusted root ${effectiveCwd}, got ${authority.trustedAncestor ?? "none"}`);
+    }
 
-  return {
-    resolution: { ...resolution, version },
-    version,
-    knownAcceptedVersion: known,
-    acceptanceSource: known ? "built-in-version-policy" : "runtime-capability-probe",
-    acceptedVersions: processAcceptedVersions,
-    executor,
-    validation,
-    authority,
-    modelTurnStarted: false,
-  };
+    if (!known) {
+      const marker = `rootbound-codex-compat-${process.pid}`;
+      const command = await executor.exec({
+        command: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(marker)})`],
+        cwd: effectiveCwd,
+        access: "readOnly",
+        timeoutMs: 10_000,
+      });
+      if (command.exitCode !== 0 || command.stdout !== marker) {
+        throw new Error(`Codex compatibility command/exec probe failed: exit=${command.exitCode} stdout=${JSON.stringify(command.stdout)} stderr=${JSON.stringify(command.stderr)}`);
+      }
+    }
+
+    return {
+      resolution: { ...resolution, version },
+      version,
+      knownAcceptedVersion: known,
+      acceptanceSource: known ? "built-in-version-policy" : "runtime-capability-probe",
+      acceptedVersions: processAcceptedVersions,
+      executor,
+      validation,
+      authority,
+      modelTurnStarted: false,
+    };
+  } catch (error) {
+    await executor.close().catch(() => {});
+    throw error;
+  }
 }

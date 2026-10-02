@@ -15,14 +15,16 @@ const store = await openStateStore({ paths });
 const command = store.getCommand(commandId);
 if (!command) { store.close(); throw new Error(`Unknown Rootbound command: ${commandId}`); }
 let terminal = false;
+let baseExecutor = null;
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => {
+  process.on(signal, async () => {
     if (!terminal) {
       terminal = true;
       const at = Date.now();
       try { store.updateCommand(commandId, { status: "cancelled", finishedAt: at, workerPid: null, error: `cancelled by ${signal}`, updatedAt: at }); } catch {}
       try { store.recordEvent({ projectRef: command.projectRef, bindingRef: command.bindingRef, kind: "command.cancelled", payload: { commandId }, createdAt: at }); } catch {}
+      await baseExecutor?.close().catch(() => {});
       try { store.close(); } catch {}
     }
     process.exit(signal === "SIGINT" ? 130 : 143);
@@ -39,7 +41,7 @@ try {
     ? (await readJsonFile(configOverridesFile, "ROOTBOUND_CONFIG_OVERRIDES_FILE"))?.overrides
     : [];
   const configOverrides = withRootboundPermissionOverrides(configuredOverrides, { profileOverride });
-  const baseExecutor = new CodexAuthorityExecutor({
+  baseExecutor = new CodexAuthorityExecutor({
     codexBin: resolution.path,
     defaultCwd: command.cwd,
     profileOverride,
@@ -80,5 +82,6 @@ try {
   store.recordEvent({ projectRef: command.projectRef, bindingRef: command.bindingRef, kind: "command.failed", payload: { commandId, error: error instanceof Error ? error.message : String(error) }, createdAt: at });
   process.exitCode = 1;
 } finally {
+  await baseExecutor?.close().catch(() => {});
   store.close();
 }

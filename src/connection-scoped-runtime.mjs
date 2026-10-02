@@ -19,6 +19,10 @@ export function createConnectionScopedAuthorityExecutor({ base, store, projectAc
       const cwd = await resolveScopedCwd({ cwd: input.cwd ?? null, store, projectAccessProvider });
       return base.exec({ ...input, cwd });
     },
+    async withAuthority(input = {}, operation) {
+      const cwd = await resolveScopedCwd({ cwd: input.cwd ?? null, store, projectAccessProvider });
+      return base.withAuthority({ ...input, cwd }, operation);
+    },
   };
 }
 
