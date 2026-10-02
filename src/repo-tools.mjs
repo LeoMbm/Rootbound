@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { decodeCursor, encodeCursor } from "./pagination.mjs";
 import { typedToolResponse } from "./tool-errors.mjs";
+import { withAuthorityLease } from "./authority-lease.mjs";
 
 const require = createRequire(import.meta.url);
 const z = require("zod/v4");
@@ -226,29 +227,29 @@ export function pathsFromApplyPatch(patch) {
 }
 
 export async function searchPageAuthorized({ authorityExecutor, query, cwd, glob = null, maxResults = 100, cursor = null, includeSensitive = false }) {
-  const authority = await authorityExecutor.resolveAuthority({ cwd, access: "readOnly", timeoutMs: 10_000 });
-  const signatureInput = { query, glob, cwd: authority.effectiveCwd, includeSensitive };
-  const state = decodeCursor(cursor, "repo_search", signatureInput) ?? { offset: 0 };
-  if (!Number.isInteger(state.offset) || state.offset < 0) throw inputError("Pagination cursor contains an invalid search offset.", "PAGINATION_CURSOR_INVALID");
-  const pagerOptions = { query, glob, includeSensitive };
-  const result = await authorityExecutor.exec({
-    command: [process.execPath, "-e", SEARCH_PAGE_SCRIPT, Buffer.from(JSON.stringify(pagerOptions), "utf8").toString("base64"), String(state.offset), String(maxResults)],
-    cwd: authority.effectiveCwd,
-    access: "readOnly",
-    timeoutMs: 20_000,
+  return withAuthorityLease(authorityExecutor, { cwd, access: "readOnly", timeoutMs: 10_000 }, async (authority) => {
+    const signatureInput = { query, glob, cwd: authority.effectiveCwd, includeSensitive };
+    const state = decodeCursor(cursor, "repo_search", signatureInput) ?? { offset: 0 };
+    if (!Number.isInteger(state.offset) || state.offset < 0) throw inputError("Pagination cursor contains an invalid search offset.", "PAGINATION_CURSOR_INVALID");
+    const pagerOptions = { query, glob, includeSensitive };
+    const result = await authority.exec({
+      command: [process.execPath, "-e", SEARCH_PAGE_SCRIPT, Buffer.from(JSON.stringify(pagerOptions), "utf8").toString("base64"), String(state.offset), String(maxResults)],
+      access: "readOnly",
+      timeoutMs: 20_000,
+    });
+    if (result.exitCode !== 0) throw runtimeError(`repo_search pager failed: ${result.stderr || `exit ${result.exitCode}`}`);
+    let page;
+    try { page = JSON.parse(result.stdout); } catch { throw runtimeError("repo_search pager returned invalid JSON"); }
+    if (!page?.ok) throw runtimeError(`repo_search failed: ${page?.error ?? page?.stderr ?? "unknown search failure"}`);
+    const lines = Array.isArray(page.page) ? page.page.map(String) : [];
+    const nextOffset = state.offset + lines.length;
+    const nextCursor = page.hasMore ? encodeCursor("repo_search", signatureInput, { offset: nextOffset }) : null;
+    return {
+      status: "ok", query, glob, includeSensitive, cwd: authority.effectiveCwd, trustedAncestor: authority.trustedAncestor ?? null,
+      permissionProfile: ":read-only", offset: state.offset, count: lines.length, results: lines,
+      stdout: lines.length ? `${lines.join("\n")}\n` : "", hasMore: Boolean(page.hasMore), nextCursor, modelTurnStarted: false,
+    };
   });
-  if (result.exitCode !== 0) throw runtimeError(`repo_search pager failed: ${result.stderr || `exit ${result.exitCode}`}`);
-  let page;
-  try { page = JSON.parse(result.stdout); } catch { throw runtimeError("repo_search pager returned invalid JSON"); }
-  if (!page?.ok) throw runtimeError(`repo_search failed: ${page?.error ?? page?.stderr ?? "unknown search failure"}`);
-  const lines = Array.isArray(page.page) ? page.page.map(String) : [];
-  const nextOffset = state.offset + lines.length;
-  const nextCursor = page.hasMore ? encodeCursor("repo_search", signatureInput, { offset: nextOffset }) : null;
-  return {
-    status: "ok", query, glob, includeSensitive, cwd: authority.effectiveCwd, trustedAncestor: authority.trustedAncestor ?? null,
-    permissionProfile: ":read-only", offset: state.offset, count: lines.length, results: lines,
-    stdout: lines.length ? `${lines.join("\n")}\n` : "", hasMore: Boolean(page.hasMore), nextCursor, modelTurnStarted: false,
-  };
 }
 
 function projectCommandResult(result, extra = {}) {

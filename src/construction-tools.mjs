@@ -7,6 +7,7 @@ import { decodeCursor, encodeCursor } from "./pagination.mjs";
 import { projectRefForRoot } from "./project-registry.mjs";
 import { isSensitivePath } from "./secret-boundaries.mjs";
 import { typedToolResponse } from "./tool-errors.mjs";
+import { withAuthorityLease } from "./authority-lease.mjs";
 
 const require = createRequire(import.meta.url);
 const z = require("zod/v4");
@@ -15,10 +16,13 @@ const MAX_PER_FILE_CHARS = 200_000;
 const DEFAULT_TOTAL_CHARS = 200_000;
 const MAX_TOTAL_CHARS = 500_000;
 const MAX_PRECISE_EDIT_CHARS = 64_000;
+const READ_BATCH_MAX_FILES = 8;
+const READ_BATCH_MAX_SOURCE_BYTES = 256 * 1024;
 const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
 const rescueRefSchema = z.string().regex(/^rescue_[0-9a-f-]{36}$/i).optional();
 const mutationIdSchema = z.string().regex(/^mutation_[0-9a-f-]{36}$/i);
 const READ_FILE_SCRIPT = "const fs=require('node:fs');process.stdout.write(fs.readFileSync(process.argv[1]));";
+const READ_FILES_BATCH_SCRIPT = "const fs=require('node:fs');const paths=JSON.parse(Buffer.from(process.argv[1],'base64').toString('utf8'));process.stdout.write(JSON.stringify({texts:paths.map((p)=>fs.readFileSync(p,'utf8'))}));";
 const PRECISE_EDIT_SCRIPT = `
 const fs=require('node:fs');
 const crypto=require('node:crypto');
@@ -168,73 +172,124 @@ export function registerConstructionTools(server, { authorityExecutor, continuit
 }
 
 export async function readManyAuthorized({ authorityExecutor, paths, cwd, maxCharsPerFile = DEFAULT_PER_FILE_CHARS, maxTotalChars = DEFAULT_TOTAL_CHARS, cursor = null, allowSensitive = false }) {
-  const authority = await authorityExecutor.resolveAuthority({ cwd, access: "readOnly" });
-  const effectiveCwd = await realpath(authority.effectiveCwd);
-  const root = await canonicalRoot(authority);
-  const signatureInput = { paths, cwd: effectiveCwd, maxCharsPerFile, allowSensitive };
-  const state = decodeCursor(cursor, "read_many", signatureInput) ?? { pathIndex: 0, charOffset: 0, fileSha: null };
-  if (!Number.isInteger(state.pathIndex) || state.pathIndex < 0 || state.pathIndex >= paths.length || !Number.isInteger(state.charOffset) || state.charOffset < 0) throw paginationError("Pagination cursor contains an invalid file position.", "PAGINATION_CURSOR_INVALID");
+  return withAuthorityLease(authorityExecutor, { cwd, access: "readOnly" }, async (authority) => {
+    const effectiveCwd = await realpath(authority.effectiveCwd);
+    const root = await canonicalRoot(authority);
+    const signatureInput = { paths, cwd: effectiveCwd, maxCharsPerFile, allowSensitive };
+    const state = decodeCursor(cursor, "read_many", signatureInput) ?? { pathIndex: 0, charOffset: 0, fileSha: null };
+    if (!Number.isInteger(state.pathIndex) || state.pathIndex < 0 || state.pathIndex >= paths.length || !Number.isInteger(state.charOffset) || state.charOffset < 0) throw paginationError("Pagination cursor contains an invalid file position.", "PAGINATION_CURSOR_INVALID");
 
-  let remaining = maxTotalChars;
-  const files = [];
-  let nextCursor = null;
-  for (let index = state.pathIndex; index < paths.length && remaining > 0; index += 1) {
-    const requestedPath = paths[index];
-    if (!allowSensitive && isSensitivePath(requestedPath)) throw sensitiveReadError(requestedPath);
-    const target = await canonicalExistingFile({ requestedPath, cwd: effectiveCwd, root: effectiveCwd });
-    if (!allowSensitive && isSensitivePath(target)) throw sensitiveReadError(target);
-    const read = await readTextViaSandbox({ authorityExecutor, target, cwd: effectiveCwd, access: "readOnly" });
-    const text = read.text;
-    const buffer = Buffer.from(text, "utf8");
-    const fileSha = sha256(buffer);
-    const start = index === state.pathIndex ? state.charOffset : 0;
-    if (index === state.pathIndex && state.fileSha && state.fileSha !== fileSha) throw paginationError(`Cannot continue read_many because ${target} changed after the previous page.`, "PAGINATION_SOURCE_CHANGED");
-    if (start > text.length) throw paginationError(`Pagination offset exceeds current file length: ${target}`, "PAGINATION_SOURCE_CHANGED");
-    const allowed = Math.max(0, Math.min(maxCharsPerFile, remaining, text.length - start));
-    const returnedText = text.slice(start, start + allowed);
-    const nextOffset = start + returnedText.length;
-    files.push({ requestedPath, path: target, text: returnedText, chars: text.length, offset: start, returnedChars: returnedText.length, truncated: nextOffset < text.length, byteLength: buffer.length, sha256: fileSha });
-    remaining -= returnedText.length;
-    if (nextOffset < text.length) { nextCursor = encodeCursor("read_many", signatureInput, { pathIndex: index, charOffset: nextOffset, fileSha }); break; }
-    if (remaining === 0 && index + 1 < paths.length) { nextCursor = encodeCursor("read_many", signatureInput, { pathIndex: index + 1, charOffset: 0, fileSha: null }); break; }
-  }
-  return { status: "ok", cwd: effectiveCwd, trustedAncestor: root, permissionProfile: ":read-only", allowSensitive, count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files, hasMore: Boolean(nextCursor), nextCursor, modelTurnStarted: false };
+    let remaining = maxTotalChars;
+    const files = [];
+    let nextCursor = null;
+    let index = state.pathIndex;
+    outer: while (index < paths.length && remaining > 0) {
+      const batch = [];
+      let estimatedRemaining = remaining;
+      let sourceBytes = 0;
+      for (let candidateIndex = index; candidateIndex < paths.length; candidateIndex += 1) {
+        const requestedPath = paths[candidateIndex];
+        if (!allowSensitive && isSensitivePath(requestedPath)) throw sensitiveReadError(requestedPath);
+        const target = await canonicalExistingFile({ requestedPath, cwd: effectiveCwd, root: effectiveCwd });
+        if (!allowSensitive && isSensitivePath(target)) throw sensitiveReadError(target);
+        const info = await stat(target);
+        if (batch.length > 0 && (batch.length >= READ_BATCH_MAX_FILES || sourceBytes + info.size > READ_BATCH_MAX_SOURCE_BYTES)) break;
+        batch.push({ index: candidateIndex, requestedPath, target });
+        sourceBytes += info.size;
+        const mayEndPage = info.size >= maxCharsPerFile || info.size >= estimatedRemaining;
+        if (mayEndPage) break;
+        estimatedRemaining -= info.size;
+      }
+      if (!batch.length) throw new Error("read_many could not build a readable file batch");
+      const texts = authority.nativeLease === true && batch.length > 1
+        ? await readTextsViaLeaseBatch({ authority, targets: batch.map((entry) => entry.target) })
+        : await readTextsViaLeaseSequential({ authority, targets: batch.map((entry) => entry.target) });
+
+      for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
+        const entry = batch[batchIndex];
+        const text = texts[batchIndex];
+        const buffer = Buffer.from(text, "utf8");
+        const fileSha = sha256(buffer);
+        const start = entry.index === state.pathIndex ? state.charOffset : 0;
+        if (entry.index === state.pathIndex && state.fileSha && state.fileSha !== fileSha) throw paginationError(`Cannot continue read_many because ${entry.target} changed after the previous page.`, "PAGINATION_SOURCE_CHANGED");
+        if (start > text.length) throw paginationError(`Pagination offset exceeds current file length: ${entry.target}`, "PAGINATION_SOURCE_CHANGED");
+        const allowed = Math.max(0, Math.min(maxCharsPerFile, remaining, text.length - start));
+        const returnedText = text.slice(start, start + allowed);
+        const nextOffset = start + returnedText.length;
+        files.push({ requestedPath: entry.requestedPath, path: entry.target, text: returnedText, chars: text.length, offset: start, returnedChars: returnedText.length, truncated: nextOffset < text.length, byteLength: buffer.length, sha256: fileSha });
+        remaining -= returnedText.length;
+        index = entry.index + 1;
+        if (nextOffset < text.length) {
+          nextCursor = encodeCursor("read_many", signatureInput, { pathIndex: entry.index, charOffset: nextOffset, fileSha });
+          break outer;
+        }
+        if (remaining === 0 && index < paths.length) {
+          nextCursor = encodeCursor("read_many", signatureInput, { pathIndex: index, charOffset: 0, fileSha: null });
+          break outer;
+        }
+      }
+    }
+    return { status: "ok", cwd: effectiveCwd, trustedAncestor: root, permissionProfile: ":read-only", allowSensitive, count: files.length, returnedChars: maxTotalChars - remaining, totalCharsLimit: maxTotalChars, files, hasMore: Boolean(nextCursor), nextCursor, modelTurnStarted: false };
+  });
 }
 
 export async function preciseEditAuthorized({ authorityExecutor, path: requestedPath, expectedText, replacementText, expectedOccurrences = 1, expectedSha256, cwd, previewOnly = false, captureSnapshot = false }) {
-  const authority = await authorityExecutor.resolveAuthority({ cwd, access: "inherit" });
-  const effectiveCwd = await realpath(authority.effectiveCwd);
-  const root = await canonicalRoot(authority);
-  const target = await canonicalExistingFile({ requestedPath, cwd: effectiveCwd, root });
-  assertWithinEffectiveCwd(effectiveCwd, target);
-  const sensitiveTarget = isSensitivePath(target);
-  const initial = await readTextViaSandbox({ authorityExecutor, target, cwd: effectiveCwd, access: "readOnly" });
-  const initialBuffer = Buffer.from(initial.text, "utf8");
-  const beforeSha256 = sha256(initialBuffer);
-  if (expectedSha256 && beforeSha256.toLowerCase() !== expectedSha256.toLowerCase()) throw new Error(`precise edit refused: expectedSha256 does not match current file ${target}`);
-  const occurrenceCount = countOccurrences(initial.text, expectedText);
-  if (occurrenceCount !== expectedOccurrences) throw new Error(`precise edit refused: expectedText occurs ${occurrenceCount} times, expected exactly ${expectedOccurrences}`);
-  const nextText = replaceExactOccurrences(initial.text, expectedText, replacementText, expectedOccurrences);
-  const afterBuffer = Buffer.from(nextText, "utf8");
-  const afterSha256 = sha256(afterBuffer);
-  const preview = sensitiveTarget ? { suppressed: true, reason: "sensitive_path" } : buildPreview(initial.text, nextText, expectedText);
-  if (!previewOnly) {
-    const edit = await authorityExecutor.exec({ command: [process.execPath, "-e", PRECISE_EDIT_SCRIPT, target, beforeSha256, String(expectedOccurrences), Buffer.from(expectedText, "utf8").toString("base64"), Buffer.from(replacementText, "utf8").toString("base64")], cwd: effectiveCwd, access: "inherit", timeoutMs: 15_000 });
-    if (edit.exitCode !== 0) throw new Error(`precise edit sandbox write failed: ${edit.stderr || `exit ${edit.exitCode}`}`);
-    const written = await readTextViaSandbox({ authorityExecutor, target, cwd: effectiveCwd, access: "readOnly" });
-    const writtenSha256 = sha256(Buffer.from(written.text, "utf8"));
-    if (writtenSha256 !== afterSha256) throw new Error("precise edit verification failed: written file hash does not match intended output");
-  }
-  const snapshotAllowed = captureSnapshot && !previewOnly && !sensitiveTarget;
-  return { status: previewOnly ? "preview" : "applied", path: target, cwd: effectiveCwd, trustedAncestor: root, permissionProfile: authority.permissionProfile, occurrenceCount, beforeSha256, afterSha256, beforeBytes: initialBuffer.length, afterBytes: afterBuffer.length, changed: beforeSha256 !== afterSha256, previewOnly, preview, modelTurnStarted: false, ...(snapshotAllowed ? { mutationSnapshot: { beforeText: initial.text, afterText: nextText } } : {}) };
+  return withAuthorityLease(authorityExecutor, { cwd, access: "inherit" }, async (authority) => {
+    const effectiveCwd = await realpath(authority.effectiveCwd);
+    const root = await canonicalRoot(authority);
+    const target = await canonicalExistingFile({ requestedPath, cwd: effectiveCwd, root });
+    assertWithinEffectiveCwd(effectiveCwd, target);
+    const sensitiveTarget = isSensitivePath(target);
+    const initial = await readTextViaLease({ authority, target, access: "readOnly" });
+    const initialBuffer = Buffer.from(initial.text, "utf8");
+    const beforeSha256 = sha256(initialBuffer);
+    if (expectedSha256 && beforeSha256.toLowerCase() !== expectedSha256.toLowerCase()) throw new Error(`precise edit refused: expectedSha256 does not match current file ${target}`);
+    const occurrenceCount = countOccurrences(initial.text, expectedText);
+    if (occurrenceCount !== expectedOccurrences) throw new Error(`precise edit refused: expectedText occurs ${occurrenceCount} times, expected exactly ${expectedOccurrences}`);
+    const nextText = replaceExactOccurrences(initial.text, expectedText, replacementText, expectedOccurrences);
+    const afterBuffer = Buffer.from(nextText, "utf8");
+    const afterSha256 = sha256(afterBuffer);
+    const preview = sensitiveTarget ? { suppressed: true, reason: "sensitive_path" } : buildPreview(initial.text, nextText, expectedText);
+    if (!previewOnly) {
+      const edit = await authority.exec({ command: [process.execPath, "-e", PRECISE_EDIT_SCRIPT, target, beforeSha256, String(expectedOccurrences), Buffer.from(expectedText, "utf8").toString("base64"), Buffer.from(replacementText, "utf8").toString("base64")], access: "inherit", timeoutMs: 15_000 });
+      if (edit.exitCode !== 0) throw new Error(`precise edit sandbox write failed: ${edit.stderr || `exit ${edit.exitCode}`}`);
+      const written = await readTextViaLease({ authority, target, access: "readOnly" });
+      const writtenSha256 = sha256(Buffer.from(written.text, "utf8"));
+      if (writtenSha256 !== afterSha256) throw new Error("precise edit verification failed: written file hash does not match intended output");
+    }
+    const snapshotAllowed = captureSnapshot && !previewOnly && !sensitiveTarget;
+    return { status: previewOnly ? "preview" : "applied", path: target, cwd: effectiveCwd, trustedAncestor: root, permissionProfile: authority.permissionProfile, occurrenceCount, beforeSha256, afterSha256, beforeBytes: initialBuffer.length, afterBytes: afterBuffer.length, changed: beforeSha256 !== afterSha256, previewOnly, preview, modelTurnStarted: false, ...(snapshotAllowed ? { mutationSnapshot: { beforeText: initial.text, afterText: nextText } } : {}) };
+  });
 }
 
 function publicMutation(row) { return { mutationId: row.mutationId, projectRef: row.projectRef, path: row.path, cwd: row.cwd, beforeSha256: row.beforeSha256, afterSha256: row.afterSha256, status: row.status, action: row.action, modelTurnStarted: false }; }
-async function readTextViaSandbox({ authorityExecutor, target, cwd, access }) {
-  const result = await authorityExecutor.exec({ command: [process.execPath, "-e", READ_FILE_SCRIPT, target], cwd, access, timeoutMs: 10_000 });
+async function readTextViaLease({ authority, target, access }) {
+  const result = await authority.exec({ command: [process.execPath, "-e", READ_FILE_SCRIPT, target], access, timeoutMs: 10_000 });
   if (result.exitCode !== 0) throw new Error(`authorized file read failed: ${result.stderr || `exit ${result.exitCode}`}`);
   if (result.stdoutTruncated) throw new Error(`authorized file read exceeded command output cap: ${target}`);
   return { text: result.stdout };
+}
+async function readTextsViaLeaseBatch({ authority, targets }) {
+  const payload = Buffer.from(JSON.stringify(targets), "utf8").toString("base64");
+  const result = await authority.exec({
+    command: [process.execPath, "-e", READ_FILES_BATCH_SCRIPT, payload],
+    access: "readOnly",
+    timeoutMs: 10_000,
+  });
+  if (result.exitCode === 0 && !result.stdoutTruncated) {
+    try {
+      const parsed = JSON.parse(result.stdout);
+      if (Array.isArray(parsed?.texts) && parsed.texts.length === targets.length && parsed.texts.every((text) => typeof text === "string")) {
+        return parsed.texts;
+      }
+    } catch {}
+  }
+  return readTextsViaLeaseSequential({ authority, targets });
+}
+async function readTextsViaLeaseSequential({ authority, targets }) {
+  const texts = [];
+  for (const target of targets) texts.push((await readTextViaLease({ authority, target, access: "readOnly" })).text);
+  return texts;
 }
 async function canonicalRoot(authority) { const candidate = authority?.trustedAncestor ?? authority?.effectiveCwd; if (!candidate) throw new Error("authorized construction tool requires a trusted Codex root"); return realpath(candidate); }
 async function canonicalExistingFile({ requestedPath, cwd, root }) { const canonicalCwd = await realpath(cwd); const canonicalScope = await realpath(root); const resolved = path.resolve(canonicalCwd, requestedPath); const target = await realpath(resolved); const relative = path.relative(canonicalScope, target); if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`authorized construction tool refused path outside scope: ${target}`); const info = await stat(target); if (!info.isFile()) throw new Error(`target is not a regular file: ${target}`); return target; }
