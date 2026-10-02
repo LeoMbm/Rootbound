@@ -60,11 +60,26 @@ function eligible(rel){
   if(!options.includeSensitive&&isSensitive(normalized))return false;
   return matchesGlob(normalized,options.glob||null);
 }
+function rgCandidates(){
+  try{
+    const result=spawnSync('rg',['--files','--null','--no-ignore-dot'],{cwd:root,windowsHide:true,shell:false,maxBuffer:64*1024*1024});
+    if(!result.error&&(result.status===0||result.status===1)){
+      return {
+        rows:Buffer.from(result.stdout||[]).toString('utf8').split('\0').filter(Boolean).map(normalizeRelative).sort(),
+        engine:'ripgrep-files'
+      };
+    }
+  }catch{}
+  return null;
+}
 function gitCandidates(){
   try{
     const result=spawnSync('git',['ls-files','-co','--exclude-standard','-z'],{cwd:root,windowsHide:true,shell:false,maxBuffer:64*1024*1024});
     if(!result.error&&result.status===0){
-      return Buffer.from(result.stdout||[]).toString('utf8').split('\0').filter(Boolean).map(normalizeRelative).sort();
+      return {
+        rows:Buffer.from(result.stdout||[]).toString('utf8').split('\0').filter(Boolean).map(normalizeRelative).sort(),
+        engine:'git-ls-files'
+      };
     }
   }catch{}
   return null;
@@ -105,7 +120,10 @@ function formatResult(rel,lineNumber,column,line){
 
 (async()=>{
   if(regexError){finish({ok:false,error:regexError});return;}
-  const candidates=(options.includeSensitive?walkCandidates():(gitCandidates()||walkCandidates())).filter(eligible);
+  const candidateSource=options.includeSensitive
+    ? {rows:walkCandidates(),engine:'filesystem-walk-sensitive'}
+    : (rgCandidates()||gitCandidates()||{rows:walkCandidates(),engine:'filesystem-walk'});
+  const candidates=candidateSource.rows.filter(eligible);
   const page=[];
   let seen=0;
   let outputBytes=256;
@@ -136,7 +154,7 @@ function formatResult(rel,lineNumber,column,line){
       }
     }catch{try{stream?.destroy();}catch{}}
   }
-  finish({ok:true,page,hasMore,scanned:seen,engine:'node'});
+  finish({ok:true,page,hasMore,scanned:seen,engine:'node',candidateEngine:candidateSource.engine});
 })().catch((error)=>finish({ok:false,error:error&&error.message?error.message:String(error)}));
 `;
 
@@ -247,7 +265,9 @@ export async function searchPageAuthorized({ authorityExecutor, query, cwd, glob
     return {
       status: "ok", query, glob, includeSensitive, cwd: authority.effectiveCwd, trustedAncestor: authority.trustedAncestor ?? null,
       permissionProfile: ":read-only", offset: state.offset, count: lines.length, results: lines,
-      stdout: lines.length ? `${lines.join("\n")}\n` : "", hasMore: Boolean(page.hasMore), nextCursor, modelTurnStarted: false,
+      stdout: lines.length ? `${lines.join("\n")}\n` : "", hasMore: Boolean(page.hasMore), nextCursor,
+      candidateEngine: typeof page.candidateEngine === "string" ? page.candidateEngine : null,
+      modelTurnStarted: false,
     };
   });
 }

@@ -24,7 +24,7 @@ const authorityExecutor = {
     if (input.command[0] === process.execPath && input.command[1] === "-e") {
       return {
         exitCode: 0,
-        stdout: JSON.stringify({ ok: true, code: 0, stderr: "", page: ["src/a.js:1:1:needle"], hasMore: false, scanned: 1 }),
+        stdout: JSON.stringify({ ok: true, code: 0, stderr: "", page: ["src/a.js:1:1:needle"], hasMore: false, scanned: 1, candidateEngine: "synthetic" }),
         stderr: "",
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -70,6 +70,7 @@ assert.equal(search.isError, false);
 assert.equal(search.structuredContent.modelTurnStarted, false);
 assert.deepEqual(search.structuredContent.results, ["src/a.js:1:1:needle"]);
 assert.equal(search.structuredContent.hasMore, false);
+assert.equal(search.structuredContent.candidateEngine, "synthetic");
 const searchExec = calls.filter((call) => call.kind === "exec").at(-1);
 assert.equal(searchExec.access, "readOnly");
 assert.equal(searchExec.command[0], process.execPath);

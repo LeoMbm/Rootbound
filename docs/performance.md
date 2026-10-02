@@ -124,17 +124,52 @@ environment limitation: the same `public-multiproject-scope-v6` integration
 test fails with `sandbox-exec: sandbox_apply: Operation not permitted` on an
 untouched `origin/main` worktree under the same outer sandbox.
 
-## Why ripgrep is not part of this change
+### 2026-10-02 real host result before the search-candidate fix
 
-`rg` is available on the development machine, but after removing the App
-Server lifecycle overhead the controlled `repo_search` median is already
-about 58 ms, including authority RPCs and the actual Node search helper.
+Codex CLI 0.144.1, Apple Silicon macOS, Node v24.10.0:
 
-Replacing the search engine would also need to preserve deterministic global
-pagination, JavaScript-regex compatibility, sensitive/hidden-file behavior,
-glob semantics and fallback behavior. That tradeoff is not justified by the
-current profile. Revisit it only if a real large-repository benchmark shows
-search execution itself is material.
+| Scenario | Median | p95 |
+| --- | ---: | ---: |
+| Authority resolution | 6.84 ms | 10.44 ms |
+| No-op command | 53.97 ms | 61.62 ms |
+| Repository search | 1659.48 ms | 1798.33 ms |
+| Read 3 files | 61.63 ms | 82.42 ms |
+
+This validated the warm App Server and read batching on the real Codex runtime,
+but exposed a remaining repository-search bottleneck.
+
+Profiling showed:
+
+- `git ls-files -co --exclude-standard -z`: roughly **1.5-1.9 seconds**
+  in the Codex sandbox on this Mac;
+- `rg --files --null --no-ignore-dot`: roughly **0-10 ms**;
+- direct `rg` text search for the benchmark pattern: roughly **0-30 ms**.
+
+The slow Git enumeration also emitted macOS Developer Tools/`xcrun` cache
+warnings from inside the sandbox. Rootbound therefore now prefers ripgrep only
+for **candidate-file enumeration**. Matching remains Rootbound's JavaScript
+regex engine, so cursor semantics and query behavior do not depend on ripgrep's
+regex dialect.
+
+Candidate enumeration order is:
+
+1. `rg --files --null --no-ignore-dot`;
+2. existing `git ls-files -co --exclude-standard -z` fallback;
+3. filesystem walk fallback.
+
+Sensitive searches still use the explicit filesystem-walk path so that hidden
+or secret-bearing files are only included when the caller intentionally sets
+`includeSensitive=true`.
+
+The benchmark output exposes `diagnostics.repoSearchCandidateEngine` so real
+host runs can confirm which enumerator was used.
+
+## Why ripgrep is limited to candidate enumeration
+
+The user-facing search engine was **not** replaced with ripgrep. Only file
+enumeration uses it when available. This preserves deterministic global
+pagination, JavaScript-regex compatibility, sensitive-path behavior and the
+existing Rootbound result format while removing the measured Git startup cost.
 
 ## Why global concurrency was not increased
 

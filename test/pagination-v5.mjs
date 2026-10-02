@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -114,6 +114,7 @@ assert.equal(runtimeFirst.count, 2);
 assert.equal(runtimeFirst.hasMore, true);
 assert.equal(runtimeFirst.results.some((row) => row.includes(".env")), false);
 assert.equal(runtimeFirst.results.some((row) => row.includes("secret.pem")), false);
+assert.equal(runtimeFirst.candidateEngine, "filesystem-walk");
 const runtimeSecond = await searchPageAuthorized({ authorityExecutor: runtimeSearchExecutor, query: "needle", cwd: runtimeSearchRoot, maxResults: 2, cursor: runtimeFirst.nextCursor });
 const runtimeCombined = [...runtimeFirst.results, ...runtimeSecond.results];
 assert.equal(runtimeCombined.length, 3);
@@ -129,6 +130,48 @@ const runtimeSensitive = await searchPageAuthorized({ authorityExecutor: runtime
 assert.equal(runtimeSensitive.count, 5);
 assert.equal(runtimeSensitive.results.some((row) => row.startsWith(".env:")), true);
 assert.equal(runtimeSensitive.results.some((row) => row.startsWith("secret.pem:")), true);
+assert.equal(runtimeSensitive.candidateEngine, "filesystem-walk-sensitive");
+
+if (process.platform !== "win32") {
+  const fakeBin = path.join(root, "fake-rg-bin");
+  await mkdir(fakeBin);
+  const fakeRg = path.join(fakeBin, "rg");
+  await writeFile(
+    fakeRg,
+    "#!/bin/sh\nprintf 'one.txt\\0two.txt\\0nested/three.js\\0secret.pem\\0'\n",
+    "utf8"
+  );
+  await chmod(fakeRg, 0o755);
+  const runtimeRgExecutor = {
+    async resolveAuthority({ cwd }) { return { effectiveCwd: cwd, trustedAncestor: cwd, permissionProfile: ":read-only" }; },
+    async exec({ command, cwd }) {
+      try {
+        const { stdout, stderr } = await execFileAsync(command[0], command.slice(1), {
+          cwd,
+          env: { ...process.env, PATH: fakeBin },
+          encoding: "utf8",
+          maxBuffer: 64 * 1024,
+          windowsHide: true,
+        });
+        return { exitCode: 0, stdout, stderr, stdoutTruncated: false, stderrTruncated: false };
+      } catch (error) {
+        return {
+          exitCode: Number.isInteger(error?.code) ? error.code : 1,
+          stdout: String(error?.stdout ?? ""),
+          stderr: String(error?.stderr ?? error?.message ?? ""),
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }
+    },
+  };
+  const rgSearch = await searchPageAuthorized({ authorityExecutor: runtimeRgExecutor, query: "needle", cwd: runtimeSearchRoot, maxResults: 10 });
+  assert.equal(rgSearch.candidateEngine, "ripgrep-files");
+  assert.deepEqual(
+    rgSearch.results.map((row) => row.split(":")[0]).sort(),
+    ["nested/three.js", "one.txt", "two.txt"]
+  );
+}
 
 await assert.rejects(
   () => searchPageAuthorized({ authorityExecutor: runtimeSearchExecutor, query: "[", cwd: runtimeSearchRoot, maxResults: 10 }),

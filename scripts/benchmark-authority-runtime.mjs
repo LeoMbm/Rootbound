@@ -93,6 +93,14 @@ const executor = new CodexAuthorityExecutor({
 
 try {
   const validateMs = await measureOne(() => executor.validate());
+  const repoSearchProbe = await searchPageAuthorized({
+    authorityExecutor: executor,
+    query: "CodexAuthorityExecutor",
+    cwd,
+    glob: "src/*.mjs",
+    maxResults: 20,
+    includeSensitive: false,
+  });
   const scenarios = [
   {
     name: "resolve_authority",
@@ -154,6 +162,9 @@ try {
     iterations,
     warmups,
     validateMs: round(validateMs),
+    diagnostics: {
+      repoSearchCandidateEngine: repoSearchProbe.candidateEngine ?? null,
+    },
     results,
   };
 
