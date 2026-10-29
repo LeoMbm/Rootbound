@@ -17,6 +17,7 @@ try {
   const blocked = { projectRef: "project_" + "b".repeat(20), name: "Blocked", root: allowedRoot, trusted: true };
   const store = { listProjects: () => [authorized, blocked] };
   const bridgeCalls = [];
+  let pings = 0;
   const tools = new Map();
   const resources = new Map();
   const server = {
@@ -26,7 +27,11 @@ try {
   registerStudioMcpTools(server, {
     store,
     projectAccessProvider: async () => ({ enforced: true, projectRefs: [authorized.projectRef] }),
-    bridge: async (request) => { bridgeCalls.push(request); return { ok: true }; },
+    bridge: async (request) => {
+      if (request.action === "ping") { pings += 1; return { ok: true }; }
+      bridgeCalls.push(request);
+      return { ok: true };
+    },
   });
   assert.deepEqual([...tools.keys()].sort(), ["studio.action", "studio.open", "studio.projects"]);
   const view = await resources.get(STUDIO_URI).handler();
@@ -36,12 +41,29 @@ try {
   assert.ok(script, "Widget must have an embedded script");
   assert.doesNotThrow(() => new vm.Script(script), "Widget JavaScript must parse");
   const launch = await tools.get("studio.open").handler();
+  assert.equal(launch.structuredContent.status, "ready");
+  assert.equal(launch.structuredContent.companion.connected, true);
+  assert.equal(pings, 1);
   assert.deepEqual(launch.structuredContent.projects.map((p) => p.projectRef), [authorized.projectRef]);
   assert.equal(tools.get("studio.action").options._meta.ui.visibility[0], "app");
   await assert.rejects(tools.get("studio.action").handler({ projectRef: blocked.projectRef, action: "notes" }), /not authorized/);
   assert.equal(bridgeCalls.length, 0);
   await tools.get("studio.action").handler({ projectRef: authorized.projectRef, action: "activate" });
   assert.deepEqual(bridgeCalls[0], { cwd: allowedRoot, action: "activate" });
+
+  const offlineTools = new Map();
+  registerStudioMcpTools({
+    registerTool(name, options, handler) { offlineTools.set(name, handler); },
+    registerResource() {},
+  }, {
+    store,
+    projectAccessProvider: async () => ({ enforced: true, projectRefs: [authorized.projectRef] }),
+    bridge: async () => { throw new Error("Local Studio backend unreachable"); },
+  });
+  const offline = await offlineTools.get("studio.open")();
+  assert.equal(offline.structuredContent.status, "companion_offline");
+  assert.equal(offline.structuredContent.companion.connected, false);
+  assert.match(offline.content[0].text, /not its root page or Vite frontend port/);
 
   const liveServer = new McpServer({ name: "studio-test", version: "1.0" });
   registerStudioMcpTools(liveServer, {
