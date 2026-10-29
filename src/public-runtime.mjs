@@ -153,6 +153,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       rescueAutopilot,
       commandManager,
       stateStore,
+      projectAccessProvider,
       maxConcurrent: 1,
     });
 

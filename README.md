@@ -14,6 +14,12 @@ Windows support is implemented in parts of the codebase but is **not part of thi
 
 Rootbound connects ChatGPT to real projects on your Mac while keeping Codex as the local trust, sandbox, permission, and execution authority.
 
+## Visual Rootbound Studio inside ChatGPT
+
+Rootbound now also exposes an optional **Studio** UI as an MCP App resource. Run the local companion from [rootbound-studio](https://github.com/LeoMbm/rootbound-studio), refresh the installed Rootbound connector, and ask ChatGPT to **“Open Rootbound Studio for visual feedback.”** Select an authorized project, open its localhost preview, annotate an element and use **Send to ChatGPT**. ChatGPT itself reasons, while the existing model-free Rootbound tools read, edit and test the project. The regular ChatGPT allocation is used, **not a Codex model turn**. See the [Studio integration guide](docs/rootbound-studio.md) for the full setup, permissions and limitations.
+
+The optional Studio extension adds three MCP tools (`studio.open`, `studio.projects`, `studio.action`) to the existing 33 coding tools, for a total of **36**. The two action/data tools are app-only; the coding surface remains model-free.
+
 > **ChatGPT reasons. Rootbound performs model-free local actions. Codex keeps control of local trust and permissions.**
 
 Rootbound is useful when you want ChatGPT to inspect, edit, test, commit, and continue work in the same local codebases you already use with Codex — without secretly delegating the reasoning to another Codex model.
