@@ -68,8 +68,26 @@ export function registerStudioMcpTools(server, { store, projectAccessProvider = 
       "openai/outputTemplate": STUDIO_URI, "openai/widgetAccessible": true },
   }, async () => {
     const projects = await visibleProjects();
-    return result({ status: "ready", projects: projects.map(({ projectRef, name, root }) => ({ projectRef, name, root })) },
-      "Select a project in the Studio widget. All reasoning stays in the ChatGPT conversation.");
+    let companion;
+    try {
+      const response = await bridge({ action: "ping" });
+      companion = { connected: response?.ok === true };
+    } catch (error) {
+      companion = {
+        connected: false,
+        error: error instanceof Error ? error.message : "Studio bridge unavailable",
+      };
+    }
+    return result(
+      {
+        status: companion.connected ? "ready" : "companion_offline",
+        companion,
+        projects: projects.map(({ projectRef, name, root }) => ({ projectRef, name, root })),
+      },
+      companion.connected
+        ? "Rootbound Studio local companion is reachable. Open the widget and select a project. All reasoning remains in ChatGPT."
+        : "Rootbound MCP is connected, but the local Studio companion could not be reached or authenticated on its backend port (normally 3877). Check the companion's /api/bridge endpoint, not its root page or Vite frontend port. " + companion.error,
+    );
   });
   server.registerTool("studio.projects", {
     title: "Studio projects", description: "Connection-authorized project list for Studio widget.",

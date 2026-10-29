@@ -216,7 +216,11 @@ textarea{width:100%;min-height:84px;resize:vertical;font-size:12px}
     if(initialized || !window.openai?.callTool) return;
     initialized = true;
     const initial=window.openai.toolOutput;
-    if(initial?.projects) projects(initial.projects);
+    if(initial?.projects) {
+      projects(initial.projects);
+      if(initial.companion?.connected === false)
+        error("Rootbound is connected, but its local Studio companion is not reachable on the backend port. Open Studio locally and retry.");
+    }
     else loadProjects().catch(e=>error(e.message));
   }
   window.addEventListener("openai:set_globals", initialize);
