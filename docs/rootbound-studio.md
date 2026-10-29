@@ -10,6 +10,12 @@ Studio is a companion visual inspector, **not a second AI chat**. The model-free
 4. In a regular ChatGPT conversation with Rootbound connected, ask: **“Open Rootbound Studio for visual feedback.”** The model invokes `studio.open` and the embedded widget appears.
 5. Choose a project, enter the **local dev server URL** (e.g. `http://127.0.0.1:3000`), inspect elements, add feedback and click **Send to ChatGPT**. The widget uses the host's `sendFollowUpMessage` capability. ChatGPT can then use Rootbound's existing model-free tools.
 
+### If ChatGPT incorrectly reports that Studio is stopped
+
+`127.0.0.1:3877` is the **backend** port. The user-facing development UI normally runs on `5173` or the next free port. Visiting the backend root is not a valid test of the MCP integration; Studio's backend redirects that URL to Vite. The MCP integration calls the authenticated `POST /api/bridge` endpoint, and `studio.open` now probes that endpoint before reporting companion readiness.
+
+Check the local backend state with `curl -sS http://127.0.0.1:3877/api/state` (a `200` response with `engine: "chatgpt"` confirms the service). Never paste or expose the secret bridge token. If Studio responds, but ChatGPT still cannot call `studio.open`, refresh/reconnect the existing **Rootbound ChatGPT plugin** to update its cached MCP tool list and reopen the conversation if needed. A healthy MCP server exposes the three Studio tools in addition to the original coding tools.
+
 If the host does not expose its message bridge, the widget attempts a clipboard fallback. Standalone Studio has a separate **Copy task to ChatGPT** option; it cannot silently post to an existing conversation.
 
 ## Architecture
