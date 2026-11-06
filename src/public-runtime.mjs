@@ -154,6 +154,7 @@ export async function createPublicRuntime({ env = process.env } = {}) {
       commandManager,
       stateStore,
       projectAccessProvider,
+      statePaths: rootboundPaths,
       maxConcurrent: 1,
     });
 

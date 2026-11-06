@@ -5,9 +5,9 @@ import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION, PUBLIC_TOOL_NAMES } from
 import { listWorkspaces, registerWorkspaceTools } from "../src/workspace-tools.mjs";
 
 assert.equal(PUBLIC_SERVER_VERSION, "0.1.0-preview.10");
-assert.equal(PUBLIC_SURFACE_VERSION, "rootbound-public-preview-v6");
-assert.equal(PUBLIC_TOOL_NAMES.length, 36);
-assert.equal(new Set(PUBLIC_TOOL_NAMES).size, 36);
+assert.equal(PUBLIC_SURFACE_VERSION, "rootbound-public-preview-v7");
+assert.equal(PUBLIC_TOOL_NAMES.length, 39);
+assert.equal(new Set(PUBLIC_TOOL_NAMES).size, 39);
 assert.ok(PUBLIC_TOOL_NAMES.includes("codex.workspace_list"));
 assert.ok(PUBLIC_TOOL_NAMES.includes("codex.workspace_open"));
 assert.equal(PUBLIC_TOOL_NAMES.some((name) => name.startsWith("codex.agent_")), false);
