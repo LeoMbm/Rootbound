@@ -38,7 +38,7 @@ export async function resolveGitExecutableUncached({
 
   const candidates = [];
   const developerDir = cleanString(env.DEVELOPER_DIR);
-  if (developerDir) candidates.push(path.join(developerDir, "usr", "bin", "git"));
+  if (developerDir) candidates.push(path.posix.join(developerDir, "usr", "bin", "git"));
 
   try {
     const selected = await execFileFn("/usr/bin/xcode-select", ["-p"], {
@@ -48,7 +48,7 @@ export async function resolveGitExecutableUncached({
       maxBuffer: 64 * 1024,
     });
     const selectedDir = cleanString(selected?.stdout);
-    if (selectedDir) candidates.push(path.join(selectedDir, "usr", "bin", "git"));
+    if (selectedDir) candidates.push(path.posix.join(selectedDir, "usr", "bin", "git"));
   } catch {}
 
   candidates.push(
@@ -65,9 +65,10 @@ export async function resolveGitExecutableUncached({
 
 async function firstNonSystemPathGit(pathValue, { accessFn, realpathFn }) {
   if (typeof pathValue !== "string" || !pathValue.trim()) return null;
-  for (const dir of pathValue.split(path.delimiter)) {
+  // Resolving a simulated macOS PATH must behave like macOS even on Windows CI.
+  for (const dir of pathValue.split(path.posix.delimiter)) {
     if (!dir) continue;
-    const candidate = path.join(dir, "git");
+    const candidate = path.posix.join(dir, "git");
     const resolved = await executablePath(candidate, { accessFn, realpathFn });
     if (!resolved || resolved === "/usr/bin/git") continue;
     return resolved;
