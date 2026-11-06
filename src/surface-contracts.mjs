@@ -1,5 +1,5 @@
 export const PUBLIC_SERVER_VERSION = "0.1.0-preview.10";
-export const PUBLIC_SURFACE_VERSION = "rootbound-public-preview-v6";
+export const PUBLIC_SURFACE_VERSION = "rootbound-public-preview-v7";
 
 export const PUBLIC_TOOL_NAMES = Object.freeze([
   "studio.open",
@@ -38,4 +38,7 @@ export const PUBLIC_TOOL_NAMES = Object.freeze([
   "codex.browser_status",
   "codex.browser_tabs",
   "codex.browser_read",
+  "local_mcp.list_servers",
+  "local_mcp.list_tools",
+  "local_mcp.call_tool",
 ]);

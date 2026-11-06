@@ -12,6 +12,7 @@ import { registerThreadHistoryTools } from "./thread-history-tools.mjs";
 import { typedToolResponse } from "./tool-errors.mjs";
 import { registerWorkspaceTools } from "./workspace-tools.mjs";
 import { registerStudioMcpTools } from "./studio-mcp-tools.mjs";
+import { registerLocalMcpTools } from "./local-mcp-tools.mjs";
 import { PUBLIC_SERVER_VERSION, PUBLIC_SURFACE_VERSION } from "./surface-contracts.mjs";
 
 const require = createRequire(import.meta.url);
@@ -20,7 +21,7 @@ const z = require("zod/v4");
 const bindingRefSchema = z.string().regex(/^binding_[0-9a-f-]{36}$/i).optional();
 const rescueRefSchema = z.string().regex(/^rescue_[0-9a-f-]{36}$/i).optional();
 
-export function createPublicServerFactory({ executor, authorityExecutor, publicContext, browserReader, continuityState, rescueManager, rescueAutopilot = null, commandManager, stateStore, projectAccessProvider = null, maxConcurrent = 1 }) {
+export function createPublicServerFactory({ executor, authorityExecutor, publicContext, browserReader, continuityState, rescueManager, rescueAutopilot = null, commandManager, stateStore, projectAccessProvider = null, statePaths = null, maxConcurrent = 1 }) {
   if (!executor) throw new Error("Rootbound public server requires an authority executor");
   if (!authorityExecutor) throw new Error("Rootbound public server requires authorityExecutor");
   if (!publicContext) throw new Error("Rootbound public server requires publicContext");
@@ -109,6 +110,9 @@ export function createPublicServerFactory({ executor, authorityExecutor, publicC
     registerConstructionTools(projectScopeGuardedServer, { authorityExecutor, continuityState, stateStore, rescueManager, getSessionKey });
     registerRepoTools(projectScopeGuardedServer, { authorityExecutor, continuityState, rescueManager, getSessionKey });
     registerBrowserReaderTools(server, browserReader);
+    if (statePaths && projectAccessProvider) registerLocalMcpTools(server, {
+      context: publicContext, authorityExecutor, projectAccessProvider, paths: statePaths,
+    });
     return server;
   };
 }

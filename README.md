@@ -18,7 +18,19 @@ Rootbound connects ChatGPT to real projects on your Mac while keeping Codex as t
 
 Rootbound now also exposes an optional **Studio** UI as an MCP App resource. Run the local companion from [rootbound-studio](https://github.com/LeoMbm/rootbound-studio), refresh the installed Rootbound connector, and ask ChatGPT to **“Open Rootbound Studio for visual feedback.”** Select an authorized project, open its localhost preview, annotate an element and use **Send to ChatGPT**. ChatGPT itself reasons, while the existing model-free Rootbound tools read, edit and test the project. The regular ChatGPT allocation is used, **not a Codex model turn**. See the [Studio integration guide](docs/rootbound-studio.md) for the full setup, permissions and limitations.
 
-The optional Studio extension adds three MCP tools (`studio.open`, `studio.projects`, `studio.action`) to the existing 33 coding tools, for a total of **36**. The two action/data tools are app-only; the coding surface remains model-free.
+The public surface contains 33 coding tools, 3 Studio tools and 3 local MCP tools: **39 tools** total. The Studio action/data tools are app-only; the coding surface remains model-free.
+
+## Use your locally configured MCP servers
+
+Rootbound can discover and call MCP servers configured in Codex without starting a Codex model turn. ChatGPT uses `local_mcp.list_servers`, `local_mcp.list_tools` and `local_mcp.call_tool`. Only tools approved from an interactive **local terminal** can execute, and grants are isolated by saved Rootbound connection:
+
+```sh
+rootbound mcp allow playwright browser_navigate
+rootbound mcp grants
+rootbound mcp deny playwright browser_navigate
+```
+
+See [Local MCP setup, permissions and limitations](docs/local-mcp.md). This bridge uses Codex's existing MCP host, not an additional subprocess manager.
 
 > **ChatGPT reasons. Rootbound performs model-free local actions. Codex keeps control of local trust and permissions.**
 
@@ -42,7 +54,7 @@ Rootbound is useful when you want ChatGPT to inspect, edit, test, commit, and co
 - installer failures now surface the exact required doctor checks that failed;
 - legacy/default connections remain compatible and can be explicitly migrated to the HTTP profile through `rootbound connection repair <name>`.
 
-The public MCP contract remains **33 tools** on `rootbound-public-preview-v6`.
+The public MCP contract exposes **39 tools** on `rootbound-public-preview-v7`.
 
 ### Also retained from preview.3
 
@@ -64,7 +76,7 @@ The healthy supervised runtime is reused. Each saved connection keeps its own pr
 
 The project that bootstraps the runtime becomes its **anchor**, but the anchor is infrastructure state only. It is never a hidden “current project”. If several projects are available and a project-facing request is not safely scoped, Rootbound returns `PROJECT_SCOPE_REQUIRED` instead of guessing.
 
-The public MCP contract is now **33 tools** on `rootbound-public-preview-v6`.
+The public MCP contract is now **39 tools** on `rootbound-public-preview-v7`.
 
 ### Security and lifecycle guarantees
 
@@ -424,9 +436,9 @@ Rootbound keeps persistent state outside the installed app tree, so a staged upg
 
 # Public tool surface
 
-The current surface exposes **33 public tools**.
+The current surface exposes **39 public tools**.
 
-Current surface identifier: `rootbound-public-preview-v6`.
+Current surface identifier: `rootbound-public-preview-v7`.
 
 ### Workspace and context
 

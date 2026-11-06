@@ -204,6 +204,30 @@ export class CodexPublicContextExecutor {
     };
   }
 
+  async localMcpServers({ cwd = this.#defaultCwd } = {}) {
+    // Codex loads project-scoped MCP configuration as part of an ephemeral, model-free thread.
+    await this.#ensureThread(path.resolve(cwd));
+    const servers = [];
+    let cursor = null;
+    for (let page = 0; page < 10; page += 1) {
+      const params = { detail: "toolsAndAuthOnly", limit: 50 };
+      if (cursor) params.cursor = cursor;
+      const result = await this.#request("mcpServerStatus/list", params);
+      servers.push(...(Array.isArray(result?.data) ? result.data : []));
+      cursor = result?.nextCursor ?? null;
+      if (!cursor) return servers;
+    }
+    throw new Error("MCP server inventory exceeded the pagination limit");
+  }
+
+  async localMcpCall({ cwd = this.#defaultCwd, server, tool, arguments: args = {} }) {
+    const threadId = await this.#ensureThread(path.resolve(cwd));
+    const result = await this.#request("mcpServer/tool/call", {
+      server, tool, threadId, arguments: args,
+    }, { timeoutMs: 60_000 });
+    return structuredClone(result);
+  }
+
   async #ensureStarted() {
     if (this.#client.running) return this.#client.initializedResult ?? null;
     if (this.#startPromise) return this.#startPromise;

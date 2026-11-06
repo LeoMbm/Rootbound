@@ -40,11 +40,12 @@ function createIsolatedPublicTestEnv(extra = {}) {
   return env;
 }
 
-assert.equal(PUBLIC_SURFACE_VERSION, "rootbound-public-preview-v6");
+assert.equal(PUBLIC_SURFACE_VERSION, "rootbound-public-preview-v7");
 assert.ok(PUBLIC_TOOL_NAMES.length >= 33);
 assert.equal(new Set(PUBLIC_TOOL_NAMES).size, PUBLIC_TOOL_NAMES.length);
 
 const requiredNames = [
+  "local_mcp.list_servers", "local_mcp.list_tools", "local_mcp.call_tool",
   "codex.command_start", "codex.command_poll", "codex.command_write", "codex.command_terminate",
   "codex.workspace_list", "codex.workspace_open", "codex.precise_edit", "codex.edit_undo", "codex.edit_redo",
   "codex.continuity_resume", "codex.quota_status", "codex.continuity_handoff", "codex.continuity_rollback", "codex.continuity_search",

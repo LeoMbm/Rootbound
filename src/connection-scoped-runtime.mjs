@@ -49,6 +49,8 @@ export function createConnectionScopedPublicContext({ base, store, projectAccess
     injectContinuity(input) { return base.injectContinuity(input); },
     async browserPrerequisites(input = {}) { return base.browserPrerequisites(await scope(input)); },
     async nodeReplCall(input = {}) { return base.nodeReplCall(await scope(input)); },
+    async localMcpServers(input = {}) { return base.localMcpServers(await scope(input)); },
+    async localMcpCall(input = {}) { return base.localMcpCall(await scope(input)); },
   };
 }
 

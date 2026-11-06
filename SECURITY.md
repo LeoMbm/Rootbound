@@ -26,8 +26,8 @@ The canonical public surface is defined only in `src/surface-contracts.mjs` and 
 
 Current public surface:
 
-- `rootbound-public-preview-v6`
-- 33 public tools
+- `rootbound-public-preview-v7`
+- 39 public tools
 - `codex.workspace_list` for connection-scoped workspace discovery
 - no public model catalog
 - no public Codex Agent / turn-start tool

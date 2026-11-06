@@ -1,14 +1,14 @@
 # Rootbound — 中文说明
 
-> **V5 架构文档仍在同步；当前公开 MCP surface 已升级到 V6。**
+> **V5 架构文档仍在同步；当前公开 MCP surface 已升级到 V7。**
 >
 > 为避免翻译文档落后于真实实现，在完整中文文档更新完成之前，请以英文 [`README.md`](README.md)、[`SECURITY.md`](SECURITY.md) 和 [`docs/multi-project-runtime.md`](docs/multi-project-runtime.md) 为准。
 
 ## 当前核心状态
 
 - ChatGPT 作为推理层；Rootbound 只暴露经过接受和验证的 model-free 本地能力。
-- 当前公开 surface：`rootbound-public-preview-v6`。
-- 当前公开工具数：33。
+- 当前公开 surface：`rootbound-public-preview-v7`。
+- 当前公开工具数：39。
 - 新增 `codex.workspace_list`，用于列出当前 Rootbound connection 明确允许访问的项目。
 - 一个 active connection 使用一个 supervised runtime，但这个 runtime 可以同时服务多个已授权 workspace。
 - `rootbound connect .` 会验证 exact-root trust，并把该项目授予当前 connection；连接第二个项目不会再为了“切项目”而重启 runtime。
