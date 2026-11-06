@@ -8,7 +8,8 @@
 
 - ChatGPT 作为推理层；Rootbound 只暴露经过接受和验证的 model-free 本地能力。
 - 当前公开 surface：`rootbound-public-preview-v7`。
-- 当前公开工具数：39。
+- 当前发行版本：`0.1.0-preview.6`；当前公开工具数：39。
+- `local_mcp.*` 使用 Codex 已配置的 MCP 服务器，必须通过本地交互式 CLI 授权；`mcp allow SERVER` 授权整个服务器，`mcp allow SERVER TOOL` 只授权单个工具。
 - 新增 `codex.workspace_list`，用于列出当前 Rootbound connection 明确允许访问的项目。
 - 一个 active connection 使用一个 supervised runtime，但这个 runtime 可以同时服务多个已授权 workspace。
 - `rootbound connect .` 会验证 exact-root trust，并把该项目授予当前 connection；连接第二个项目不会再为了“切项目”而重启 runtime。

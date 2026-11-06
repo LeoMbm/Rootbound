@@ -6,7 +6,7 @@
 
 **Apple Silicon macOS Technical Preview**
 
-Current preview: **0.1.0-preview.4**
+Current preview: **0.1.0-preview.6**
 
 Windows support is implemented in parts of the codebase but is **not part of this public preview yet**. Real-machine Windows validation is still pending.
 
@@ -40,7 +40,21 @@ Rootbound is useful when you want ChatGPT to inspect, edit, test, commit, and co
 
 ---
 
-## What is new in 0.1.0-preview.4?
+## What's new in 0.1.0-preview.6?
+
+### Local MCP bridge
+
+- Discover MCP servers already configured in Codex and inspect their tools through ChatGPT without starting a Codex model turn.
+- Call only tools approved from the local interactive terminal. `rootbound mcp allow SERVER` approves the whole server (including future tools); `rootbound mcp allow SERVER TOOL` approves just one tool.
+- `rootbound mcp deny SERVER TOOL` excludes an individual tool from a server-wide grant, while `rootbound mcp deny SERVER` revokes the entire server.
+- Per-connection grants are stored privately, checked on each invocation, and migrated from older tool-only policies without broadening access.
+
+### Since the previous tagged release
+
+- Rootbound Studio can open a visual MCP App inside ChatGPT and use the local companion for annotation workflows.
+- Runtime and tool performance improvements include recyclable App Server authority, faster repository searches, bounded long polling, and tighter command concurrency.
+
+## Previously: 0.1.0-preview.4
 
 `0.1.0-preview.4` hardens the managed ChatGPT tunnel/runtime boundary after real-world connector failures.
 

@@ -47,7 +47,7 @@ Do not export public registration for:
 - unrestricted raw host filesystem APIs;
 - unrestricted process / PTY control outside the accepted command surface;
 - Computer Use;
-- generic MCP catalog/call tooling;
+- arbitrary, caller-configurable MCP servers or unrestricted MCP catalog/call tooling (the explicitly accepted `local_mcp.*` bridge is limited to Codex-configured servers and locally approved, connection-scoped tools);
 - direct Browser click/fill/navigation tools;
 - private household or personal integrations;
 - local tunnel identities, literal tokens, endpoint secrets or machine-specific service configuration;
