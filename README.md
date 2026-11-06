@@ -26,6 +26,8 @@ Rootbound can discover and call MCP servers configured in Codex without starting
 
 ```sh
 rootbound mcp allow playwright browser_navigate
+rootbound mcp allow umami
+rootbound mcp deny umami delete_data
 rootbound mcp grants
 rootbound mcp deny playwright browser_navigate
 ```

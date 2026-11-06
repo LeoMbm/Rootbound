@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { assertLocalMcpIdentifier, readLocalMcpGrants, assertLocalMcpConnectionId } from "./local-mcp-access.mjs";
+import { assertLocalMcpIdentifier, readLocalMcpGrants, assertLocalMcpConnectionId, isLocalMcpToolAllowed } from "./local-mcp-access.mjs";
 import { RootboundToolError, typedToolResponse } from "./tool-errors.mjs";
 
 const require = createRequire(import.meta.url);
@@ -62,7 +62,8 @@ export function registerLocalMcpTools(server, { context, authorityExecutor, proj
         name: item.name,
         available: !item.error,
         toolCount: toolList(item).length,
-        permittedTools: grants[item.name] ?? [],
+        allToolsAllowed: grants[item.name]?.all === true,
+        permittedTools: toolList(item).filter((tool) => isLocalMcpToolAllowed(grants, item.name, tool.name)).map((tool) => tool.name),
       })), modelTurnStarted: false,
     };
   }, { operation: "local_mcp.list_servers" }));
@@ -77,7 +78,7 @@ export function registerLocalMcpTools(server, { context, authorityExecutor, proj
     const scope = await authorized(requestedCwd);
     const grants = await readLocalMcpGrants({ paths, connectionId: scope.connectionId });
     const target = findServer(await context.localMcpServers({ cwd: scope.cwd }), serverName);
-    const tools = toolList(target).map((tool) => ({ ...tool, permitted: (grants[serverName] ?? []).includes(tool.name) }));
+    const tools = toolList(target).map((tool) => ({ ...tool, permitted: isLocalMcpToolAllowed(grants, serverName, tool.name) }));
     if (Buffer.byteLength(JSON.stringify(tools)) > 200_000) throw new RootboundToolError("MCP tool catalogue exceeds the response limit.", { code: "LOCAL_MCP_CATALOG_TOO_LARGE" });
     return { status: "ok", server: serverName, cwd: scope.cwd, tools, modelTurnStarted: false };
   }, { operation: "local_mcp.list_tools" }));
@@ -94,10 +95,10 @@ export function registerLocalMcpTools(server, { context, authorityExecutor, proj
       if (Buffer.byteLength(JSON.stringify(args)) > 64_000) throw new RootboundToolError("MCP tool arguments exceed 64 KB.", { code: "LOCAL_MCP_ARGUMENTS_TOO_LARGE" });
       const scope = await authorized(requestedCwd);
       const grants = await readLocalMcpGrants({ paths, connectionId: scope.connectionId });
-      if (!(grants[serverName] ?? []).includes(toolName)) {
+      if (!isLocalMcpToolAllowed(grants, serverName, toolName)) {
         throw new RootboundToolError(`MCP tool '${serverName}/${toolName}' has not been approved locally.`, {
           code: "LOCAL_MCP_TOOL_NOT_ALLOWED", category: "permission", retryable: false,
-          nextActions: [`On your Mac, run: rootbound mcp allow ${serverName} ${toolName}`],
+          nextActions: [`On your Mac, run: rootbound mcp allow ${serverName} [${toolName}]`],
         });
       }
       const target = findServer(await context.localMcpServers({ cwd: scope.cwd }), serverName);

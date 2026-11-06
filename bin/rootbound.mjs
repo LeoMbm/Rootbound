@@ -76,7 +76,8 @@ try {
 
 async function mcpCommand(opts) {
   const [action = "grants", server, tool, extra] = opts.positionals;
-  if (extra) throw new CliUsageError("Usage: rootbound mcp [grants | allow SERVER TOOL | deny SERVER TOOL]");
+  const usage = "Usage: rootbound mcp [grants | allow SERVER [TOOL] | deny SERVER [TOOL]]";
+  if (extra) throw new CliUsageError(usage);
   const registry = await loadConnectionRegistry({ paths });
   const connection = getActiveConnection(registry);
   const connectionId = assertLocalMcpConnectionId(connection?.id);
@@ -84,15 +85,16 @@ async function mcpCommand(opts) {
     printResult({ ok: true, action, connectionId, servers: await readLocalMcpGrants({ paths, connectionId }) }, opts);
     return;
   }
-  if (!["allow", "deny"].includes(action) || !server || !tool) {
-    throw new CliUsageError("Usage: rootbound mcp [grants | allow SERVER TOOL | deny SERVER TOOL]");
+  if (!["allow", "deny"].includes(action) || !server) {
+    throw new CliUsageError(usage);
   }
   // A remote MCP command must not be able to self-authorize another MCP tool.
   // Deliberately do not support --yes, stdin pipes or a programmatic grant endpoint.
   if (!process.stdin.isTTY || !process.stdout.isTTY || opts.yes) {
     throw new CliUsageError("MCP grant changes require an interactive local terminal and cannot use --yes.");
   }
-  const approved = await askYesNo(`${action === "allow" ? "Allow" : "Revoke"} MCP ${server}/${tool} for connection ${connection.name}? [y/N] `);
+  const target = tool ? `${server}/${tool}` : `${server} (ALL tools, including future ones)`;
+  const approved = await askYesNo(`${action === "allow" ? "Allow" : "Revoke"} MCP ${target} for connection ${connection.name}? [y/N] `);
   if (!approved) throw new CliUsageError("MCP grant change cancelled.");
   const result = await setLocalMcpGrant({ paths, connectionId, server, tool, allowed: action === "allow" });
   printResult({ ok: true, action, ...result }, opts);
@@ -641,7 +643,7 @@ function printResult(value, opts) {
 }
 
 function printHelp() {
-  process.stdout.write(`Rootbound V5 control plane\n\nUsage:\n  rootbound connect [path] [--yes] [--no-start] [--json]\n  rootbound start [path] [--json]\n  rootbound status [path] [--json]\n  rootbound project list [--json]\n  rootbound project remove <project-ref-or-path> [--remove-trust] [--json]\n  rootbound trust remove <path> [--json]\n  rootbound mcp grants [--json]\n  rootbound mcp allow <server> <tool>\n  rootbound mcp deny <server> <tool>\n  rootbound doctor [path] [--json]\n  rootbound logs [--bytes N] [--follow] [--json]\n  rootbound stop [--force] [--json]\n  rootbound version\n\nFor normal setup, run only: rootbound connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, stores the runtime key in private local state when needed, validates the tunnel, asks once for exact-root Codex trust, grants the project to the active Rootbound connection, and starts the shared supervised runtime when needed. Connecting additional trusted projects reuses that runtime; no project switch or restart is required.\nLocal MCP tools use Codex-configured MCP servers. List servers/tools in ChatGPT, then authorize each tool using rootbound mcp allow in a local interactive terminal. Grants are connection-scoped and deny by default.\nUse rootbound project remove to forget stale registry entries without deleting project files; saved-connection project grants are cleaned up as part of removal. Add --remove-trust to remove that exact-root Codex trust block too. Use rootbound trust remove for stale trust blocks that no longer have a registry row.\nUse rootbound tunnel ... only for advanced/manual tunnel configuration.\n`);
+  process.stdout.write(`Rootbound V5 control plane\n\nUsage:\n  rootbound connect [path] [--yes] [--no-start] [--json]\n  rootbound start [path] [--json]\n  rootbound status [path] [--json]\n  rootbound project list [--json]\n  rootbound project remove <project-ref-or-path> [--remove-trust] [--json]\n  rootbound trust remove <path> [--json]\n  rootbound mcp grants [--json]\n  rootbound mcp allow <server> [tool]\n  rootbound mcp deny <server> [tool]\n  rootbound doctor [path] [--json]\n  rootbound logs [--bytes N] [--follow] [--json]\n  rootbound stop [--force] [--json]\n  rootbound version\n\nFor normal setup, run only: rootbound connect .\nThe interactive wizard detects/reuses an OpenAI tunnel, stores the runtime key in private local state when needed, validates the tunnel, asks once for exact-root Codex trust, grants the project to the active Rootbound connection, and starts the shared supervised runtime when needed. Connecting additional trusted projects reuses that runtime; no project switch or restart is required.\nLocal MCP tools use Codex-configured MCP servers. List servers/tools in ChatGPT, then authorize a server or individual tools using rootbound mcp allow in a local interactive terminal. Grants are connection-scoped and deny by default.\nUse rootbound project remove to forget stale registry entries without deleting project files; saved-connection project grants are cleaned up as part of removal. Add --remove-trust to remove that exact-root Codex trust block too. Use rootbound trust remove for stale trust blocks that no longer have a registry row.\nUse rootbound tunnel ... only for advanced/manual tunnel configuration.\n`);
 }
 
 function controlPlaneError(code, message) {

@@ -35,6 +35,10 @@ Current public surface:
 
 Private/internal capabilities do not automatically become public capabilities.
 
+### Local MCP delegation
+
+`local_mcp.call_tool` uses MCP servers already configured in Codex. These servers execute under their own local authority, **not** the Codex command sandbox. Rootbound requires interactive, local grants scoped to the active saved connection; remote requests cannot grant themselves permissions. `mcp allow SERVER` deliberately permits **all current and future tools** on that server, and the local confirmation states this scope. `mcp deny SERVER TOOL` creates a narrow exception; `mcp deny SERVER` revokes the whole server. Permission checks run on every invocation, including after revocation.
+
 The public package intentionally excludes generic unrestricted host filesystem / process control, unrestricted Browser operation, Computer Use and arbitrary model delegation.
 
 ---
